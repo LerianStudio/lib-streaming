@@ -120,7 +120,7 @@ func (p *Producer) Emit(ctx context.Context, event Event) error {
 	defer func() {
 		span.SetAttributes(attribute.String("event.outcome", outcome))
 		p.metrics.recordEmitted(ctx, topic, "send", outcome)
-		p.metrics.recordEmitDuration(ctx, topic, outcome, durationMilliseconds(time.Since(start)))
+		p.metrics.recordEmitDuration(ctx, topic, outcome, time.Since(start).Milliseconds())
 	}()
 
 	// cb.Execute takes a closure with signature func() (any, error). We close

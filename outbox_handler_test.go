@@ -102,7 +102,7 @@ func TestProducer_RegisterOutboxHandler_RelaysViaPublishDirect(t *testing.T) {
 	// had wrongly called Emit, and if CB state had been OPEN, we'd see a
 	// silent re-enqueue. Here with CLOSED, the cheapest tell is the
 	// listener-count & flag: still untouched by the handler path.
-	if got := p.circuitState(); got != flagCBClosed {
+	if got := p.cbStateFlag.Load(); got != flagCBClosed {
 		t.Errorf("circuitState after handler run = %d; want %d (closed)", got, flagCBClosed)
 	}
 }

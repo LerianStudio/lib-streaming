@@ -3,7 +3,6 @@ package streaming
 import (
 	"context"
 	"sync"
-	"time"
 
 	"github.com/LerianStudio/lib-commons/v5/commons/log"
 	"github.com/LerianStudio/lib-commons/v5/commons/opentelemetry/metrics"
@@ -130,10 +129,4 @@ func (m *streamingMetrics) warnNilFactoryOnce(ctx context.Context) {
 		m.logger.Log(ctx, log.LevelWarn,
 			"streaming: metrics factory is nil; metrics are disabled")
 	})
-}
-
-// durationMilliseconds converts a time.Duration to int64 milliseconds. A
-// named helper so the units are obvious at call sites.
-func durationMilliseconds(d time.Duration) int64 {
-	return d.Milliseconds()
 }

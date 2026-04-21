@@ -18,47 +18,12 @@ import (
 // package's context values (the standard idiom for context keys).
 type txContextKey struct{}
 
-// ContextWithTx returns a copy of ctx carrying the supplied *sql.Tx under
-// streaming's unexported context key. When the circuit breaker is OPEN
-// and WithOutboxRepository is wired, Emit's outbox fallback detects the
-// ambient tx and writes the outbox row via CreateWithTx — joining the
-// event publication to the caller's unit of work.
-//
-// Typical use:
-//
-//	tx, err := db.BeginTx(ctx, nil)
-//	// ... business writes under tx ...
-//	ctx = streaming.ContextWithTx(ctx, tx)
-//	if err := emitter.Emit(ctx, event); err != nil { ... }
-//	if err := tx.Commit(); err != nil { ... }
-//
-// Passing a nil *sql.Tx is a no-op — the outbox path falls back to
-// Create. When the ambient tx is present but the circuit is CLOSED, the
-// event publishes directly to the broker (no outbox row); the caller's
-// tx proceeds independently. Callers who need strict at-least-once
-// semantics should always pair Emit with tx-wrapped business writes AND
-// wire an outbox Dispatcher.
-//
-// ContextWithTx is safe for concurrent use; context.WithValue produces a
-// new ctx and does not mutate the parent.
-func ContextWithTx(ctx context.Context, tx *sql.Tx) context.Context {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	if tx == nil {
-		return ctx
-	}
-
-	return context.WithValue(ctx, txContextKey{}, tx)
-}
-
 // publishToOutbox serializes an already-pre-flighted Event to an
 // outbox.OutboxEvent and writes it via the configured OutboxRepository.
 //
-// When an ambient *sql.Tx is present on the context (see txFromContext),
-// CreateWithTx is used so the write joins the caller's unit of work.
-// Otherwise Create is called and the outbox repo opens its own transaction.
+// When an ambient *sql.Tx is present on ctx under txContextKey, CreateWithTx
+// is used so the write joins the caller's unit of work. Otherwise Create is
+// called and the outbox repo opens its own transaction.
 //
 // Contract:
 //   - On success, the caller path (Emit → cb.Execute closure) MUST return
@@ -113,13 +78,15 @@ func (p *Producer) publishToOutbox(ctx context.Context, event Event, topic strin
 	}
 
 	// Ambient transaction path: CreateWithTx when the caller installed a
-	// *sql.Tx via ContextWithTx; otherwise fall through to Create.
-	if tx, ok := txFromContext(ctx); ok {
-		if _, err := p.outbox.CreateWithTx(ctx, tx, row); err != nil {
-			return fmt.Errorf("streaming: outbox create (tx): %w", err)
-		}
+	// *sql.Tx on the package-local context key; otherwise fall through to Create.
+	if ctx != nil {
+		if tx, ok := ctx.Value(txContextKey{}).(*sql.Tx); ok && tx != nil {
+			if _, err := p.outbox.CreateWithTx(ctx, tx, row); err != nil {
+				return fmt.Errorf("streaming: outbox create (tx): %w", err)
+			}
 
-		return nil
+			return nil
+		}
 	}
 
 	if _, err := p.outbox.Create(ctx, row); err != nil {
@@ -165,25 +132,4 @@ func (p *Producer) deriveOutboxAggregateID(event Event) uuid.UUID {
 	}
 
 	return uuid.NewSHA1(uuid.NameSpaceDNS, []byte(p.partFn(event)))
-}
-
-// txFromContext returns the ambient *sql.Tx if one is stored on ctx under
-// streaming's tx context key, previously installed by ContextWithTx
-// (shipped in commit 8a2df02).
-//
-// When no tx is on the context (the common case), returns (nil, false)
-// and publishToOutbox falls through to the non-transactional Create
-// branch. The outbox Dispatcher then drains the row with its own
-// transaction management.
-func txFromContext(ctx context.Context) (*sql.Tx, bool) {
-	if ctx == nil {
-		return nil, false
-	}
-
-	tx, ok := ctx.Value(txContextKey{}).(*sql.Tx)
-	if !ok || tx == nil {
-		return nil, false
-	}
-
-	return tx, true
 }

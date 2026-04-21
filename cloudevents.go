@@ -32,12 +32,6 @@ const (
 // downstream consumer upgrade.
 const cloudEventsSpecVersion = "1.0"
 
-// ceSpecVersion1_0 is the only CloudEvents specversion accepted by
-// ParseCloudEventsHeaders. Mirrors cloudEventsSpecVersion but kept as a
-// separate symbol so the parse-side value check reads as explicit
-// version-gate rather than accidental coupling with the producer emit path.
-const ceSpecVersion1_0 = "1.0"
-
 // cloudEventsTypePrefix is the reverse-DNS namespace prepended to every
 // ce-type header value. Composed as "studio.lerian.<resource>.<event>".
 // Matches TRD §6.1 verbatim.
@@ -164,8 +158,8 @@ func ParseCloudEventsHeaders(headers []kgo.RecordHeader) (Event, error) {
 		return Event{}, fmt.Errorf("%w: %s", ErrMissingRequiredHeader, headerCESpecVersion)
 	}
 
-	if specVersion != ceSpecVersion1_0 {
-		return Event{}, fmt.Errorf("%w: %q (want %q)", ErrUnsupportedSpecVersion, specVersion, ceSpecVersion1_0)
+	if specVersion != cloudEventsSpecVersion {
+		return Event{}, fmt.Errorf("%w: %q (want %q)", ErrUnsupportedSpecVersion, specVersion, cloudEventsSpecVersion)
 	}
 
 	eventID, ok := index[headerCEID]

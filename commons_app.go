@@ -77,7 +77,9 @@ func (p *Producer) RunContext(ctx context.Context, launcher *libCommons.Launcher
 		return nil
 	}
 
-	logStart(ctx, launcher, "streaming producer started")
+	if launcher != nil && launcher.Logger != nil {
+		launcher.Logger.Log(ctx, log.LevelInfo, "streaming producer started")
+	}
 
 	select {
 	case <-ctx.Done():
@@ -98,26 +100,9 @@ func (p *Producer) RunContext(ctx context.Context, launcher *libCommons.Launcher
 	closeCtx := context.Background()
 	err := p.CloseContext(closeCtx)
 
-	logStop(ctx, launcher, "streaming producer stopped")
+	if launcher != nil && launcher.Logger != nil {
+		launcher.Logger.Log(ctx, log.LevelInfo, "streaming producer stopped")
+	}
 
 	return err
-}
-
-// logStart is a tiny helper that keeps the launcher-logger branches out of
-// RunContext's hot path. Nil-safe for both launcher and launcher.Logger.
-func logStart(ctx context.Context, launcher *libCommons.Launcher, msg string) {
-	if launcher == nil || launcher.Logger == nil {
-		return
-	}
-
-	launcher.Logger.Log(ctx, log.LevelInfo, msg)
-}
-
-// logStop mirrors logStart for the stop-side log.
-func logStop(ctx context.Context, launcher *libCommons.Launcher, msg string) {
-	if launcher == nil || launcher.Logger == nil {
-		return
-	}
-
-	launcher.Logger.Log(ctx, log.LevelInfo, msg)
 }

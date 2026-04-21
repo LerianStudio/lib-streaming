@@ -4,7 +4,6 @@ package streaming
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -368,68 +367,6 @@ func TestProducer_HandleOutboxRow_RunsPreFlight_SystemEventWithoutOpt(t *testing
 }
 
 // --- Group 5: outcome=outbox_failed metric label -------------------------------
-
-// --- Group 7.2: ContextWithTx public helper -----------------------------------
-
-// TestContextWithTx_RoundTripsThroughTxFromContext covers the new public
-// ContextWithTx helper. The internal txFromContext must recover the same
-// *sql.Tx the caller installed.
-func TestContextWithTx_RoundTripsThroughTxFromContext(t *testing.T) {
-	t.Parallel()
-
-	fakeTx := &sql.Tx{}
-	ctx := ContextWithTx(context.Background(), fakeTx)
-
-	got, ok := txFromContext(ctx)
-	if !ok {
-		t.Fatal("txFromContext after ContextWithTx = ok=false; want true")
-	}
-
-	if got != fakeTx {
-		t.Errorf("txFromContext = %p; want %p (same pointer)", got, fakeTx)
-	}
-}
-
-// TestContextWithTx_NilTxIsNoOp: passing a nil *sql.Tx must return a ctx
-// that carries no tx but preserves all other parent values. Callers that
-// conditionally attach a tx should not accidentally install a nil witness.
-func TestContextWithTx_NilTxIsNoOp(t *testing.T) {
-	t.Parallel()
-
-	parent := context.WithValue(context.Background(), testKey{}, "sentinel")
-
-	got := ContextWithTx(parent, nil)
-
-	if got.Value(testKey{}) != "sentinel" {
-		t.Errorf("ContextWithTx(ctx, nil) lost parent value; got=%v", got.Value(testKey{}))
-	}
-
-	if _, ok := txFromContext(got); ok {
-		t.Error("txFromContext found a tx after ContextWithTx(ctx, nil)")
-	}
-}
-
-// TestContextWithTx_NilContextFallsBackToBackground: a nil ctx must not
-// panic. Mirrors the other nil-ctx defenses in the package.
-func TestContextWithTx_NilContextFallsBackToBackground(t *testing.T) {
-	t.Parallel()
-
-	fakeTx := &sql.Tx{}
-
-	//nolint:staticcheck // intentional nil ctx to verify fallback
-	got := ContextWithTx(nil, fakeTx)
-	if got == nil {
-		t.Fatal("ContextWithTx(nil, tx) = nil; want non-nil")
-	}
-
-	if _, ok := txFromContext(got); !ok {
-		t.Error("tx not recoverable from ContextWithTx(nil, tx)")
-	}
-}
-
-// testKey is a context-value key used only by the tx nil-op test. Scoped
-// to this file so other tests don't collide.
-type testKey struct{}
 
 // --- Group 5: outcome=outbox_failed metric label -------------------------------
 

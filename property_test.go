@@ -252,8 +252,8 @@ func TestProperty_DeriveAggregateID_Deterministic(t *testing.T) {
 		sibling.EventID = event.EventID + "-sibling"
 		sibling.Subject = "different-subject"
 
-		a := DeriveAggregateIDForTest(event)
-		b := DeriveAggregateIDForTest(sibling)
+		a := deriveAggregateID(event)
+		b := deriveAggregateID(sibling)
 
 		return a == b
 	}
@@ -273,8 +273,8 @@ func TestProperty_DeriveAggregateID_Deterministic(t *testing.T) {
 	}
 
 	for i := range 10 {
-		a := DeriveAggregateIDForTest(sysEvent)
-		b := DeriveAggregateIDForTest(sysEvent)
+		a := deriveAggregateID(sysEvent)
+		b := deriveAggregateID(sysEvent)
 
 		if a == b {
 			t.Fatalf("iter %d: system event yielded identical UUIDs %v; want non-deterministic", i, a)

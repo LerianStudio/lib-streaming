@@ -1,358 +1,345 @@
-// Package streaming is the public entry point for lib-streaming.
+// Core contracts for the streaming package.
 //
-// This file is the re-export layer. All implementation lives in
-// internal/streaming (package streaming). Type aliases and function
-// wrappers here make the internal package's API available at the root
-// import path without leaking the internal path into consumer godoc or
-// IDE tooltips.
-//
-// Consumers import "github.com/LerianStudio/lib-streaming" and see
-// streaming.Emitter, streaming.Event, streaming.New, etc. — the aliases
-// are fully transparent.
-//
-// See doc.go for the package-level documentation.
+// This file defines the Emitter interface, the 8-class ErrorClass enum,
+// sentinel errors, and the EmitError custom type used to carry structured
+// diagnostic context to observers (logs, spans, metrics).
 package streaming
 
 import (
 	"context"
-	"crypto/tls"
-	"testing"
-	"time"
-
-	"github.com/LerianStudio/lib-commons/v5/commons/circuitbreaker"
-	"github.com/LerianStudio/lib-commons/v5/commons/log"
-	"github.com/LerianStudio/lib-commons/v5/commons/opentelemetry/metrics"
-	"github.com/LerianStudio/lib-commons/v5/commons/outbox"
-	"github.com/twmb/franz-go/pkg/sasl"
-	"go.opentelemetry.io/otel/trace"
-
-	s "github.com/LerianStudio/lib-streaming/internal/streaming"
+	"errors"
+	"fmt"
 )
 
-// ---------------------------------------------------------------------------
-// Type aliases — transparent to callers; no wrapper struct needed.
-// ---------------------------------------------------------------------------
+// Emitter publishes domain events. The three-method surface is the full
+// contract every production service sees — Producer, MockEmitter, and
+// NoopEmitter all satisfy it.
+//
+// Emit is safe for concurrent use from any number of goroutines. Implementations
+// must document their concurrency and lifecycle semantics in their own godoc.
+type Emitter interface {
+	// Emit publishes a single Event. The context carries cancellation and
+	// deadline; tenant identity is in Event.TenantID. See EmitError for
+	// the structured diagnostic envelope returned on failure.
+	Emit(ctx context.Context, event Event) error
 
-type (
-	// Config is the full runtime configuration for a Producer.
-	Config = s.Config
+	// Close releases any underlying connections and flushes buffered records.
+	// Close MUST be idempotent: subsequent calls return nil without error.
+	// Service methods must not call Close — the app bootstrap owns lifecycle.
+	Close() error
 
-	// Event is the CloudEvents-aligned envelope produced by a service method.
-	Event = s.Event
+	// Healthy reports readiness. Returns nil when the emitter can accept
+	// new events. On failure, returns an error whose chain carries a
+	// HealthState via the .State() method (see HealthError in health.go).
+	Healthy(ctx context.Context) error
+}
 
-	// Emitter publishes domain events. The three-method surface is the full
-	// contract every production service sees.
-	Emitter = s.Emitter
+// ErrorClass classifies the root cause of a publish failure into one of eight
+// operational buckets. Used for metric labels, log fields, span attributes,
+// and retry-policy decisions. The eight classes are closed — new failures
+// must be mapped to one of these by classifyError (see classify.go in T2).
+type ErrorClass string
 
-	// Producer is the franz-go-backed Emitter implementation.
-	Producer = s.Producer
+// Error class constants. See TRD §C9 for the mapping rules.
+const (
+	// ClassSerialization covers payload-shape faults: malformed JSON,
+	// records that exceed broker limits, corrupt bytes.
+	ClassSerialization ErrorClass = "serialization_error"
 
-	// NoopEmitter is the fail-safe Emitter implementation returned when
-	// Config.Enabled is false or the broker list is empty.
-	NoopEmitter = s.NoopEmitter
+	// ClassValidation covers caller-supplied invalid field combinations:
+	// missing source, missing tenant on non-system events, etc.
+	ClassValidation ErrorClass = "validation_error"
 
-	// MockEmitter is a concurrency-safe, zero-dependency test double for Emitter.
-	MockEmitter = s.MockEmitter
+	// ClassAuth covers authorization / authentication failures: bad SASL,
+	// topic ACL denied.
+	ClassAuth ErrorClass = "auth_error"
 
-	// EmitterOption configures a Producer at construction time.
-	EmitterOption = s.EmitterOption
+	// ClassTopicNotFound covers missing topics that the broker did not
+	// auto-create (typical in production where auto-create is off).
+	ClassTopicNotFound ErrorClass = "topic_not_found"
 
-	// HealthError is the structured error returned from Emitter.Healthy when
-	// the producer cannot service new emits.
-	HealthError = s.HealthError
+	// ClassBrokerUnavailable covers transient broker unreachability: DNS
+	// failures, connection refused, cluster rolling restart.
+	ClassBrokerUnavailable ErrorClass = "broker_unavailable"
 
-	// HealthState classifies a Producer's readiness in three discrete buckets.
-	HealthState = s.HealthState
+	// ClassNetworkTimeout covers network-level timeouts, including franz-go
+	// record delivery timeout.
+	ClassNetworkTimeout ErrorClass = "network_timeout"
 
-	// ErrorClass classifies the root cause of a publish failure into one of
-	// eight operational buckets.
-	ErrorClass = s.ErrorClass
+	// ClassContextCanceled covers caller-side cancellation via ctx.Done or
+	// deadline expiry propagated from upstream.
+	ClassContextCanceled ErrorClass = "context_canceled"
 
-	// EmitError is the structured error type returned from Emit on publish
-	// failure.
-	EmitError = s.EmitError
+	// ClassBrokerOverloaded covers quota / throttling / policy-violation
+	// responses from the broker.
+	ClassBrokerOverloaded ErrorClass = "broker_overloaded"
 )
 
-// ---------------------------------------------------------------------------
-// Sentinel error vars — re-exported so errors.Is works across import paths.
-// Both sides hold the same pointer; pointer identity is preserved.
-// ---------------------------------------------------------------------------
-
+// Sentinel errors. Each maps to a well-defined error condition that callers
+// can match with errors.Is. Not all sentinels are caller faults — lifecycle
+// and infrastructure errors (ErrEmitterClosed, ErrCircuitOpen,
+// ErrOutboxNotConfigured, ErrNilProducer, ErrNilOutboxRegistry) are included
+// here alongside caller-correctable validation errors. The full truth table
+// lives in IsCallerError and is mirrored in the godoc of each sentinel.
 var (
 	// ErrMissingTenantID is returned when Event.TenantID is empty and
-	// Event.SystemEvent is false.
-	ErrMissingTenantID = s.ErrMissingTenantID
+	// Event.SystemEvent is false. Returned synchronously before any I/O.
+	ErrMissingTenantID = errors.New("streaming: tenant_id required for non-system events")
 
-	// ErrSystemEventsNotAllowed is returned when an Event arrives with
-	// SystemEvent=true but the Producer was constructed without
-	// WithAllowSystemEvents.
-	ErrSystemEventsNotAllowed = s.ErrSystemEventsNotAllowed
+	// ErrSystemEventsNotAllowed is returned synchronously when an Event
+	// arrives with SystemEvent=true but the Producer was constructed
+	// without WithAllowSystemEvents. SystemEvents bypass tenant discipline
+	// and hijack the "system:*" partition space — producers MUST opt in
+	// explicitly at bootstrap. See WithAllowSystemEvents for the full
+	// contract. Classified as ClassValidation; IsCallerError returns true.
+	ErrSystemEventsNotAllowed = errors.New("streaming: system events not permitted; construct Producer with WithAllowSystemEvents()")
 
-	// ErrMissingSource is returned when Event.Source is empty.
-	ErrMissingSource = s.ErrMissingSource
+	// ErrMissingSource is returned when Event.Source is empty. Source is a
+	// required CloudEvents attribute (ce-source).
+	ErrMissingSource = errors.New("streaming: Event.Source required (CloudEvents ce-source)")
 
 	// ErrMissingResourceType is returned when Event.ResourceType is empty.
-	ErrMissingResourceType = s.ErrMissingResourceType
+	// ResourceType is part of the derived Kafka topic name and the ce-type
+	// header — an empty value yields a degenerate topic (lerian.streaming..)
+	// and a malformed ce-type (studio.lerian..EventType). Classified as
+	// ClassValidation; IsCallerError returns true.
+	ErrMissingResourceType = errors.New("streaming: Event.ResourceType required")
 
-	// ErrMissingEventType is returned when Event.EventType is empty.
-	ErrMissingEventType = s.ErrMissingEventType
+	// ErrMissingEventType is returned when Event.EventType is empty. Same
+	// rationale as ErrMissingResourceType — EventType is part of the topic
+	// name and the ce-type header.
+	ErrMissingEventType = errors.New("streaming: Event.EventType required")
 
 	// ErrInvalidTenantID is returned when Event.TenantID contains control
-	// characters or exceeds 256 bytes.
-	ErrInvalidTenantID = s.ErrInvalidTenantID
+	// characters (< 0x20 or == 0x7F) or exceeds 256 bytes. Both shapes
+	// would corrupt downstream log parsers, OTEL label pipelines, and
+	// header consumers. Classified as ClassValidation.
+	ErrInvalidTenantID = errors.New("streaming: Event.TenantID contains control chars or exceeds 256 bytes")
 
 	// ErrInvalidResourceType is returned when Event.ResourceType contains
-	// control characters or exceeds 128 bytes.
-	ErrInvalidResourceType = s.ErrInvalidResourceType
+	// control characters or exceeds 128 bytes. ResourceType is part of the
+	// Kafka topic name and the ce-type header; a malformed value would
+	// break topic routing at the broker level.
+	ErrInvalidResourceType = errors.New("streaming: Event.ResourceType contains control chars or exceeds 128 bytes")
 
 	// ErrInvalidEventType is returned when Event.EventType contains control
-	// characters or exceeds 128 bytes.
-	ErrInvalidEventType = s.ErrInvalidEventType
+	// characters or exceeds 128 bytes. Same rationale as
+	// ErrInvalidResourceType — EventType lands in the topic name and the
+	// ce-type header.
+	ErrInvalidEventType = errors.New("streaming: Event.EventType contains control chars or exceeds 128 bytes")
 
 	// ErrInvalidSource is returned when Event.Source contains control
-	// characters or exceeds 2048 bytes.
-	ErrInvalidSource = s.ErrInvalidSource
+	// characters or exceeds 2048 bytes. Distinct from ErrMissingSource
+	// (empty): this sentinel fires on a populated but malformed value.
+	ErrInvalidSource = errors.New("streaming: Event.Source contains control chars or exceeds 2048 bytes")
 
 	// ErrInvalidSubject is returned when Event.Subject contains control
-	// characters or exceeds 1024 bytes.
-	ErrInvalidSubject = s.ErrInvalidSubject
+	// characters or exceeds 1024 bytes. Subject is an optional CloudEvents
+	// attribute but still travels as a header and must be header-safe.
+	ErrInvalidSubject = errors.New("streaming: Event.Subject contains control chars or exceeds 1024 bytes")
 
-	// ErrInvalidEventID is returned when Event.EventID exceeds 256 bytes or
-	// contains control characters.
-	ErrInvalidEventID = s.ErrInvalidEventID
+	// ErrInvalidEventID is returned when Event.EventID exceeds
+	// maxEventIDBytes or contains control characters. EventID travels as
+	// ce-id; a malformed value would corrupt downstream correlation
+	// tooling and trace context.
+	ErrInvalidEventID = errors.New("streaming: Event.EventID contains control chars or exceeds 256 bytes")
 
 	// ErrInvalidSchemaVersion is returned when Event.SchemaVersion exceeds
-	// 64 bytes or contains control characters.
-	ErrInvalidSchemaVersion = s.ErrInvalidSchemaVersion
+	// maxSchemaVersionBytes or contains control characters. SchemaVersion
+	// travels as ce-schemaversion and is used by major-version topic
+	// suffixing in Topic().
+	ErrInvalidSchemaVersion = errors.New("streaming: Event.SchemaVersion contains control chars or exceeds 64 bytes")
 
-	// ErrInvalidDataContentType is returned when Event.DataContentType exceeds
-	// 256 bytes or contains control characters.
-	ErrInvalidDataContentType = s.ErrInvalidDataContentType
+	// ErrInvalidDataContentType is returned when Event.DataContentType
+	// exceeds maxDataContentTypeBytes or contains control characters.
+	// DataContentType travels as ce-datacontenttype.
+	ErrInvalidDataContentType = errors.New("streaming: Event.DataContentType contains control chars or exceeds 256 bytes")
 
-	// ErrInvalidDataSchema is returned when Event.DataSchema exceeds 2048 bytes
-	// or contains control characters.
-	ErrInvalidDataSchema = s.ErrInvalidDataSchema
+	// ErrInvalidDataSchema is returned when Event.DataSchema exceeds
+	// maxDataSchemaBytes or contains control characters. DataSchema
+	// travels as ce-dataschema.
+	ErrInvalidDataSchema = errors.New("streaming: Event.DataSchema contains control chars or exceeds 2048 bytes")
 
 	// ErrEmitterClosed is returned from Emit after Close has been called.
-	ErrEmitterClosed = s.ErrEmitterClosed
+	ErrEmitterClosed = errors.New("streaming: emitter is closed")
 
 	// ErrEventDisabled is returned when Config.EventToggles has disabled the
 	// resource.event combination at runtime.
-	ErrEventDisabled = s.ErrEventDisabled
+	ErrEventDisabled = errors.New("streaming: event disabled by configuration toggle")
 
-	// ErrPayloadTooLarge is returned when Event.Payload exceeds the 1 MiB limit.
-	ErrPayloadTooLarge = s.ErrPayloadTooLarge
+	// ErrPayloadTooLarge is returned when Event.Payload exceeds the 1 MiB
+	// limit. Checked synchronously before any I/O.
+	ErrPayloadTooLarge = errors.New("streaming: payload exceeds max size (1 MiB)")
 
-	// ErrNotJSON is returned when Event.Payload fails json.Valid.
-	ErrNotJSON = s.ErrNotJSON
+	// ErrNotJSON is returned when Event.Payload fails json.Valid. Prevents
+	// malformed messages from reaching consumers and poisoning DLQ replay.
+	ErrNotJSON = errors.New("streaming: payload must be valid JSON")
 
 	// ErrMissingBrokers is returned by LoadConfig when STREAMING_ENABLED=true
 	// but STREAMING_BROKERS is empty.
-	ErrMissingBrokers = s.ErrMissingBrokers
+	ErrMissingBrokers = errors.New("streaming: STREAMING_BROKERS required when ENABLED=true")
 
-	// ErrInvalidCompression is returned when the compression codec is not one
-	// of snappy, lz4, zstd, gzip, none.
-	ErrInvalidCompression = s.ErrInvalidCompression
+	// ErrInvalidCompression is returned when the compression codec is not
+	// one of snappy, lz4, zstd, gzip, none. Surfaced by both LoadConfig
+	// (env-var validation) and buildKgoOpts (defensive re-check).
+	ErrInvalidCompression = errors.New("streaming: invalid compression codec")
 
-	// ErrInvalidAcks is returned when the required-acks value is not one of
-	// all, leader, none.
-	ErrInvalidAcks = s.ErrInvalidAcks
+	// ErrInvalidAcks is returned when the required-acks value is not one
+	// of all, leader, none. Surfaced by both LoadConfig (env-var validation)
+	// and buildKgoOpts (defensive re-check).
+	ErrInvalidAcks = errors.New("streaming: invalid required-acks value")
 
 	// ErrNilProducer is returned when a method is invoked on a nil *Producer.
-	ErrNilProducer = s.ErrNilProducer
+	// Parallels circuitbreaker.ErrNilCircuitBreaker. Callers should treat this
+	// as a programming error — a nil Producer indicates construction was
+	// skipped or silently failed upstream.
+	ErrNilProducer = errors.New("streaming: nil producer")
 
 	// ErrCircuitOpen is returned from Emit when the circuit breaker is open
-	// and no outbox repository has been wired.
-	ErrCircuitOpen = s.ErrCircuitOpen
+	// AND no outbox repository has been wired via WithOutboxRepository. When
+	// an outbox IS configured, a circuit-open Emit writes to the outbox and
+	// returns nil instead — callers never see this sentinel in that case.
+	//
+	// ErrCircuitOpen is NOT a caller error — it signals runtime
+	// infrastructure degradation, not a caller-side mistake. IsCallerError
+	// returns false for it.
+	ErrCircuitOpen = errors.New("streaming: circuit breaker open")
 
-	// ErrOutboxNotConfigured is returned from publishToOutbox when the Producer
-	// has no OutboxRepository wired.
-	ErrOutboxNotConfigured = s.ErrOutboxNotConfigured
+	// ErrOutboxNotConfigured is returned from publishToOutbox when the
+	// Producer has no OutboxRepository wired. Reachable only through the
+	// unexported helper; Emit itself falls back to ErrCircuitOpen when the
+	// circuit is open and no outbox is configured, not to this sentinel.
+	//
+	// NOT a caller error — it signals a setup/infrastructure gap (the
+	// operator forgot WithOutboxRepository). IsCallerError returns false.
+	ErrOutboxNotConfigured = errors.New("streaming: outbox repository not configured for fallback")
 
 	// ErrNilOutboxRegistry is returned from RegisterOutboxHandler when the
-	// supplied *outbox.HandlerRegistry is nil.
-	ErrNilOutboxRegistry = s.ErrNilOutboxRegistry
+	// supplied *outbox.HandlerRegistry is nil. Caller must construct the
+	// registry before handing it to the Producer.
+	//
+	// NOT a caller error in the runtime-validation sense — it signals a
+	// wiring bug at bootstrap. IsCallerError returns false. Parallels
+	// ErrNilProducer.
+	ErrNilOutboxRegistry = errors.New("streaming: outbox registry is nil")
 )
 
-// ---------------------------------------------------------------------------
-// HealthState constants
-// ---------------------------------------------------------------------------
-
-const (
-	// Healthy means the Producer is fully operational.
-	Healthy HealthState = s.Healthy
-
-	// Degraded means the broker is unreachable but outbox fallback is viable.
-	Degraded HealthState = s.Degraded
-
-	// Down means both broker and outbox are unreachable.
-	Down HealthState = s.Down
-)
-
-// ---------------------------------------------------------------------------
-// ErrorClass constants
-// ---------------------------------------------------------------------------
-
-const (
-	// ClassSerialization covers payload-shape faults.
-	ClassSerialization ErrorClass = s.ClassSerialization
-
-	// ClassValidation covers caller-supplied invalid field combinations.
-	ClassValidation ErrorClass = s.ClassValidation
-
-	// ClassAuth covers authorization / authentication failures.
-	ClassAuth ErrorClass = s.ClassAuth
-
-	// ClassTopicNotFound covers missing topics that the broker did not auto-create.
-	ClassTopicNotFound ErrorClass = s.ClassTopicNotFound
-
-	// ClassBrokerUnavailable covers transient broker unreachability.
-	ClassBrokerUnavailable ErrorClass = s.ClassBrokerUnavailable
-
-	// ClassNetworkTimeout covers network-level timeouts.
-	ClassNetworkTimeout ErrorClass = s.ClassNetworkTimeout
-
-	// ClassContextCanceled covers caller-side cancellation.
-	ClassContextCanceled ErrorClass = s.ClassContextCanceled
-
-	// ClassBrokerOverloaded covers quota / throttling responses from the broker.
-	ClassBrokerOverloaded ErrorClass = s.ClassBrokerOverloaded
-)
-
-// ---------------------------------------------------------------------------
-// Package-level functions — thin wrappers so godoc surfaces at the right path.
-// ---------------------------------------------------------------------------
-
-// New constructs an Emitter.
+// EmitError is the structured error type returned from Emit on publish
+// failure. It carries enough context for observers to log, span-annotate, and
+// classify the failure without further parsing.
 //
-// When Config.Enabled is false or the broker list is empty, New returns a
-// NoopEmitter without constructing a franz-go client. Callers who need a real
-// *Producer should use NewProducer.
-func New(ctx context.Context, cfg Config, opts ...EmitterOption) (Emitter, error) {
-	return s.New(ctx, cfg, opts...)
+// Callers use errors.As to extract the fields and errors.Is to match the
+// wrapped Cause. EmitError's Error() method runs through sanitizeBrokerURL so
+// credentials are redacted before surfacing.
+type EmitError struct {
+	// ResourceType is the Event.ResourceType at the time of failure.
+	ResourceType string
+	// EventType is the Event.EventType at the time of failure.
+	EventType string
+	// TenantID is the Event.TenantID at the time of failure.
+	TenantID string
+	// Topic is the derived Kafka topic name.
+	Topic string
+	// Class is the classified error bucket.
+	Class ErrorClass
+	// Cause is the underlying error (franz-go kerr, net error, etc.).
+	Cause error
 }
 
-// NewProducer is the unconditional Producer constructor. It never substitutes
-// a NoopEmitter. For normal service bootstrap, prefer New.
-func NewProducer(ctx context.Context, cfg Config, opts ...EmitterOption) (*Producer, error) {
-	return s.NewProducer(ctx, cfg, opts...)
+// Error returns a diagnostic string with credentials stripped via
+// sanitizeBrokerURL. Never returns a message containing SASL passwords or
+// full credentialed URLs.
+func (e *EmitError) Error() string {
+	if e == nil {
+		return "<nil>"
+	}
+
+	cause := ""
+	if e.Cause != nil {
+		cause = ": " + sanitizeBrokerURL(e.Cause.Error())
+	}
+
+	return fmt.Sprintf(
+		"streaming emit failed: class=%s topic=%s resource=%s event=%s%s",
+		e.Class, e.Topic, e.ResourceType, e.EventType, cause,
+	)
 }
 
-// NewNoopEmitter returns an Emitter whose methods are unconditional no-ops.
-func NewNoopEmitter() Emitter {
-	return s.NewNoopEmitter()
+// Unwrap returns the wrapped Cause so errors.Is / errors.As can walk the chain.
+func (e *EmitError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+
+	return e.Cause
 }
 
-// NewMockEmitter returns a fresh MockEmitter with an empty event buffer.
-func NewMockEmitter() *MockEmitter {
-	return s.NewMockEmitter()
+// callerErrorClasses enumerates the ErrorClass values that signal a caller-
+// correctable fault. Kept as a map for O(1) lookup; matches TRD §C9.
+var callerErrorClasses = map[ErrorClass]struct{}{
+	ClassSerialization: {},
+	ClassValidation:    {},
+	ClassAuth:          {}, // auth is a deployment config fault, not a runtime one
 }
 
-// NewHealthError constructs a HealthError with the given state and cause.
-func NewHealthError(state HealthState, cause error) *HealthError {
-	return s.NewHealthError(state, cause)
+// callerErrorSentinels enumerates the sentinel errors that signal a caller-
+// correctable fault. Used by IsCallerError via errors.Is walking.
+var callerErrorSentinels = []error{
+	ErrMissingTenantID,
+	ErrSystemEventsNotAllowed,
+	ErrMissingSource,
+	ErrMissingResourceType,
+	ErrMissingEventType,
+	ErrPayloadTooLarge,
+	ErrNotJSON,
+	ErrEventDisabled,
+	ErrMissingBrokers,
+	ErrInvalidCompression,
+	ErrInvalidAcks,
+	ErrInvalidTenantID,
+	ErrInvalidResourceType,
+	ErrInvalidEventType,
+	ErrInvalidSource,
+	ErrInvalidSubject,
+	ErrInvalidEventID,
+	ErrInvalidSchemaVersion,
+	ErrInvalidDataContentType,
+	ErrInvalidDataSchema,
 }
 
-// LoadConfig reads every STREAMING_* environment variable, applies defaults,
-// and validates the result. When Enabled=false, validation is skipped.
-func LoadConfig() (Config, error) {
-	return s.LoadConfig()
-}
-
-// IsCallerError reports whether err represents a caller-correctable fault as
-// opposed to a transient infrastructure fault.
+// IsCallerError reports whether err represents a caller-correctable fault
+// (invalid input, misconfiguration, authorization) as opposed to a
+// transient infrastructure fault (broker down, network timeout).
+//
+// Returns true when err (or any error in its chain) is one of:
+//   - ErrMissingTenantID, ErrSystemEventsNotAllowed, ErrMissingSource,
+//     ErrMissingResourceType, ErrMissingEventType, ErrPayloadTooLarge,
+//     ErrNotJSON, ErrEventDisabled, ErrMissingBrokers, ErrInvalidCompression,
+//     ErrInvalidAcks, ErrInvalidTenantID, ErrInvalidResourceType,
+//     ErrInvalidEventType, ErrInvalidSource, ErrInvalidSubject,
+//     ErrInvalidEventID, ErrInvalidSchemaVersion, ErrInvalidDataContentType,
+//     ErrInvalidDataSchema
+//   - An *EmitError whose Class is ClassSerialization, ClassValidation, or
+//     ClassAuth.
+//
+// Returns false for nil, unrelated errors, ErrEmitterClosed (lifecycle), and
+// any *EmitError with an infrastructure class.
 func IsCallerError(err error) bool {
-	return s.IsCallerError(err)
-}
+	if err == nil {
+		return false
+	}
 
-// ---------------------------------------------------------------------------
-// Option functions — thin wrappers preserving godoc on each option.
-// ---------------------------------------------------------------------------
+	for _, sentinel := range callerErrorSentinels {
+		if errors.Is(err, sentinel) {
+			return true
+		}
+	}
 
-// WithLogger sets the structured logger used across the package.
-func WithLogger(l log.Logger) EmitterOption {
-	return s.WithLogger(l)
-}
+	var ee *EmitError
+	if errors.As(err, &ee) && ee != nil {
+		_, ok := callerErrorClasses[ee.Class]
+		return ok
+	}
 
-// WithMetricsFactory wires the OTEL metrics factory used to register the
-// streaming instruments.
-func WithMetricsFactory(f *metrics.MetricsFactory) EmitterOption {
-	return s.WithMetricsFactory(f)
-}
-
-// WithTracer overrides the OTEL tracer used for the streaming.emit span.
-func WithTracer(t trace.Tracer) EmitterOption {
-	return s.WithTracer(t)
-}
-
-// WithCircuitBreakerManager lets the caller share a process-level
-// circuitbreaker.Manager with the Producer.
-func WithCircuitBreakerManager(m circuitbreaker.Manager) EmitterOption {
-	return s.WithCircuitBreakerManager(m)
-}
-
-// WithPartitionKey overrides the default Event.PartitionKey() behavior at
-// publish time.
-func WithPartitionKey(fn func(Event) string) EmitterOption {
-	return s.WithPartitionKey(fn)
-}
-
-// WithCloseTimeout caps how long Close waits for buffered-record flush and
-// outbox drain.
-func WithCloseTimeout(d time.Duration) EmitterOption {
-	return s.WithCloseTimeout(d)
-}
-
-// WithOutboxRepository wires an OutboxRepository so the Producer can fall
-// back to durable storage when the circuit breaker is open.
-func WithOutboxRepository(repo outbox.OutboxRepository) EmitterOption {
-	return s.WithOutboxRepository(repo)
-}
-
-// WithTLSConfig sets a TLS configuration for broker connections.
-func WithTLSConfig(cfg *tls.Config) EmitterOption {
-	return s.WithTLSConfig(cfg)
-}
-
-// WithSASL sets the SASL mechanism for broker authentication.
-func WithSASL(mech sasl.Mechanism) EmitterOption {
-	return s.WithSASL(mech)
-}
-
-// WithAllowSystemEvents opts a Producer into accepting Event.SystemEvent=true
-// emissions.
-func WithAllowSystemEvents() EmitterOption {
-	return s.WithAllowSystemEvents()
-}
-
-// ---------------------------------------------------------------------------
-// Mock assertion helpers — exported so external test code can use them.
-// ---------------------------------------------------------------------------
-
-// AssertEventEmitted fails t when no captured event has the given resource
-// and event type pair.
-func AssertEventEmitted(t testing.TB, m *MockEmitter, resourceType, eventType string) {
-	s.AssertEventEmitted(t, m, resourceType, eventType)
-}
-
-// AssertEventCount fails t when the count of captured events matching the
-// resource + event type pair does not equal n.
-func AssertEventCount(t testing.TB, m *MockEmitter, resourceType, eventType string, n int) {
-	s.AssertEventCount(t, m, resourceType, eventType, n)
-}
-
-// AssertTenantID fails t when no captured event carries the given tenant ID.
-func AssertTenantID(t testing.TB, m *MockEmitter, tenantID string) {
-	s.AssertTenantID(t, m, tenantID)
-}
-
-// AssertNoEvents fails t when any event was captured.
-func AssertNoEvents(t testing.TB, m *MockEmitter) {
-	s.AssertNoEvents(t, m)
-}
-
-// WaitForEvent blocks until the matcher returns true on a newly-observed
-// event, or timeout elapses. Calls t.Fatalf on timeout.
-func WaitForEvent(t testing.TB, ctx context.Context, m *MockEmitter, matcher func(Event) bool, timeout time.Duration) Event {
-	return s.WaitForEvent(t, ctx, m, matcher, timeout)
+	return false
 }

@@ -171,7 +171,7 @@ func TestProducer_Emit_CircuitOpen_WithOutbox_WritesRowAndReturnsNil(t *testing.
 	// Drive the breaker OPEN via the listener.
 	fakeMgr.ForceTransition(p.cbServiceName, circuitbreaker.StateOpen)
 
-	if got := p.circuitState(); got != flagCBOpen {
+	if got := p.cbStateFlag.Load(); got != flagCBOpen {
 		t.Fatalf("circuitState after OPEN transition = %d; want %d", got, flagCBOpen)
 	}
 
@@ -557,74 +557,6 @@ func TestProducer_DeriveAggregateID_SystemEventRandomized(t *testing.T) {
 
 	if a1 == uuid.Nil || a2 == uuid.Nil {
 		t.Errorf("deriveAggregateID(SystemEvent=true) returned Nil UUID")
-	}
-}
-
-// TestTxFromContext_NoTx returns (nil, false) on a bare context — there
-// is no ambient tx on the key. This is the v1 always-taken branch.
-func TestTxFromContext_NoTx(t *testing.T) {
-	t.Parallel()
-
-	tx, ok := txFromContext(context.Background())
-	if ok {
-		t.Errorf("txFromContext(bare ctx) ok = true; want false")
-	}
-
-	if tx != nil {
-		t.Errorf("txFromContext(bare ctx) tx = %v; want nil", tx)
-	}
-}
-
-// TestTxFromContext_NilContext is the defensive guard for callers who
-// pass a nil context through the chain.
-func TestTxFromContext_NilContext(t *testing.T) {
-	t.Parallel()
-
-	//nolint:staticcheck // SA1012: passing nil ctx is the scenario under test
-	tx, ok := txFromContext(nil)
-	if ok || tx != nil {
-		t.Errorf("txFromContext(nil ctx) = (%v, %v); want (nil, false)", tx, ok)
-	}
-}
-
-// TestTxFromContext_InternalKeyRoundTrip exercises the ambient-tx branch
-// using the package-internal txContextKey so we cover the "something IS on
-// the key" path that v1.1 will enable through a public helper. Uses a nil
-// *sql.Tx via a typed pointer — the map lookup returns non-nil/ok=true
-// only when the stored value is a non-nil *sql.Tx, so we construct one.
-//
-// Since we can't easily construct a real *sql.Tx without a live DB, we
-// construct a non-nil pointer to a zero-value sql.Tx and assert the
-// accessor retrieves it. The zero value is unusable for real SQL but
-// fine for the accessor test.
-func TestTxFromContext_InternalKeyRoundTrip(t *testing.T) {
-	t.Parallel()
-
-	fakeTx := &sql.Tx{}
-	ctx := context.WithValue(context.Background(), txContextKey{}, fakeTx)
-
-	tx, ok := txFromContext(ctx)
-	if !ok {
-		t.Fatal("txFromContext with value set ok = false; want true")
-	}
-
-	if tx != fakeTx {
-		t.Errorf("txFromContext tx = %p; want %p (same pointer)", tx, fakeTx)
-	}
-}
-
-// TestTxFromContext_WrongType: a value stored under the key that is NOT
-// a *sql.Tx must NOT be returned. Guards against wholesale context
-// key collisions with other packages that might (incorrectly) use the
-// same key type.
-func TestTxFromContext_WrongType(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.WithValue(context.Background(), txContextKey{}, "not-a-tx")
-
-	tx, ok := txFromContext(ctx)
-	if ok || tx != nil {
-		t.Errorf("txFromContext with string value = (%v, %v); want (nil, false)", tx, ok)
 	}
 }
 

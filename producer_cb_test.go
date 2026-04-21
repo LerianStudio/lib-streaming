@@ -179,7 +179,7 @@ func TestProducer_Emit_CircuitClosed_PublishesToBroker(t *testing.T) {
 	// Default state should be CLOSED. The listener might not have fired yet
 	// (only fires on transitions), so the initial value of the atomic is
 	// the flagCBClosed zero — which is what we want.
-	if got := p.circuitState(); got != flagCBClosed {
+	if got := p.cbStateFlag.Load(); got != flagCBClosed {
 		t.Errorf("initial circuitState = %d; want %d (closed)", got, flagCBClosed)
 	}
 
@@ -237,7 +237,7 @@ func TestProducer_Emit_CircuitOpen_ReturnsErrCircuitOpen(t *testing.T) {
 	// Force the breaker OPEN. The listener will flip cbStateFlag.
 	fakeMgr.ForceTransition(p.cbServiceName, circuitbreaker.StateOpen)
 
-	if got := p.circuitState(); got != flagCBOpen {
+	if got := p.cbStateFlag.Load(); got != flagCBOpen {
 		t.Fatalf("circuitState after OPEN transition = %d; want %d", got, flagCBOpen)
 	}
 
@@ -307,7 +307,7 @@ func TestProducer_CBStateListener_UpdatesFlag(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			fakeMgr.ForceTransition(p.cbServiceName, tc.to)
 
-			if got := p.circuitState(); got != tc.want {
+			if got := p.cbStateFlag.Load(); got != tc.want {
 				t.Errorf("circuitState after %s = %d; want %d", tc.name, got, tc.want)
 			}
 		})
@@ -341,13 +341,13 @@ func TestProducer_CBStateListener_IgnoresOtherServices(t *testing.T) {
 	_, _ = fakeMgr.GetOrCreate("some.other.service", circuitbreaker.HTTPServiceConfig())
 	fakeMgr.ForceTransition("some.other.service", circuitbreaker.StateOpen)
 
-	if got := p.circuitState(); got != flagCBClosed {
+	if got := p.cbStateFlag.Load(); got != flagCBClosed {
 		t.Errorf("circuitState after other-service OPEN = %d; want %d (closed)", got, flagCBClosed)
 	}
 
 	// And flipping OUR service still works.
 	fakeMgr.ForceTransition(p.cbServiceName, circuitbreaker.StateOpen)
-	if got := p.circuitState(); got != flagCBOpen {
+	if got := p.cbStateFlag.Load(); got != flagCBOpen {
 		t.Errorf("circuitState after own OPEN = %d; want %d", got, flagCBOpen)
 	}
 }
@@ -382,7 +382,7 @@ func (l *oneShotPanicLogger) Sync(_ context.Context) error   { return nil }
 //	The atomic.Store on cbStateFlag MUST run BEFORE the logger.Log call
 //	in each switch arm. That ordering is load-bearing — it means a logger
 //	panic does not lose the state update, and this test asserts exactly
-//	that by checking p.circuitState() == flagCBOpen AFTER the panic has
+//	that by checking p.cbStateFlag.Load() == flagCBOpen AFTER the panic has
 //	been absorbed by RecoverAndLog. A future refactor that reverses the
 //	ordering (logs before storing) would flip the atomic load below to
 //	observe flagCBClosed instead, breaking this test.
@@ -421,7 +421,7 @@ func TestProducer_CBListener_PanicSafe(t *testing.T) {
 
 	// The atomic store happens BEFORE the panic in the switch arm, so the
 	// flag must have been updated.
-	if got := p.circuitState(); got != flagCBOpen {
+	if got := p.cbStateFlag.Load(); got != flagCBOpen {
 		t.Errorf("circuitState after panicking transition = %d; want %d (atomic store runs before log call)", got, flagCBOpen)
 	}
 
@@ -526,7 +526,7 @@ func TestProducer_PreFlight_DoesNotFeedCB(t *testing.T) {
 	// Breaker must still be closed. Reading from the real manager: our flag
 	// is the mirror, but since the REAL breaker has not seen any Execute
 	// calls, state is still CLOSED.
-	if got := p.circuitState(); got != flagCBClosed {
+	if got := p.cbStateFlag.Load(); got != flagCBClosed {
 		t.Errorf("circuitState after 100 pre-flight failures = %d; want %d (closed)", got, flagCBClosed)
 	}
 }
@@ -738,18 +738,6 @@ func TestIsCallerError_CircuitOpenIsNotCaller(t *testing.T) {
 	}
 }
 
-// TestProducer_CircuitState_NilReceiver is the defensive nil-receiver guard
-// on circuitState. Not reachable through public API, but the nil-safe
-// contract is promised in its godoc.
-func TestProducer_CircuitState_NilReceiver(t *testing.T) {
-	t.Parallel()
-
-	var p *Producer
-	if got := p.circuitState(); got != flagCBClosed {
-		t.Errorf("nil.circuitState = %d; want %d (closed)", got, flagCBClosed)
-	}
-}
-
 // TestProducer_CBStateListener_UnknownStateLogsWarning drives a transition
 // to StateUnknown (which shouldn't happen in practice, but the switch has a
 // case for it). Confirms no panic and no flag change.
@@ -775,7 +763,7 @@ func TestProducer_CBStateListener_UnknownStateLogsWarning(t *testing.T) {
 	// Force an OPEN first so the flag has a known non-zero value.
 	fakeMgr.ForceTransition(p.cbServiceName, circuitbreaker.StateOpen)
 
-	if got := p.circuitState(); got != flagCBOpen {
+	if got := p.cbStateFlag.Load(); got != flagCBOpen {
 		t.Fatalf("pre-unknown circuitState = %d; want %d", got, flagCBOpen)
 	}
 
@@ -783,7 +771,7 @@ func TestProducer_CBStateListener_UnknownStateLogsWarning(t *testing.T) {
 	// does not touch the flag — so the previous value (open) must persist.
 	fakeMgr.ForceTransition(p.cbServiceName, circuitbreaker.StateUnknown)
 
-	if got := p.circuitState(); got != flagCBOpen {
+	if got := p.cbStateFlag.Load(); got != flagCBOpen {
 		t.Errorf("post-unknown circuitState = %d; want %d (unchanged)", got, flagCBOpen)
 	}
 }
