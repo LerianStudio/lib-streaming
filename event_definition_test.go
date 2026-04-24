@@ -161,16 +161,3 @@ func TestEventDefinition_Topic_AppendsVersionSuffixForMajorV2Plus(t *testing.T) 
 	}
 }
 
-func TestEventDefinition_PartitionKey(t *testing.T) {
-	t.Parallel()
-
-	tenantDefinition := EventDefinition{EventType: "created"}
-	if got := tenantDefinition.PartitionKey("tenant-1"); got != "tenant-1" {
-		t.Errorf("PartitionKey() = %q; want tenant key", got)
-	}
-
-	systemDefinition := EventDefinition{EventType: "settled", SystemEvent: true}
-	if got := systemDefinition.PartitionKey("ignored"); got != "system:settled" {
-		t.Errorf("PartitionKey() = %q; want system key", got)
-	}
-}

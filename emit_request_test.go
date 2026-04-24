@@ -15,21 +15,21 @@ func TestEmitRequest_New_CopiesAndPreservesRuntimeFields(t *testing.T) {
 	payload := json.RawMessage(`{"id":"tx-1"}`)
 	ts := time.Date(2026, 4, 23, 12, 0, 0, 0, time.UTC)
 
-	request, err := NewEmitRequest(EmitRequest{
+	request, err := newEmitRequest(EmitRequest{
 		DefinitionKey: "transaction.created",
 		TenantID:      "tenant-1",
 		Subject:       "tx-1",
 		EventID:       "evt-1",
 		Timestamp:     ts,
 		Payload:       payload,
-	})
+	}, true)
 	if err != nil {
-		t.Fatalf("NewEmitRequest() error = %v", err)
+		t.Fatalf("newEmitRequest() error = %v", err)
 	}
 
 	payload[0] = '['
 	if string(request.Payload) != `{"id":"tx-1"}` {
-		t.Errorf("NewEmitRequest() did not copy payload, got %q", string(request.Payload))
+		t.Errorf("newEmitRequest() did not copy payload, got %q", string(request.Payload))
 	}
 	if request.Timestamp != ts {
 		t.Errorf("Timestamp = %v; want %v", request.Timestamp, ts)
@@ -115,9 +115,9 @@ func TestEmitRequest_New_RejectsInvalidShape(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := NewEmitRequest(tt.request)
+			_, err := newEmitRequest(tt.request, true)
 			if !errors.Is(err, tt.want) {
-				t.Fatalf("NewEmitRequest() error = %v; want errors.Is(..., %v)", err, tt.want)
+				t.Fatalf("newEmitRequest() error = %v; want errors.Is(..., %v)", err, tt.want)
 			}
 		})
 	}

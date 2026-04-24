@@ -61,16 +61,6 @@ func (d EventDefinition) Topic() string {
 	}).Topic()
 }
 
-// PartitionKey returns the default partition key for a request using this
-// definition and tenant ID. System events use the system event key space.
-func (d EventDefinition) PartitionKey(tenantID string) string {
-	if d.SystemEvent {
-		return "system:" + d.EventType
-	}
-
-	return tenantID
-}
-
 func validateEventDefinitionHeaderFields(definition EventDefinition) error {
 	checks := [...]headerFieldCheck{
 		{definition.Key, maxEventIDBytes, ErrInvalidEventDefinition},

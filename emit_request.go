@@ -19,13 +19,9 @@ type EmitRequest struct {
 	PolicyOverride DeliveryPolicyOverride
 }
 
-// NewEmitRequest validates and copies an EmitRequest. It validates request-local
-// shape only; catalog lookup and system-event tenant rules require the
-// EventDefinition and happen during emit resolution.
-func NewEmitRequest(request EmitRequest) (EmitRequest, error) {
-	return newEmitRequest(request, true)
-}
-
+// newEmitRequest validates and optionally copies an EmitRequest. Validates
+// request-local shape only; catalog lookup and system-event tenant rules
+// require the EventDefinition and happen during emit resolution.
 func newEmitRequest(request EmitRequest, copyPayload bool) (EmitRequest, error) {
 	if request.DefinitionKey == "" {
 		return EmitRequest{}, fmt.Errorf("%w: empty definition key", ErrInvalidEventDefinition)
