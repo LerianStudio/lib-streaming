@@ -1,0 +1,64 @@
+package streaming
+
+// ManifestVersion is the current exported manifest schema version.
+const ManifestVersion = "1.0.0"
+
+// ManifestDocument is the JSON-serializable description of a producer's event
+// catalog and default delivery policies.
+type ManifestDocument struct {
+	Version   string              `json:"version"`
+	Publisher PublisherDescriptor `json:"publisher"`
+	Events    []ManifestEvent     `json:"events"`
+}
+
+// ManifestEvent is one catalog entry rendered for export and introspection.
+type ManifestEvent struct {
+	Key             string         `json:"key"`
+	ResourceType    string         `json:"resourceType"`
+	EventType       string         `json:"eventType"`
+	Topic           string         `json:"topic"`
+	SchemaVersion   string         `json:"schemaVersion"`
+	DataContentType string         `json:"dataContentType"`
+	DataSchema      string         `json:"dataSchema,omitempty"`
+	SystemEvent     bool           `json:"systemEvent"`
+	Description     string         `json:"description,omitempty"`
+	DefaultPolicy   DeliveryPolicy `json:"defaultPolicy"`
+}
+
+// BuildManifest renders a catalog and publisher descriptor into an exportable
+// document. It performs no file, network, auth, or route side effects.
+func BuildManifest(descriptor PublisherDescriptor, catalog Catalog) (ManifestDocument, error) {
+	descriptor, err := NewPublisherDescriptor(descriptor)
+	if err != nil {
+		return ManifestDocument{}, err
+	}
+
+	definitions := catalog.Definitions()
+
+	events := make([]ManifestEvent, 0, len(definitions))
+	for _, definition := range definitions {
+		definition, err = NewEventDefinition(definition)
+		if err != nil {
+			return ManifestDocument{}, err
+		}
+
+		events = append(events, ManifestEvent{
+			Key:             definition.Key,
+			ResourceType:    definition.ResourceType,
+			EventType:       definition.EventType,
+			Topic:           definition.Topic(),
+			SchemaVersion:   definition.SchemaVersion,
+			DataContentType: definition.DataContentType,
+			DataSchema:      definition.DataSchema,
+			SystemEvent:     definition.SystemEvent,
+			Description:     definition.Description,
+			DefaultPolicy:   definition.DefaultPolicy.Normalize(),
+		})
+	}
+
+	return ManifestDocument{
+		Version:   ManifestVersion,
+		Publisher: descriptor,
+		Events:    events,
+	}, nil
+}
