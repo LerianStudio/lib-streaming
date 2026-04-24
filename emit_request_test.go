@@ -47,7 +47,7 @@ func TestEmitRequest_New_RejectsInvalidShape(t *testing.T) {
 		{
 			name:    "missing definition key",
 			request: EmitRequest{Payload: json.RawMessage(`{}`)},
-			want:    ErrUnknownEventDefinition,
+			want:    ErrInvalidEventDefinition,
 		},
 		{
 			name: "invalid tenant id",

@@ -28,7 +28,7 @@ func NewEmitRequest(request EmitRequest) (EmitRequest, error) {
 
 func newEmitRequest(request EmitRequest, copyPayload bool) (EmitRequest, error) {
 	if request.DefinitionKey == "" {
-		return EmitRequest{}, fmt.Errorf("%w: empty definition key", ErrUnknownEventDefinition)
+		return EmitRequest{}, fmt.Errorf("%w: empty definition key", ErrInvalidEventDefinition)
 	}
 
 	if err := request.PolicyOverride.Validate(); err != nil {
@@ -55,10 +55,10 @@ func newEmitRequest(request EmitRequest, copyPayload bool) (EmitRequest, error) 
 }
 
 func validateEmitRequestHeaderFields(request EmitRequest) error {
-	// DefinitionKey malformed-shape faults map to ErrInvalidEventDefinition,
-	// NOT ErrUnknownEventDefinition — "unknown" is a catalog-lookup miss
-	// (empty key, key not registered), while "invalid" is a structural fault
-	// (control chars, too long). Conflating the two used to mislead callers.
+	// DefinitionKey malformed-shape faults map to ErrInvalidEventDefinition
+	// (control chars, too long, empty bytes), NOT ErrUnknownEventDefinition —
+	// "unknown" is a catalog-lookup miss (key not registered), while "invalid"
+	// is a structural fault. Conflating the two used to mislead callers.
 	checks := [...]headerFieldCheck{
 		{request.DefinitionKey, maxEventIDBytes, ErrInvalidEventDefinition},
 		{request.TenantID, maxTenantIDBytes, ErrInvalidTenantID},
