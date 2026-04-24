@@ -5,10 +5,9 @@ import (
 	"errors"
 	"time"
 
+	"github.com/sony/gobreaker"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
-
-	"github.com/LerianStudio/lib-commons/v5/commons/circuitbreaker"
 )
 
 // Emit publishes a single EmitRequest. It resolves the request through the
@@ -161,8 +160,8 @@ func (p *Producer) Emit(ctx context.Context, request EmitRequest) error {
 		return p.emitAttempt(ctx, span, event, topic, resolved.Request.DefinitionKey, policy, &outcome)
 	})
 	if err != nil {
-		if errors.Is(err, circuitbreaker.ErrBreakerOpen) ||
-			errors.Is(err, circuitbreaker.ErrBreakerHalfOpenFull) {
+		if errors.Is(err, gobreaker.ErrOpenState) ||
+			errors.Is(err, gobreaker.ErrTooManyRequests) {
 			// Breaker short-circuited before the closure ran — emitAttempt
 			// (which contains the outbox fallback) was never invoked. Call
 			// emitCircuitOpenBranch directly so the outbox-backed path still

@@ -4,14 +4,19 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
-
-	"github.com/LerianStudio/lib-commons/v5/commons/security/sanitize"
 )
 
 // redactedMarker is the replacement string substituted for credentials.
-// Delegates to the shared sanitize.SecretRedactionMarker so streaming,
-// rabbitmq, and any future redaction caller emit the same literal.
-const redactedMarker = sanitize.SecretRedactionMarker
+//
+// The literal is intentionally four asterisks — short enough to keep error
+// messages legible, long enough to stand out in logs. Operators (and SIEM
+// rules) may grep for this exact literal. Do not shorten or extend without a
+// CHANGELOG entry; the marker is an implicit operator contract.
+//
+// lib-commons v5.0.0-beta.8 exposed this as `sanitize.SecretRedactionMarker`
+// for cross-package uniformity, but the `commons/security/sanitize` package
+// was removed in v5.0.2. lib-streaming inlines the same literal value.
+const redactedMarker = "****"
 
 // urlPattern matches scheme://rest-of-URL sequences. Kept intentionally simple
 // to mirror github.com/LerianStudio/lib-commons/v5/commons/rabbitmq/rabbitmq.go:129. Credential redaction is applied
