@@ -7,12 +7,16 @@ import (
 
 // resolvedEvent is the internal output of resolving an EmitRequest against the
 // producer catalog and policy overrides.
+//
+// Carries only the fields the Emit hot path actually reads. DefinitionKey
+// (a string) is kept because emit.go threads it through span attributes
+// and outbox envelopes; the full EmitRequest and EventDefinition are
+// intentionally NOT stored — copying them per Emit was dead work.
 type resolvedEvent struct {
-	Definition EventDefinition
-	Request    EmitRequest
-	Event      Event
-	Topic      string
-	Policy     DeliveryPolicy
+	DefinitionKey string
+	Event         Event
+	Topic         string
+	Policy        DeliveryPolicy
 }
 
 func (p *Producer) resolveEvent(request EmitRequest) (resolvedEvent, error) {
@@ -77,11 +81,10 @@ func (p *Producer) resolveEvent(request EmitRequest) (resolvedEvent, error) {
 	}
 
 	return resolvedEvent{
-		Definition: definition,
-		Request:    request,
-		Event:      event,
-		Topic:      topic,
-		Policy:     policy,
+		DefinitionKey: request.DefinitionKey,
+		Event:         event,
+		Topic:         topic,
+		Policy:        policy,
 	}, nil
 }
 

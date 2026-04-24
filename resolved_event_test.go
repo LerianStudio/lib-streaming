@@ -25,9 +25,9 @@ func TestResolveEvent_NilReceiverReturnsZero(t *testing.T) {
 		t.Fatalf("nil.resolveEvent err = %v; want ErrNilProducer", err)
 	}
 
-	// resolvedEvent embeds EmitRequest (json.RawMessage) so the struct is
-	// not comparable; assert zeroness via the scalar fields instead.
-	if got.Topic != "" || got.Definition.Key != "" || got.Event.EventID != "" {
+	// resolvedEvent holds scalar strings + an Event (json.RawMessage) so it
+	// is not comparable; assert zeroness via the scalar fields instead.
+	if got.Topic != "" || got.DefinitionKey != "" || got.Event.EventID != "" {
 		t.Errorf("nil.resolveEvent result = %+v; want zero resolvedEvent", got)
 	}
 }

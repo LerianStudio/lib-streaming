@@ -109,7 +109,7 @@ func (p *Producer) Emit(ctx context.Context, request EmitRequest) error {
 	ctx, span := p.tracer.Start(ctx, emitSpanName, trace.WithSpanKind(trace.SpanKindProducer))
 	defer span.End()
 
-	p.setEmitSpanAttributes(span, event, topic, resolved.Request.DefinitionKey, policy)
+	p.setEmitSpanAttributes(span, event, topic, resolved.DefinitionKey, policy)
 
 	// outcome tracks the terminal branch so the deferred metric recorders
 	// and the span attribute write a consistent value. Defaulting to
@@ -131,7 +131,7 @@ func (p *Producer) Emit(ctx context.Context, request EmitRequest) error {
 	}()
 
 	if policy.outboxAlways() {
-		if obxErr := p.publishToOutbox(ctx, event, topic, policy, resolved.Request.DefinitionKey); obxErr != nil {
+		if obxErr := p.publishToOutbox(ctx, event, topic, policy, resolved.DefinitionKey); obxErr != nil {
 			outcome = outcomeOutboxFailed
 
 			span.RecordError(obxErr)
@@ -155,7 +155,7 @@ func (p *Producer) Emit(ctx context.Context, request EmitRequest) error {
 	// ErrOpenState / ErrTooManyRequests into its own diagnostic so callers
 	// can still errors.Is for those sentinels.
 	_, err = p.cb.Execute(func() (any, error) {
-		return p.emitAttempt(ctx, span, event, topic, resolved.Request.DefinitionKey, policy, &outcome)
+		return p.emitAttempt(ctx, span, event, topic, resolved.DefinitionKey, policy, &outcome)
 	})
 	if err != nil {
 		if errors.Is(err, gobreaker.ErrOpenState) ||
@@ -171,7 +171,7 @@ func (p *Producer) Emit(ctx context.Context, request EmitRequest) error {
 			// gobreaker is OPEN" is a real race, not hypothetical — and
 			// without this direct call the outbox branch would be skipped
 			// entirely whenever the breaker short-circuits.
-			_, err = p.emitCircuitOpenBranch(ctx, span, event, topic, resolved.Request.DefinitionKey, policy, &outcome)
+			_, err = p.emitCircuitOpenBranch(ctx, span, event, topic, resolved.DefinitionKey, policy, &outcome)
 		}
 
 		if err != nil {
