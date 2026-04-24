@@ -208,6 +208,17 @@ func NewProducer(ctx context.Context, cfg Config, opts ...EmitterOption) (*Produ
 		}
 	}
 
+	// Catalog-level SystemEvent capability gate. Rejecting at construction —
+	// not at Emit — means a misconfigured bootstrap fails fast at startup
+	// instead of silently failing every system-event emission in production.
+	if !resolvedOpts.allowSystemEvents {
+		for _, def := range resolvedOpts.catalog.Definitions() {
+			if def.SystemEvent {
+				return nil, fmt.Errorf("%w: catalog contains system event %q but Producer was not constructed with WithAllowSystemEvents()", ErrSystemEventsNotAllowed, def.Key)
+			}
+		}
+	}
+
 	// Build the franz-go options slice. Every knob is pinned explicitly per
 	// TRD risk R1 — franz-go's defaults have flipped between versions in
 	// the past, and a silent latency change would be operationally

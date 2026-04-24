@@ -20,17 +20,13 @@ import (
 // --- Group 1.1: WithAllowSystemEvents opt-in ----------------------------------
 
 // TestProducer_EmitPreFlight_SystemEventWithoutOpt_Rejected verifies that a
-// SystemEvent=true Emit on a Producer without WithAllowSystemEvents returns
-// ErrSystemEventsNotAllowed synchronously, before any broker I/O.
+// catalog containing a SystemEvent=true definition, when passed to New
+// without WithAllowSystemEvents, fails at CONSTRUCTION with
+// ErrSystemEventsNotAllowed. The earlier preflight-level rejection is now
+// dead code for catalog-resolved events — the construction gate added in
+// Task #12 pre-empts it so a misconfigured bootstrap fails fast at startup.
 func TestProducer_EmitPreFlight_SystemEventWithoutOpt_Rejected(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
-
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
-	if err != nil {
-		t.Fatalf("New err = %v", err)
-	}
-
-	t.Cleanup(func() { _ = emitter.Close() })
 
 	systemCatalog, err := NewCatalog(EventDefinition{
 		Key:          "transaction.created",
@@ -42,17 +38,9 @@ func TestProducer_EmitPreFlight_SystemEventWithoutOpt_Rejected(t *testing.T) {
 		t.Fatalf("NewCatalog() error = %v", err)
 	}
 
-	emitter, err = New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(systemCatalog))
-	if err != nil {
-		t.Fatalf("New err = %v", err)
-	}
-	t.Cleanup(func() { _ = emitter.Close() })
-
-	event := EmitRequest{DefinitionKey: "transaction.created", Payload: json.RawMessage(`{}`)}
-
-	err = emitter.Emit(context.Background(), event)
+	_, err = New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(systemCatalog))
 	if !errors.Is(err, ErrSystemEventsNotAllowed) {
-		t.Fatalf("Emit err = %v; want ErrSystemEventsNotAllowed", err)
+		t.Fatalf("New err = %v; want ErrSystemEventsNotAllowed at construction", err)
 	}
 }
 

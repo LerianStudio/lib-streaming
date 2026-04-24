@@ -188,6 +188,64 @@ func TestProducer_New_RealProducer_AsProducer(t *testing.T) {
 	}
 }
 
+// TestNewProducer_SystemEventInCatalogWithoutOptionFails asserts the
+// catalog-level capability gate: a catalog containing any SystemEvent=true
+// definition cannot construct a Producer unless WithAllowSystemEvents is
+// explicitly opted in. Failing fast at construction prevents silent
+// per-Emit rejections in production.
+func TestNewProducer_SystemEventInCatalogWithoutOptionFails(t *testing.T) {
+	cfg, _ := kfakeConfig(t)
+
+	catalog, err := NewCatalog(EventDefinition{
+		Key:           "ledger.reaper_pass",
+		ResourceType:  "ledger",
+		EventType:     "reaper_pass",
+		SchemaVersion: "1.0.0",
+		SystemEvent:   true,
+	})
+	if err != nil {
+		t.Fatalf("NewCatalog err = %v", err)
+	}
+
+	_, err = NewProducer(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(catalog))
+	if !errors.Is(err, ErrSystemEventsNotAllowed) {
+		t.Fatalf("NewProducer err = %v; want ErrSystemEventsNotAllowed", err)
+	}
+
+	if !strings.Contains(err.Error(), "ledger.reaper_pass") {
+		t.Errorf("err = %q; want substring %q", err.Error(), "ledger.reaper_pass")
+	}
+}
+
+// TestNewProducer_SystemEventInCatalogWithOptionSucceeds is the positive
+// counterpart: the same catalog constructs cleanly when
+// WithAllowSystemEvents is supplied.
+func TestNewProducer_SystemEventInCatalogWithOptionSucceeds(t *testing.T) {
+	cfg, _ := kfakeConfig(t)
+
+	catalog, err := NewCatalog(EventDefinition{
+		Key:           "ledger.reaper_pass",
+		ResourceType:  "ledger",
+		EventType:     "reaper_pass",
+		SchemaVersion: "1.0.0",
+		SystemEvent:   true,
+	})
+	if err != nil {
+		t.Fatalf("NewCatalog err = %v", err)
+	}
+
+	p, err := NewProducer(context.Background(), cfg,
+		WithLogger(log.NewNop()),
+		WithCatalog(catalog),
+		WithAllowSystemEvents(),
+	)
+	if err != nil {
+		t.Fatalf("NewProducer err = %v; want nil", err)
+	}
+
+	t.Cleanup(func() { _ = p.Close() })
+}
+
 func TestProducer_NewProducer_RejectsUnknownPolicyOverrideKey(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 	cfg.PolicyOverrides = map[string]DeliveryPolicyOverride{
