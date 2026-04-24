@@ -136,14 +136,18 @@ func (p *Producer) decodeOutboxRow(ctx context.Context, row *outbox.OutboxEvent)
 	}
 
 	// Backward-compat shim: v0.1.0 rows persisted json.Marshal(Event) directly,
-	// with no envelope wrapper. The JSON unmarshal above succeeds against the
-	// envelope struct but leaves Version=0 because the legacy payload has no
-	// "version" field. Attempt a second unmarshal into a bare Event and, if it
-	// produces a non-empty event, synthesize a valid envelope around it so the
-	// Dispatcher can drain the row. Operators must still drain the outbox to
-	// retire this code path — we log at WARN on every hit so the residue is
-	// visible.
-	if envelope.Version == 0 {
+	// with no envelope wrapper. Gate on ABSENCE of the "version" field, not on
+	// envelope.Version==0 — a malformed or tampered v0.2.0+ row that explicitly
+	// set "version": 0 would otherwise bypass strict envelope validation and be
+	// synthesized into a valid-looking row. Attempt a second unmarshal into a
+	// bare Event and, if it produces a non-empty event, synthesize a valid
+	// envelope around it so the Dispatcher can drain the row. Operators must
+	// still drain the outbox to retire this code path — we log at WARN on
+	// every hit so the residue is visible.
+	var probe struct {
+		Version *int `json:"version"`
+	}
+	if err := json.Unmarshal(row.Payload, &probe); err == nil && probe.Version == nil {
 		var legacyEvent Event
 		// Event has no `json:` tags — encoding uses Go field names verbatim.
 		// The musttag linter flags this; suppress with the same justification

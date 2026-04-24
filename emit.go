@@ -19,8 +19,9 @@ import (
 // caller faults do NOT.
 //
 // Circuit-open behavior:
-//   - With WithOutboxRepository wired: Emit writes the event to the outbox
-//     and returns nil. The outbox Dispatcher will drain it via the handler
+//   - With WithOutboxRepository or WithOutboxWriter wired (mutually
+//     exclusive; last call wins): Emit writes the event to the outbox and
+//     returns nil. The outbox Dispatcher will drain it via the handler
 //     registered by RegisterOutboxRelay (bypasses the breaker on replay).
 //   - Without an outbox wired: Emit returns ErrCircuitOpen so the caller
 //     can fail fast or implement its own fallback.

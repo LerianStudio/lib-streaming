@@ -101,7 +101,7 @@
 //     SchemaVersion,DataContentType,DataSchema}, ErrPayloadTooLarge,
 //     ErrNotJSON, ErrEventDisabled, ErrInvalidEventDefinition,
 //     ErrDuplicateEventDefinition, ErrUnknownEventDefinition,
-//     ErrInvalidDeliveryPolicy.
+//     ErrInvalidDeliveryPolicy, ErrInvalidPublisherDescriptor.
 //   - Config validation (LoadConfig): ErrMissingBrokers, ErrMissingSource,
 //     ErrInvalidCompression, ErrInvalidAcks.
 //   - Lifecycle / wiring (NOT caller errors — IsCallerError returns false):

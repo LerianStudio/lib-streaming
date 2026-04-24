@@ -516,6 +516,67 @@ func TestDecodeOutboxRow_LegacyEmptyPayload_StillRejects(t *testing.T) {
 	}
 }
 
+// TestDecodeOutboxRow_ExplicitVersionZero_Rejects proves the legacy shim
+// does NOT synthesize a v0.2.0 envelope for a payload that explicitly sets
+// "version": 0. The shim must gate on ABSENCE of the version field — a
+// malformed or tampered row that sets version:0 explicitly must be rejected
+// by envelope.Validate() rather than bypassing strict validation via the
+// legacy fallback.
+func TestDecodeOutboxRow_ExplicitVersionZero_Rejects(t *testing.T) {
+	cfg, _ := kfakeConfig(t)
+
+	emitter, err := New(context.Background(), cfg,
+		WithLogger(log.NewNop()),
+		WithCatalog(sampleCatalog(t)),
+	)
+	if err != nil {
+		t.Fatalf("New err = %v", err)
+	}
+	t.Cleanup(func() { _ = emitter.Close() })
+
+	p := asProducer(t, emitter)
+
+	// Legacy-shaped event fields + explicit version:0. Without the absence
+	// gate, the shim would synthesize a valid-looking envelope around this
+	// payload and silently accept a tampered row.
+	legacyEvent := sampleEvent()
+	legacyEvent.Payload = json.RawMessage(`{}`)
+	legacyEvent.ApplyDefaults()
+
+	tampered := map[string]any{
+		"version":         0,
+		"TenantID":        legacyEvent.TenantID,
+		"ResourceType":    legacyEvent.ResourceType,
+		"EventType":       legacyEvent.EventType,
+		"EventID":         legacyEvent.EventID,
+		"SchemaVersion":   legacyEvent.SchemaVersion,
+		"Timestamp":       legacyEvent.Timestamp,
+		"Source":          legacyEvent.Source,
+		"DataContentType": legacyEvent.DataContentType,
+		"Payload":         legacyEvent.Payload,
+	}
+	payload, err := json.Marshal(tampered)
+	if err != nil {
+		t.Fatalf("json.Marshal tampered err = %v", err)
+	}
+
+	row := &outbox.OutboxEvent{
+		ID:          newTestUUIDv7(t),
+		EventType:   StreamingOutboxEventType,
+		AggregateID: newTestUUIDv7(t),
+		Payload:     payload,
+	}
+
+	_, err = p.decodeOutboxRow(context.Background(), row)
+	if err == nil {
+		t.Fatal("decodeOutboxRow err = nil; want rejection for explicit version:0")
+	}
+
+	if !strings.Contains(err.Error(), "invalid outbox envelope") {
+		t.Errorf("err = %q; want substring %q", err.Error(), "invalid outbox envelope")
+	}
+}
+
 // TestProducer_EndToEnd_OutboxFallbackAndRelay wires the full T4 happy
 // path as callers would experience it:
 //
