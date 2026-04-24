@@ -1,6 +1,8 @@
 package streaming
 
 import (
+	"fmt"
+
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
@@ -35,7 +37,7 @@ const emitSpanName = "streaming.emit"
 //
 // topic is threaded from Emit (already computed once per Emit) so we avoid
 // recomputing event.Topic() per span attribute set.
-func (p *Producer) setEmitSpanAttributes(span trace.Span, event Event, topic string) {
+func (p *Producer) setEmitSpanAttributes(span trace.Span, event Event, topic, definitionKey string, policy DeliveryPolicy) {
 	if !span.IsRecording() {
 		// Fast path for no-op spans: building the attribute slice is pure
 		// waste when the backend will drop them all. IsRecording is the
@@ -43,6 +45,12 @@ func (p *Producer) setEmitSpanAttributes(span trace.Span, event Event, topic str
 		return
 	}
 
+	// event.policy encodes the three delivery modes into one attribute so
+	// span cardinality stays bounded at 10 keys (down from 12 in v0.2.0 and
+	// one fewer than v0.1.0). event.delivery_enabled was dropped entirely
+	// because it is always true by the time we set span attributes — the
+	// !hasDeliveryPath gate in emit.go short-circuits before the span is
+	// ever created.
 	span.SetAttributes(
 		attribute.String("messaging.system", "kafka"),
 		attribute.String("messaging.destination.name", topic),
@@ -53,8 +61,10 @@ func (p *Producer) setEmitSpanAttributes(span trace.Span, event Event, topic str
 		attribute.String("messaging.client.id", p.cfg.ClientID),
 		attribute.String("event.resource_type", event.ResourceType),
 		attribute.String("event.event_type", event.EventType),
+		attribute.String("event.definition_key", definitionKey),
 		attribute.String("tenant.id", event.TenantID),
 		attribute.String("streaming.producer_id", p.producerID),
+		attribute.String("event.policy", formatPolicyAttr(policy)),
 	)
 
 	if p.logger.Enabled(log.LevelDebug) {
@@ -65,4 +75,12 @@ func (p *Producer) setEmitSpanAttributes(span trace.Span, event Event, topic str
 
 		span.SetAttributes(attribute.String("messaging.kafka.message.key", partKey))
 	}
+}
+
+// formatPolicyAttr renders the three delivery modes into a single
+// "direct:<mode>,outbox:<mode>,dlq:<mode>" string so the span carries one
+// attribute instead of three. Operators grep this string instead of joining
+// three keys; trace backend cardinality is lower.
+func formatPolicyAttr(policy DeliveryPolicy) string {
+	return fmt.Sprintf("direct:%s,outbox:%s,dlq:%s", policy.Direct, policy.Outbox, policy.DLQ)
 }

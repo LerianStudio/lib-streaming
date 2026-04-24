@@ -18,10 +18,10 @@ import (
 // Emit is safe for concurrent use from any number of goroutines. Implementations
 // must document their concurrency and lifecycle semantics in their own godoc.
 type Emitter interface {
-	// Emit publishes a single Event. The context carries cancellation and
-	// deadline; tenant identity is in Event.TenantID. See EmitError for
-	// the structured diagnostic envelope returned on failure.
-	Emit(ctx context.Context, event Event) error
+	// Emit publishes a single cataloged event. The context carries cancellation
+	// and deadline; tenant identity is in EmitRequest.TenantID. See EmitError
+	// for the structured diagnostic envelope returned on failure.
+	Emit(ctx context.Context, request EmitRequest) error
 
 	// Close releases any underlying connections and flushes buffered records.
 	// Close MUST be idempotent: subsequent calls return nil without error.
@@ -160,12 +160,41 @@ var (
 	// travels as ce-dataschema.
 	ErrInvalidDataSchema = errors.New("streaming: Event.DataSchema contains control chars or exceeds 2048 bytes")
 
+	// ErrInvalidEventDefinition is returned when an EventDefinition is
+	// structurally invalid: missing key/resource/event, invalid header-bound
+	// metadata, or an invalid default delivery policy.
+	ErrInvalidEventDefinition = errors.New("streaming: invalid event definition")
+
+	// ErrInvalidOutboxEnvelope is returned by OutboxEnvelope.Validate when
+	// the envelope's own shape is malformed independently of the embedded
+	// Event — typically an empty Topic or a Topic that does not match the
+	// Event's derived topic. Distinct from ErrInvalidEventDefinition, which
+	// concerns catalog entries, not persisted envelopes.
+	ErrInvalidOutboxEnvelope = errors.New("streaming: invalid outbox envelope")
+
+	// ErrDuplicateEventDefinition is returned by NewCatalog when two event
+	// definitions use the same key or resolve to the same resource/event
+	// contract. Catalogs are immutable and must be unambiguous.
+	ErrDuplicateEventDefinition = errors.New("streaming: duplicate event definition")
+
+	// ErrUnknownEventDefinition is returned when a caller references a
+	// definition key that is not present in the Catalog.
+	ErrUnknownEventDefinition = errors.New("streaming: unknown event definition")
+
+	// ErrInvalidDeliveryPolicy is returned when a DeliveryPolicy or
+	// DeliveryPolicyOverride carries an unsupported mode value.
+	ErrInvalidDeliveryPolicy = errors.New("streaming: invalid delivery policy")
+
+	// ErrInvalidPublisherDescriptor is returned when PublisherDescriptor is
+	// missing app-owned introspection metadata required to build a manifest.
+	ErrInvalidPublisherDescriptor = errors.New("streaming: invalid publisher descriptor")
+
 	// ErrEmitterClosed is returned from Emit after Close has been called.
 	ErrEmitterClosed = errors.New("streaming: emitter is closed")
 
-	// ErrEventDisabled is returned when Config.EventToggles has disabled the
-	// resource.event combination at runtime.
-	ErrEventDisabled = errors.New("streaming: event disabled by configuration toggle")
+	// ErrEventDisabled is returned when the resolved delivery policy disables
+	// an event at runtime.
+	ErrEventDisabled = errors.New("streaming: event disabled by delivery policy")
 
 	// ErrPayloadTooLarge is returned when Event.Payload exceeds the 1 MiB
 	// limit. Checked synchronously before any I/O.
@@ -196,9 +225,9 @@ var (
 	ErrNilProducer = errors.New("streaming: nil producer")
 
 	// ErrCircuitOpen is returned from Emit when the circuit breaker is open
-	// AND no outbox repository has been wired via WithOutboxRepository. When
-	// an outbox IS configured, a circuit-open Emit writes to the outbox and
-	// returns nil instead — callers never see this sentinel in that case.
+	// and the resolved policy does not permit configured outbox fallback.
+	// When fallback is configured and an OutboxWriter is wired, a circuit-open
+	// Emit writes to the outbox and returns nil instead.
 	//
 	// ErrCircuitOpen is NOT a caller error — it signals runtime
 	// infrastructure degradation, not a caller-side mistake. IsCallerError
@@ -206,15 +235,25 @@ var (
 	ErrCircuitOpen = errors.New("streaming: circuit breaker open")
 
 	// ErrOutboxNotConfigured is returned from publishToOutbox when the
-	// Producer has no OutboxRepository wired. Reachable only through the
+	// Producer has no OutboxWriter wired. Reachable only through the
 	// unexported helper; Emit itself falls back to ErrCircuitOpen when the
 	// circuit is open and no outbox is configured, not to this sentinel.
 	//
 	// NOT a caller error — it signals a setup/infrastructure gap (the
-	// operator forgot WithOutboxRepository). IsCallerError returns false.
-	ErrOutboxNotConfigured = errors.New("streaming: outbox repository not configured for fallback")
+	// operator forgot WithOutboxRepository/WithOutboxWriter). IsCallerError
+	// returns false.
+	ErrOutboxNotConfigured = errors.New("streaming: outbox writer not configured for fallback")
 
-	// ErrNilOutboxRegistry is returned from RegisterOutboxHandler when the
+	// ErrOutboxTxUnsupported is returned when an ambient transaction is present
+	// but the configured OutboxWriter does not implement TransactionalOutboxWriter.
+	//
+	// NOT a caller error — it signals a wiring/setup gap (the operator
+	// installed a non-transactional writer but callers expect transactional
+	// outbox semantics). IsCallerError returns false for it. Parallels
+	// ErrCircuitOpen and ErrOutboxNotConfigured.
+	ErrOutboxTxUnsupported = errors.New("streaming: outbox writer does not support ambient transactions")
+
+	// ErrNilOutboxRegistry is returned from RegisterOutboxRelay when the
 	// supplied *outbox.HandlerRegistry is nil. Caller must construct the
 	// registry before handing it to the Producer.
 	//
@@ -305,6 +344,12 @@ var callerErrorSentinels = []error{
 	ErrInvalidSchemaVersion,
 	ErrInvalidDataContentType,
 	ErrInvalidDataSchema,
+	ErrInvalidEventDefinition,
+	ErrInvalidOutboxEnvelope,
+	ErrDuplicateEventDefinition,
+	ErrUnknownEventDefinition,
+	ErrInvalidDeliveryPolicy,
+	ErrInvalidPublisherDescriptor,
 }
 
 // IsCallerError reports whether err represents a caller-correctable fault
@@ -318,7 +363,10 @@ var callerErrorSentinels = []error{
 //     ErrInvalidAcks, ErrInvalidTenantID, ErrInvalidResourceType,
 //     ErrInvalidEventType, ErrInvalidSource, ErrInvalidSubject,
 //     ErrInvalidEventID, ErrInvalidSchemaVersion, ErrInvalidDataContentType,
-//     ErrInvalidDataSchema
+//     ErrInvalidDataSchema, ErrInvalidEventDefinition,
+//     ErrInvalidOutboxEnvelope, ErrDuplicateEventDefinition,
+//     ErrUnknownEventDefinition, ErrInvalidDeliveryPolicy,
+//     ErrInvalidPublisherDescriptor
 //   - An *EmitError whose Class is ClassSerialization, ClassValidation, or
 //     ClassAuth.
 //

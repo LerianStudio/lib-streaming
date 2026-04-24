@@ -187,7 +187,7 @@ func TestMetrics_LazyInit_NilFactory_NoPanic_WarnsOnce(t *testing.T) {
 	// Exercise every record* method multiple times. None should panic, none
 	// should produce more than the single WARN.
 	for i := 0; i < 5; i++ {
-		m.recordEmitted(ctx, "topic.a", "send", outcomeProduced)
+		m.recordEmitted(ctx, "topic.a", outcomeProduced)
 		m.recordEmitDuration(ctx, "topic.a", outcomeProduced, int64(i))
 		m.recordDLQ(ctx, "topic.a", "auth_error")
 		m.recordDLQFailed(ctx, "topic.a")
@@ -217,7 +217,7 @@ func TestMetrics_LazyInit_NilReceiver_NoPanic(t *testing.T) {
 	var m *streamingMetrics
 
 	ctx := context.Background()
-	m.recordEmitted(ctx, "t", "send", outcomeProduced)
+	m.recordEmitted(ctx, "t", outcomeProduced)
 	m.recordEmitDuration(ctx, "t", outcomeProduced, 1)
 	m.recordDLQ(ctx, "t", "auth_error")
 	m.recordDLQFailed(ctx, "t")
@@ -237,7 +237,7 @@ func TestMetrics_LazyInit_NilLogger_SubstitutesNop(t *testing.T) {
 	}
 
 	// Must not panic when exercised.
-	m.recordEmitted(context.Background(), "t", "send", outcomeProduced)
+	m.recordEmitted(context.Background(), "t", outcomeProduced)
 }
 
 // --- Integration with Producer.Emit. ---
@@ -249,7 +249,7 @@ func TestMetrics_Emit_RecordsEmittedCounterWithOutcomeProduced(t *testing.T) {
 	factory, snapshot := newManualMeterSetup(t)
 
 	emitter, err := New(context.Background(), cfg,
-		WithLogger(log.NewNop()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithMetricsFactory(factory),
 	)
 	if err != nil {
@@ -260,7 +260,7 @@ func TestMetrics_Emit_RecordsEmittedCounterWithOutcomeProduced(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := emitter.Emit(ctx, sampleEvent()); err != nil {
+	if err := emitter.Emit(ctx, sampleRequest()); err != nil {
 		t.Fatalf("Emit err = %v", err)
 	}
 
@@ -299,7 +299,7 @@ func TestMetrics_Emit_RecordsDurationHistogram(t *testing.T) {
 	factory, snapshot := newManualMeterSetup(t)
 
 	emitter, err := New(context.Background(), cfg,
-		WithLogger(log.NewNop()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithMetricsFactory(factory),
 	)
 	if err != nil {
@@ -310,7 +310,7 @@ func TestMetrics_Emit_RecordsDurationHistogram(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := emitter.Emit(ctx, sampleEvent()); err != nil {
+	if err := emitter.Emit(ctx, sampleRequest()); err != nil {
 		t.Fatalf("Emit err = %v", err)
 	}
 
@@ -336,7 +336,7 @@ func TestMetrics_Emit_PreflightFailure_RecordsCallerErrorOutcome(t *testing.T) {
 	factory, snapshot := newManualMeterSetup(t)
 
 	emitter, err := New(context.Background(), cfg,
-		WithLogger(log.NewNop()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithMetricsFactory(factory),
 	)
 	if err != nil {
@@ -344,7 +344,7 @@ func TestMetrics_Emit_PreflightFailure_RecordsCallerErrorOutcome(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = emitter.Close() })
 
-	bad := sampleEvent()
+	bad := sampleRequest()
 	bad.TenantID = ""
 
 	if err := emitter.Emit(context.Background(), bad); !errors.Is(err, ErrMissingTenantID) {
@@ -378,6 +378,40 @@ func TestMetrics_Emit_PreflightFailure_RecordsCallerErrorOutcome(t *testing.T) {
 	}
 }
 
+func TestMetrics_Emit_UnknownDefinitionUsesBoundedMetricTopic(t *testing.T) {
+	cfg, _ := kfakeConfig(t)
+	factory, snapshot := newManualMeterSetup(t)
+
+	emitter, err := New(context.Background(), cfg,
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
+		WithMetricsFactory(factory),
+	)
+	if err != nil {
+		t.Fatalf("New err = %v", err)
+	}
+	t.Cleanup(func() { _ = emitter.Close() })
+
+	bad := sampleRequest()
+	bad.DefinitionKey = strings.Repeat("bad", 20)
+
+	if err := emitter.Emit(context.Background(), bad); !errors.Is(err, ErrUnknownEventDefinition) {
+		t.Fatalf("Emit err = %v; want ErrUnknownEventDefinition", err)
+	}
+
+	m, ok := findMetric(snapshot(), metricNameEmitted)
+	if !ok {
+		t.Fatalf("metric %q not found", metricNameEmitted)
+	}
+
+	_, attrSets := sumInt64DataPoints(t, m)
+	if len(attrSets) != 1 {
+		t.Fatalf("attrSets len = %d; want 1", len(attrSets))
+	}
+	if got := attrSets[0]["topic"]; got != metricTopicUnresolved {
+		t.Fatalf("topic = %q; want %q", got, metricTopicUnresolved)
+	}
+}
+
 // TestMetrics_DLQ_RecordsDlqCounter: force a source-topic publish failure
 // into a DLQ-routable class; the DLQ counter records (topic, error_class).
 func TestMetrics_DLQ_RecordsDlqCounter(t *testing.T) {
@@ -389,7 +423,7 @@ func TestMetrics_DLQ_RecordsDlqCounter(t *testing.T) {
 	factory, snapshot := newManualMeterSetup(t)
 
 	emitter, err := New(context.Background(), cfg,
-		WithLogger(log.NewNop()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithMetricsFactory(factory),
 	)
 	if err != nil {
@@ -400,7 +434,7 @@ func TestMetrics_DLQ_RecordsDlqCounter(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	err = emitter.Emit(ctx, sampleEvent())
+	err = emitter.Emit(ctx, sampleRequest())
 	if err == nil {
 		t.Fatalf("Emit err = nil; want an error (source publish was forced to fail)")
 	}
@@ -466,7 +500,7 @@ func TestMetrics_DLQFailed_RecordsCounter(t *testing.T) {
 	factory, snapshot := newManualMeterSetup(t)
 
 	emitter, err := New(context.Background(), cfg,
-		WithLogger(log.NewNop()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithMetricsFactory(factory),
 	)
 	if err != nil {
@@ -477,7 +511,7 @@ func TestMetrics_DLQFailed_RecordsCounter(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := emitter.Emit(ctx, sampleEvent()); err == nil {
+	if err := emitter.Emit(ctx, sampleRequest()); err == nil {
 		t.Fatalf("Emit err = nil; want an error (source + DLQ forced to fail)")
 	}
 
@@ -517,7 +551,7 @@ func TestMetrics_OutboxRouted_RecordsCounter(t *testing.T) {
 	repo := &fakeOutboxRepo{}
 
 	emitter, err := New(context.Background(), cfg,
-		WithLogger(log.NewNop()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithMetricsFactory(factory),
 		WithOutboxRepository(repo),
 	)
@@ -536,7 +570,7 @@ func TestMetrics_OutboxRouted_RecordsCounter(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := emitter.Emit(ctx, sampleEvent()); err != nil {
+	if err := emitter.Emit(ctx, sampleRequest()); err != nil {
 		t.Fatalf("Emit err = %v; want nil (outbox absorbs circuit_open)", err)
 	}
 
@@ -592,7 +626,7 @@ func TestMetrics_CircuitOpen_NoOutbox_RecordsCircuitOpenOutcome(t *testing.T) {
 	factory, snapshot := newManualMeterSetup(t)
 
 	emitter, err := New(context.Background(), cfg,
-		WithLogger(log.NewNop()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithMetricsFactory(factory),
 	)
 	if err != nil {
@@ -603,7 +637,7 @@ func TestMetrics_CircuitOpen_NoOutbox_RecordsCircuitOpenOutcome(t *testing.T) {
 	p := asProducer(t, emitter)
 	p.cbStateFlag.Store(flagCBOpen)
 
-	err = emitter.Emit(context.Background(), sampleEvent())
+	err = emitter.Emit(context.Background(), sampleRequest())
 	if !errors.Is(err, ErrCircuitOpen) {
 		t.Fatalf("Emit err = %v; want ErrCircuitOpen", err)
 	}
@@ -633,7 +667,7 @@ func TestMetrics_CircuitState_UpdatedByListener(t *testing.T) {
 	factory, snapshot := newManualMeterSetup(t)
 
 	emitter, err := New(context.Background(), cfg,
-		WithLogger(log.NewNop()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithMetricsFactory(factory),
 	)
 	if err != nil {
@@ -688,7 +722,7 @@ func TestMetrics_CircuitState_UnknownStateDoesNotRecord(t *testing.T) {
 	factory, snapshot := newManualMeterSetup(t)
 
 	emitter, err := New(context.Background(), cfg,
-		WithLogger(log.NewNop()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithMetricsFactory(factory),
 	)
 	if err != nil {
@@ -739,7 +773,7 @@ func TestMetrics_NoTenantIDLabel_10kEmits(t *testing.T) {
 	factory, snapshot := newManualMeterSetup(t)
 
 	emitter, err := New(context.Background(), cfg,
-		WithLogger(log.NewNop()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithMetricsFactory(factory),
 	)
 	if err != nil {
@@ -753,7 +787,7 @@ func TestMetrics_NoTenantIDLabel_10kEmits(t *testing.T) {
 	const emits = 10_000
 
 	for i := 0; i < emits; i++ {
-		ev := sampleEvent()
+		ev := sampleRequest()
 		ev.TenantID = fmt.Sprintf("tenant-%06d", i)
 		// Inline a distinct payload per emit so json.Valid still passes but
 		// there's no payload-side collapse through caching.

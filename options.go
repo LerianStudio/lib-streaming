@@ -49,11 +49,9 @@ type emitterOptions struct {
 	// Zero means "use the STREAMING_CLOSE_TIMEOUT_S config default (30s)".
 	closeTimeout time.Duration
 
-	// outbox, when non-nil, enables circuit-open fallback: Emit writes the
-	// event to the outbox instead of returning ErrCircuitOpen while the
-	// breaker is open. The caller is responsible for constructing and
-	// owning the OutboxRepository — streaming never builds one itself.
-	outbox outbox.OutboxRepository
+	// outboxWriter, when non-nil, enables policy-selected outbox writes. The
+	// caller is responsible for constructing and owning the writer.
+	outboxWriter OutboxWriter
 
 	// tlsConfig, when non-nil, is threaded to kgo.DialTLSConfig so broker
 	// connections run over TLS. Nil means plaintext (the default). See
@@ -69,6 +67,10 @@ type emitterOptions struct {
 	// a Producer that has not opted in rejects SystemEvent emissions with
 	// ErrSystemEventsNotAllowed at preflight. See WithAllowSystemEvents.
 	allowSystemEvents bool
+
+	// catalog is the immutable source of truth for catalog-backed emission,
+	// manifest export, and introspection.
+	catalog Catalog
 }
 
 // WithLogger sets the structured logger used across the package. When not
@@ -125,21 +127,58 @@ func WithCloseTimeout(d time.Duration) EmitterOption {
 	}
 }
 
-// WithOutboxRepository wires an OutboxRepository so the Producer can fall
-// back to durable storage when the circuit breaker is open. Without this
-// option, circuit-open Emits return ErrCircuitOpen.
+// WithOutboxRepository adapts a lib-commons OutboxRepository so the Producer
+// can write versioned streaming relay envelopes. Without this option or
+// WithOutboxWriter, outbox-selected emits fail with ErrOutboxNotConfigured and
+// circuit-open fallback returns ErrCircuitOpen.
 //
-// The typical pairing is: the caller also invokes
-// (*Producer).RegisterOutboxHandler on the process-level outbox Dispatcher's
-// HandlerRegistry so outbox rows are drained back through publishDirect once
-// the broker recovers. See outbox_handler.go for that relay path.
+// The typical pairing is: the caller also invokes (*Producer).RegisterOutboxRelay
+// on the process-level outbox Dispatcher's HandlerRegistry so outbox rows are
+// drained back through publishDirect once the broker recovers.
 //
 // The Producer NEVER constructs an OutboxRepository itself; ownership and
-// lifecycle stay with the consuming service. Passing nil is equivalent to
-// not calling this option (circuit-open → ErrCircuitOpen).
+// lifecycle stay with the consuming service.
+//
+// Passing nil is NOT a harmless no-op: under the last-call-wins semantics a nil
+// argument acts as an explicit reset and clears any previously selected outbox
+// writer (including a transactional one installed via a prior WithOutboxWriter
+// call). Only pass nil when you intend to disable outbox plumbing.
+//
+// Mutually exclusive with WithOutboxWriter — last call wins. Mixing them
+// silently loses transactional capability if the custom writer does not
+// implement TransactionalOutboxWriter.
 func WithOutboxRepository(repo outbox.OutboxRepository) EmitterOption {
 	return func(o *emitterOptions) {
-		o.outbox = repo
+		if isNilInterface(repo) {
+			o.outboxWriter = nil
+
+			return
+		}
+
+		o.outboxWriter = &libCommonsOutboxWriter{repo: repo}
+	}
+}
+
+// WithOutboxWriter wires a custom outbox writer boundary.
+//
+// Passing nil is NOT a harmless no-op: under the last-call-wins semantics a nil
+// argument acts as an explicit reset and clears any previously selected outbox
+// writer (including a repository-adapted one installed via a prior
+// WithOutboxRepository call). Only pass nil when you intend to disable outbox
+// plumbing.
+//
+// Mutually exclusive with WithOutboxRepository — last call wins. Mixing them
+// silently loses transactional capability if the custom writer does not
+// implement TransactionalOutboxWriter.
+func WithOutboxWriter(writer OutboxWriter) EmitterOption {
+	return func(o *emitterOptions) {
+		if isNilInterface(writer) {
+			o.outboxWriter = nil
+
+			return
+		}
+
+		o.outboxWriter = writer
 	}
 }
 
@@ -216,5 +255,13 @@ func WithSASL(mech sasl.Mechanism) EmitterOption {
 func WithAllowSystemEvents() EmitterOption {
 	return func(o *emitterOptions) {
 		o.allowSystemEvents = true
+	}
+}
+
+// WithCatalog wires the immutable event catalog used by the catalog-backed
+// EmitRequest path, manifest export, and /streaming introspection helpers.
+func WithCatalog(catalog Catalog) EmitterOption {
+	return func(o *emitterOptions) {
+		o.catalog = catalog
 	}
 }

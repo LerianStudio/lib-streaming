@@ -32,6 +32,10 @@ func TestIsCallerError(t *testing.T) {
 		{"ErrMissingBrokers", ErrMissingBrokers},
 		{"ErrInvalidCompression", ErrInvalidCompression},
 		{"ErrInvalidAcks", ErrInvalidAcks},
+		{"ErrInvalidEventDefinition", ErrInvalidEventDefinition},
+		{"ErrDuplicateEventDefinition", ErrDuplicateEventDefinition},
+		{"ErrUnknownEventDefinition", ErrUnknownEventDefinition},
+		{"ErrInvalidDeliveryPolicy", ErrInvalidDeliveryPolicy},
 	}
 
 	infraCases := []struct {
@@ -44,6 +48,11 @@ func TestIsCallerError(t *testing.T) {
 		{"ClassContextCanceled", &EmitError{Class: ClassContextCanceled}},
 		{"ClassBrokerOverloaded", &EmitError{Class: ClassBrokerOverloaded}},
 		{"ErrEmitterClosed", ErrEmitterClosed},
+		{"ErrCircuitOpen", ErrCircuitOpen},
+		{"ErrOutboxNotConfigured", ErrOutboxNotConfigured},
+		{"ErrOutboxTxUnsupported", ErrOutboxTxUnsupported},
+		{"ErrNilProducer", ErrNilProducer},
+		{"ErrNilOutboxRegistry", ErrNilOutboxRegistry},
 		{"unrelated error", errors.New("some unrelated error")},
 		{"nil", nil},
 	}
@@ -201,6 +210,10 @@ func TestSentinelErrors_IsMatches(t *testing.T) {
 		ErrMissingBrokers,
 		ErrInvalidCompression,
 		ErrInvalidAcks,
+		ErrInvalidEventDefinition,
+		ErrDuplicateEventDefinition,
+		ErrUnknownEventDefinition,
+		ErrInvalidDeliveryPolicy,
 	}
 
 	for _, s := range sentinels {

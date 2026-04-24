@@ -3,6 +3,7 @@ package streaming
 import (
 	"context"
 
+	"github.com/LerianStudio/lib-commons/v5/commons/assert"
 	"github.com/LerianStudio/lib-commons/v5/commons/circuitbreaker"
 	"github.com/LerianStudio/lib-commons/v5/commons/log"
 	"github.com/LerianStudio/lib-commons/v5/commons/runtime"
@@ -26,8 +27,17 @@ import (
 type streamingStateListener struct {
 	// producer is the *Producer we mirror state onto. Never nil in normal
 	// construction — listener registration happens after Producer is
-	// assembled. Guarded defensively in OnStateChange anyway.
+	// assembled. Guarded defensively in OnStateChange and an asserter fires
+	// the observability trident when the guard trips (see T-002).
 	producer *Producer
+
+	// fallbackLogger is used by OnStateChange only when producer is nil (an
+	// invariant violation) so the asserter has somewhere to emit the trident
+	// log. Normal construction leaves this nil; the asserter falls back to
+	// log.NewNop() in that case. Tests that intentionally construct a
+	// listener with producer=nil set this to a capture logger to observe the
+	// assertion firing.
+	fallbackLogger log.Logger
 }
 
 // OnStateChange is invoked by the circuit-breaker Manager on every state
@@ -48,7 +58,32 @@ func (l *streamingStateListener) OnStateChange(
 	from circuitbreaker.State,
 	to circuitbreaker.State,
 ) {
-	if l == nil || l.producer == nil {
+	if l == nil {
+		// Receiver-nil DX guard: a nil listener pointer cannot fire an
+		// asserter (the fallback logger lives on the receiver). Returning
+		// silently here matches the receiver-nil contract on every other
+		// method in this package.
+		return
+	}
+
+	if l.producer == nil {
+		// Post-registration invariant violation: the listener was registered
+		// with a live Producer and should never see nil here. Fire the
+		// observability trident so cbStateFlag drift becomes a loud signal
+		// rather than a silent detach. The asserter is constructed with the
+		// fallback logger because p.newAsserter is unreachable on nil p.
+		logger := l.fallbackLogger
+		if logger == nil {
+			logger = log.NewNop()
+		}
+
+		a := assert.New(ctx, logger, asserterComponent, "cb_state_listener.on_state_change")
+		_ = a.NotNil(ctx, l.producer, "state listener producer must be non-nil post-registration",
+			"service", serviceName,
+			"from", string(from),
+			"to", string(to),
+		)
+
 		return
 	}
 

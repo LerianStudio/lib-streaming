@@ -20,25 +20,27 @@ import (
 // --- Group 1.1: WithAllowSystemEvents opt-in ----------------------------------
 
 // TestProducer_EmitPreFlight_SystemEventWithoutOpt_Rejected verifies that a
-// SystemEvent=true Emit on a Producer without WithAllowSystemEvents returns
-// ErrSystemEventsNotAllowed synchronously, before any broker I/O.
+// catalog containing a SystemEvent=true definition, when passed to New
+// without WithAllowSystemEvents, fails at CONSTRUCTION with
+// ErrSystemEventsNotAllowed. The earlier preflight-level rejection is now
+// dead code for catalog-resolved events — the construction gate added in
+// Task #12 pre-empts it so a misconfigured bootstrap fails fast at startup.
 func TestProducer_EmitPreFlight_SystemEventWithoutOpt_Rejected(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()))
+	systemCatalog, err := NewCatalog(EventDefinition{
+		Key:          "transaction.created",
+		ResourceType: "transaction",
+		EventType:    "created",
+		SystemEvent:  true,
+	})
 	if err != nil {
-		t.Fatalf("New err = %v", err)
+		t.Fatalf("NewCatalog() error = %v", err)
 	}
 
-	t.Cleanup(func() { _ = emitter.Close() })
-
-	event := sampleEvent()
-	event.SystemEvent = true
-	event.TenantID = "" // permitted on system events
-
-	err = emitter.Emit(context.Background(), event)
+	_, err = New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(systemCatalog))
 	if !errors.Is(err, ErrSystemEventsNotAllowed) {
-		t.Fatalf("Emit err = %v; want ErrSystemEventsNotAllowed", err)
+		t.Fatalf("New err = %v; want ErrSystemEventsNotAllowed at construction", err)
 	}
 }
 
@@ -48,7 +50,7 @@ func TestProducer_EmitPreFlight_SystemEventWithOpt_Accepted(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
 	emitter, err := New(context.Background(), cfg,
-		WithLogger(log.NewNop()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithAllowSystemEvents(),
 	)
 	if err != nil {
@@ -57,9 +59,26 @@ func TestProducer_EmitPreFlight_SystemEventWithOpt_Accepted(t *testing.T) {
 
 	t.Cleanup(func() { _ = emitter.Close() })
 
-	event := sampleEvent()
-	event.SystemEvent = true
-	event.TenantID = ""
+	systemCatalog, err := NewCatalog(EventDefinition{
+		Key:          "transaction.created",
+		ResourceType: "transaction",
+		EventType:    "created",
+		SystemEvent:  true,
+	})
+	if err != nil {
+		t.Fatalf("NewCatalog() error = %v", err)
+	}
+
+	emitter, err = New(context.Background(), cfg,
+		WithLogger(log.NewNop()), WithCatalog(systemCatalog),
+		WithAllowSystemEvents(),
+	)
+	if err != nil {
+		t.Fatalf("New err = %v", err)
+	}
+	t.Cleanup(func() { _ = emitter.Close() })
+
+	event := EmitRequest{DefinitionKey: "transaction.created", Payload: json.RawMessage(`{}`)}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -88,7 +107,7 @@ func TestIsCallerError_SystemEventsNotAllowed_ReturnsTrue(t *testing.T) {
 func TestProducer_EmitPreFlight_HeaderSanitization_RejectsInjections(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -126,36 +145,6 @@ func TestProducer_EmitPreFlight_HeaderSanitization_RejectsInjections(t *testing.
 			wantErr: ErrInvalidTenantID,
 		},
 		{
-			name:    "resource type with newline",
-			mutate:  func(e *Event) { e.ResourceType = "trans\nevil" },
-			wantErr: ErrInvalidResourceType,
-		},
-		{
-			name:    "resource type over limit",
-			mutate:  func(e *Event) { e.ResourceType = strings.Repeat("x", maxResourceTypeBytes+1) },
-			wantErr: ErrInvalidResourceType,
-		},
-		{
-			name:    "event type with tab",
-			mutate:  func(e *Event) { e.EventType = "created\t" },
-			wantErr: ErrInvalidEventType,
-		},
-		{
-			name:    "event type over limit",
-			mutate:  func(e *Event) { e.EventType = strings.Repeat("x", maxEventTypeBytes+1) },
-			wantErr: ErrInvalidEventType,
-		},
-		{
-			name:    "source with control char",
-			mutate:  func(e *Event) { e.Source = "//evil\x1b[31m" },
-			wantErr: ErrInvalidSource,
-		},
-		{
-			name:    "source over limit",
-			mutate:  func(e *Event) { e.Source = "//" + strings.Repeat("x", maxSourceBytes) },
-			wantErr: ErrInvalidSource,
-		},
-		{
 			name:    "subject with newline",
 			mutate:  func(e *Event) { e.Subject = "tx-123\nmalicious" },
 			wantErr: ErrInvalidSubject,
@@ -174,7 +163,7 @@ func TestProducer_EmitPreFlight_HeaderSanitization_RejectsInjections(t *testing.
 			e := sampleEvent()
 			tt.mutate(&e)
 
-			err := emitter.Emit(context.Background(), e)
+			err := emitter.Emit(context.Background(), eventToRequest(e))
 			if !errors.Is(err, tt.wantErr) {
 				t.Errorf("Emit err = %v; want errors.Is(%v)", err, tt.wantErr)
 			}
@@ -195,7 +184,7 @@ func TestProducer_EmitPreFlight_HeaderSanitization_AcceptsAtLimits(t *testing.T)
 
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -212,7 +201,7 @@ func TestProducer_EmitPreFlight_HeaderSanitization_AcceptsAtLimits(t *testing.T)
 	e.Subject = strings.Repeat("j", maxSubjectBytes)
 	(&e).ApplyDefaults()
 
-	if err := p.preFlight(e); err != nil {
+	if err := p.preFlightWithPayload(e, true); err != nil {
 		t.Errorf("preFlight at-limit fields err = %v; want nil", err)
 	}
 }
@@ -290,7 +279,7 @@ func TestIsCallerError_HeaderSentinels(t *testing.T) {
 func TestProducer_HandleOutboxRow_RunsPreFlight_OversizePayload(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -301,16 +290,18 @@ func TestProducer_HandleOutboxRow_RunsPreFlight_OversizePayload(t *testing.T) {
 
 	event := sampleEvent()
 	event.Payload = json.RawMessage(`"` + strings.Repeat("x", maxPayloadBytes+1) + `"`)
+	event.ApplyDefaults()
+	envelope := testOutboxEnvelope(event, event.Topic(), "transaction.created", DefaultDeliveryPolicy(), uuid.New())
 
-	payload, err := json.Marshal(event)
+	payload, err := json.Marshal(envelope)
 	if err != nil {
 		t.Fatalf("marshal err = %v", err)
 	}
 
 	row := &outbox.OutboxEvent{
 		ID:          uuid.New(),
-		EventType:   "lerian.streaming.transaction.created",
-		AggregateID: uuid.New(),
+		EventType:   StreamingOutboxEventType,
+		AggregateID: envelope.AggregateID,
 		Payload:     payload,
 	}
 
@@ -335,7 +326,7 @@ func TestProducer_HandleOutboxRow_RunsPreFlight_OversizePayload(t *testing.T) {
 func TestProducer_HandleOutboxRow_RunsPreFlight_SystemEventWithoutOpt(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -347,16 +338,18 @@ func TestProducer_HandleOutboxRow_RunsPreFlight_SystemEventWithoutOpt(t *testing
 	event := sampleEvent()
 	event.SystemEvent = true
 	event.TenantID = ""
+	event.ApplyDefaults()
+	envelope := testOutboxEnvelope(event, event.Topic(), "transaction.created", DefaultDeliveryPolicy(), uuid.New())
 
-	payload, err := json.Marshal(event)
+	payload, err := json.Marshal(envelope)
 	if err != nil {
 		t.Fatalf("marshal err = %v", err)
 	}
 
 	row := &outbox.OutboxEvent{
 		ID:          uuid.New(),
-		EventType:   "lerian.streaming.transaction.created",
-		AggregateID: uuid.New(),
+		EventType:   StreamingOutboxEventType,
+		AggregateID: envelope.AggregateID,
 		Payload:     payload,
 	}
 
@@ -387,7 +380,7 @@ func TestProducer_Emit_CircuitOpen_OutboxFailure_MetricsOutboxFailed(t *testing.
 	emitter, err := New(
 		context.Background(),
 		cfg,
-		WithLogger(log.NewNop()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithMetricsFactory(factory),
 		WithCircuitBreakerManager(fakeMgr),
 		WithOutboxRepository(fakeRepo),
@@ -401,7 +394,8 @@ func TestProducer_Emit_CircuitOpen_OutboxFailure_MetricsOutboxFailed(t *testing.
 	p := asProducer(t, emitter)
 	fakeMgr.ForceTransition(p.cbServiceName, circuitbreaker.StateOpen)
 
-	event := sampleEvent()
+	event := sampleRequest()
+	topic := "lerian.streaming.transaction.created"
 
 	if err := emitter.Emit(context.Background(), event); err == nil {
 		t.Fatal("Emit err = nil; want non-nil (outbox failure must surface)")
@@ -418,7 +412,7 @@ func TestProducer_Emit_CircuitOpen_OutboxFailure_MetricsOutboxFailed(t *testing.
 
 	var found bool
 	for _, attrs := range attrSets {
-		if attrs["outcome"] == outcomeOutboxFailed && attrs["topic"] == event.Topic() {
+		if attrs["outcome"] == outcomeOutboxFailed && attrs["topic"] == topic {
 			found = true
 			break
 		}
@@ -426,6 +420,6 @@ func TestProducer_Emit_CircuitOpen_OutboxFailure_MetricsOutboxFailed(t *testing.
 
 	if !found {
 		t.Errorf("outcome=%q not recorded for topic=%q; attrSets=%v",
-			outcomeOutboxFailed, event.Topic(), attrSets)
+			outcomeOutboxFailed, topic, attrSets)
 	}
 }

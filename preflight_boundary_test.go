@@ -54,7 +54,7 @@ func TestProducer_EmitPreFlight_PayloadAtExactBoundary(t *testing.T) {
 
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -87,7 +87,7 @@ func TestProducer_EmitPreFlight_PayloadAtExactBoundary(t *testing.T) {
 			event.Payload = json.RawMessage(payload)
 			(&event).ApplyDefaults()
 
-			err := p.preFlight(event)
+			err := p.preFlightWithPayload(event, true)
 
 			if tt.wantErr == nil {
 				if err != nil {
@@ -116,7 +116,7 @@ func TestProducer_EmitPreFlight_PayloadAtExactBoundary(t *testing.T) {
 func TestProducer_Emit_DoesNotMutateCaller(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -141,7 +141,8 @@ func TestProducer_Emit_DoesNotMutateCaller(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if err := emitter.Emit(ctx, event); err != nil {
+	request := eventToRequest(event)
+	if err := emitter.Emit(ctx, request); err != nil {
 		t.Fatalf("Emit err = %v", err)
 	}
 

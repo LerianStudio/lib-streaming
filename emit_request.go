@@ -1,0 +1,72 @@
+package streaming
+
+import (
+	"encoding/json"
+	"fmt"
+	"time"
+)
+
+// EmitRequest is the runtime request a service passes when emitting a cataloged
+// event. The caller supplies business-time data and the catalog definition key;
+// the library resolves CloudEvents metadata from the Catalog.
+type EmitRequest struct {
+	DefinitionKey  string
+	TenantID       string
+	Subject        string
+	EventID        string
+	Timestamp      time.Time
+	Payload        json.RawMessage
+	PolicyOverride DeliveryPolicyOverride
+}
+
+// newEmitRequest validates and optionally copies an EmitRequest. Validates
+// request-local shape only; catalog lookup and system-event tenant rules
+// require the EventDefinition and happen during emit resolution.
+func newEmitRequest(request EmitRequest, copyPayload bool) (EmitRequest, error) {
+	if request.DefinitionKey == "" {
+		return EmitRequest{}, fmt.Errorf("%w: empty definition key", ErrInvalidEventDefinition)
+	}
+
+	if err := request.PolicyOverride.Validate(); err != nil {
+		return EmitRequest{}, err
+	}
+
+	if err := validateEmitRequestHeaderFields(request); err != nil {
+		return EmitRequest{}, err
+	}
+
+	if len(request.Payload) > maxPayloadBytes {
+		return EmitRequest{}, ErrPayloadTooLarge
+	}
+
+	if !json.Valid(request.Payload) {
+		return EmitRequest{}, ErrNotJSON
+	}
+
+	if copyPayload {
+		request.Payload = append(json.RawMessage(nil), request.Payload...)
+	}
+
+	return request, nil
+}
+
+func validateEmitRequestHeaderFields(request EmitRequest) error {
+	// DefinitionKey malformed-shape faults map to ErrInvalidEventDefinition
+	// (control chars, too long, empty bytes), NOT ErrUnknownEventDefinition —
+	// "unknown" is a catalog-lookup miss (key not registered), while "invalid"
+	// is a structural fault. Conflating the two used to mislead callers.
+	checks := [...]headerFieldCheck{
+		{request.DefinitionKey, maxEventIDBytes, ErrInvalidEventDefinition},
+		{request.TenantID, maxTenantIDBytes, ErrInvalidTenantID},
+		{request.Subject, maxSubjectBytes, ErrInvalidSubject},
+		{request.EventID, maxEventIDBytes, ErrInvalidEventID},
+	}
+
+	for _, c := range checks {
+		if len(c.value) > c.maxBytes || hasControlChar(c.value) {
+			return c.sentinel
+		}
+	}
+
+	return nil
+}

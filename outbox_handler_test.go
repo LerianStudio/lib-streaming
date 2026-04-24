@@ -13,97 +13,78 @@ import (
 	"github.com/google/uuid"
 	"github.com/twmb/franz-go/pkg/kgo"
 
+	"github.com/LerianStudio/lib-commons/v5/commons"
 	"github.com/LerianStudio/lib-commons/v5/commons/circuitbreaker"
 	"github.com/LerianStudio/lib-commons/v5/commons/log"
 	"github.com/LerianStudio/lib-commons/v5/commons/outbox"
 )
 
+// newTestUUIDv7 returns a time-ordered UUID via commons.GenerateUUIDv7. Used
+// for persisted outbox row IDs and aggregate IDs so test rows match the
+// production ordering contract (see outbox_writer.go outboxRowFromEnvelope).
+func newTestUUIDv7(tb testing.TB) uuid.UUID {
+	tb.Helper()
+	id, err := commons.GenerateUUIDv7()
+	if err != nil {
+		tb.Fatalf("commons.GenerateUUIDv7 err = %v", err)
+	}
+	return id
+}
+
 // --- Outbox handler registration + relay tests. ---
 
-// TestProducer_RegisterOutboxHandler_RelaysViaPublishDirect exercises the
-// loop-prevention invariant at the heart of T4: the handler registered
-// with the outbox Dispatcher must call publishDirect, NOT Emit. A
-// successful handler call produces a record on the broker (proving
-// publishDirect ran) and the CB stays in its current state (proving Emit
-// was not re-entered through the fallback path).
-func TestProducer_RegisterOutboxHandler_RelaysViaPublishDirect(t *testing.T) {
+func TestProducer_RegisterOutboxRelay_RelaysStableEnvelope(t *testing.T) {
 	cfg, cluster := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
-
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	p := asProducer(t, emitter)
-
 	registry := outbox.NewHandlerRegistry()
-
-	// Register the streaming handler for the topic emitted by
-	// sampleEvent(). The outbox HandlerRegistry is exact-match; we pass
-	// the concrete topic name here.
-	topic := "lerian.streaming.transaction.created"
-	if err := p.RegisterOutboxHandler(registry, topic); err != nil {
-		t.Fatalf("RegisterOutboxHandler err = %v", err)
+	if err := p.RegisterOutboxRelay(registry); err != nil {
+		t.Fatalf("RegisterOutboxRelay err = %v", err)
 	}
 
-	// Build a synthetic OutboxEvent whose Payload is the JSON form of a
-	// sampleEvent() — this is what publishToOutbox would have written.
 	event := sampleEvent()
-
-	payload, err := json.Marshal(event)
+	event.ApplyDefaults()
+	envelope := testOutboxEnvelope(event, event.Topic(), "transaction.created", DefaultDeliveryPolicy(), newTestUUIDv7(t))
+	payload, err := json.Marshal(envelope)
 	if err != nil {
-		t.Fatalf("json.Marshal(event) err = %v", err)
+		t.Fatalf("json.Marshal envelope err = %v", err)
 	}
 
 	row := &outbox.OutboxEvent{
-		ID:          uuid.New(),
-		EventType:   topic,
-		AggregateID: uuid.New(),
+		ID:          newTestUUIDv7(t),
+		EventType:   StreamingOutboxEventType,
+		AggregateID: envelope.AggregateID,
 		Payload:     payload,
-		Status:      outbox.OutboxStatusPending,
 	}
 
-	// Drive the handler through the registry. This is what the Dispatcher
-	// would do at runtime.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-
 	if err := registry.Handle(ctx, row); err != nil {
 		t.Fatalf("registry.Handle err = %v", err)
 	}
 
-	// publishDirect ran, so the broker should have the record.
-	consumer := newConsumer(t, cluster, topic)
-
+	consumer := newConsumer(t, cluster, event.Topic())
 	fetchCtx, fetchCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer fetchCancel()
 
 	fetches := consumer.PollFetches(fetchCtx)
-
 	var gotRec *kgo.Record
 	fetches.EachRecord(func(r *kgo.Record) {
 		if gotRec == nil {
 			gotRec = r
 		}
 	})
-
 	if gotRec == nil {
-		t.Fatalf("no record on broker after handler run; relay path did not reach publishDirect")
+		t.Fatal("no record on broker after stable outbox relay")
 	}
-
 	if string(gotRec.Value) != string(event.Payload) {
 		t.Errorf("relayed payload = %q; want %q", gotRec.Value, event.Payload)
-	}
-
-	// Circuit state must still be CLOSED — the handler path must not run
-	// through Emit (which would traverse the CB wrapper). If the handler
-	// had wrongly called Emit, and if CB state had been OPEN, we'd see a
-	// silent re-enqueue. Here with CLOSED, the cheapest tell is the
-	// listener-count & flag: still untouched by the handler path.
-	if got := p.cbStateFlag.Load(); got != flagCBClosed {
-		t.Errorf("circuitState after handler run = %d; want %d (closed)", got, flagCBClosed)
 	}
 }
 
@@ -115,7 +96,7 @@ func TestProducer_RegisterOutboxHandler_RelaysViaPublishDirect(t *testing.T) {
 func TestProducer_OutboxHandler_PublishDirectFailure_SurfacesError(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -130,16 +111,18 @@ func TestProducer_OutboxHandler_PublishDirectFailure_SurfacesError(t *testing.T)
 	}
 
 	event := sampleEvent()
+	event.ApplyDefaults()
+	envelope := testOutboxEnvelope(event, event.Topic(), "transaction.created", DefaultDeliveryPolicy(), newTestUUIDv7(t))
 
-	payload, err := json.Marshal(event)
+	payload, err := json.Marshal(envelope)
 	if err != nil {
 		t.Fatalf("json.Marshal err = %v", err)
 	}
 
 	row := &outbox.OutboxEvent{
-		ID:          uuid.New(),
-		EventType:   "lerian.streaming.transaction.created",
-		AggregateID: uuid.New(),
+		ID:          newTestUUIDv7(t),
+		EventType:   StreamingOutboxEventType,
+		AggregateID: envelope.AggregateID,
 		Payload:     payload,
 	}
 
@@ -165,7 +148,7 @@ func TestProducer_OutboxHandler_PublishDirectFailure_SurfacesError(t *testing.T)
 func TestProducer_OutboxHandler_InvalidPayload_ReturnsError(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -175,9 +158,9 @@ func TestProducer_OutboxHandler_InvalidPayload_ReturnsError(t *testing.T) {
 	p := asProducer(t, emitter)
 
 	row := &outbox.OutboxEvent{
-		ID:          uuid.New(),
-		EventType:   "lerian.streaming.transaction.created",
-		AggregateID: uuid.New(),
+		ID:          newTestUUIDv7(t),
+		EventType:   StreamingOutboxEventType,
+		AggregateID: newTestUUIDv7(t),
 		Payload:     []byte("{not-json"),
 	}
 
@@ -192,8 +175,8 @@ func TestProducer_OutboxHandler_InvalidPayload_ReturnsError(t *testing.T) {
 }
 
 // TestProducer_OutboxHandler_NonStreamingEventType_NoOp: the handler's
-// prefix guard returns nil (not an error) for rows whose EventType is
-// NOT a streaming event. This is the defensive branch that protects
+// equality guard returns nil (not an error) for rows whose EventType is
+// NOT the streaming relay type. This is the defensive branch that protects
 // against bootstrap misconfiguration: if someone registers our handler
 // for "payment.created" by mistake, we must NOT publish that payload to
 // a streaming topic and we must NOT mark the row FAILED (which would
@@ -201,7 +184,7 @@ func TestProducer_OutboxHandler_InvalidPayload_ReturnsError(t *testing.T) {
 func TestProducer_OutboxHandler_NonStreamingEventType_NoOp(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -211,9 +194,9 @@ func TestProducer_OutboxHandler_NonStreamingEventType_NoOp(t *testing.T) {
 	p := asProducer(t, emitter)
 
 	row := &outbox.OutboxEvent{
-		ID:          uuid.New(),
-		EventType:   "payment.created", // NOT our prefix
-		AggregateID: uuid.New(),
+		ID:          newTestUUIDv7(t),
+		EventType:   "payment.created", // NOT our relay type
+		AggregateID: newTestUUIDv7(t),
 		Payload:     []byte(`{"ok":true}`),
 	}
 
@@ -223,14 +206,10 @@ func TestProducer_OutboxHandler_NonStreamingEventType_NoOp(t *testing.T) {
 	}
 }
 
-// TestProducer_RegisterOutboxHandler_MultipleEventTypes: the variadic
-// form registers the same handler against every listed event type. This
-// is the expected usage pattern for a service emitting N distinct
-// streaming events.
-func TestProducer_RegisterOutboxHandler_MultipleEventTypes(t *testing.T) {
+func TestProducer_RegisterOutboxRelay_DuplicateSurfacesError(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -241,83 +220,13 @@ func TestProducer_RegisterOutboxHandler_MultipleEventTypes(t *testing.T) {
 
 	registry := outbox.NewHandlerRegistry()
 
-	types := []string{
-		"lerian.streaming.transaction.created",
-		"lerian.streaming.account.updated",
-		"lerian.streaming.ledger.posted",
+	if err := p.RegisterOutboxRelay(registry); err != nil {
+		t.Fatalf("first RegisterOutboxRelay err = %v", err)
 	}
 
-	if err := p.RegisterOutboxHandler(registry, types...); err != nil {
-		t.Fatalf("RegisterOutboxHandler err = %v", err)
-	}
-
-	// Sanity: every registered type routes to our handler. Invoke each
-	// with a bare non-JSON payload so the handler returns an error
-	// (unmarshal failure) — that error's presence proves we reached the
-	// handler at all.
-	for _, et := range types {
-		row := &outbox.OutboxEvent{
-			ID:          uuid.New(),
-			EventType:   et,
-			AggregateID: uuid.New(),
-			Payload:     []byte("{bad-json"),
-		}
-
-		if err := registry.Handle(context.Background(), row); err == nil {
-			t.Errorf("registry.Handle(%q) err = nil; want unmarshal error (handler not reached)", et)
-		}
-	}
-}
-
-// TestProducer_RegisterOutboxHandler_ZeroEventTypes is permitted but a
-// no-op. It returns nil without registering anything — the typical
-// indicator of a caller wiring mistake, but not ours to enforce.
-func TestProducer_RegisterOutboxHandler_ZeroEventTypes(t *testing.T) {
-	cfg, _ := kfakeConfig(t)
-
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()))
-	if err != nil {
-		t.Fatalf("New err = %v", err)
-	}
-
-	t.Cleanup(func() { _ = emitter.Close() })
-
-	p := asProducer(t, emitter)
-
-	registry := outbox.NewHandlerRegistry()
-
-	if err := p.RegisterOutboxHandler(registry); err != nil {
-		t.Errorf("RegisterOutboxHandler() with no event types err = %v; want nil (no-op)", err)
-	}
-}
-
-// TestProducer_RegisterOutboxHandler_DuplicateSurfacesError: the
-// HandlerRegistry rejects duplicate registrations. Our wrapper must
-// surface that error (not silently succeed) so a bootstrap bug shows up
-// at startup rather than when the conflict first matters.
-func TestProducer_RegisterOutboxHandler_DuplicateSurfacesError(t *testing.T) {
-	cfg, _ := kfakeConfig(t)
-
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()))
-	if err != nil {
-		t.Fatalf("New err = %v", err)
-	}
-
-	t.Cleanup(func() { _ = emitter.Close() })
-
-	p := asProducer(t, emitter)
-
-	registry := outbox.NewHandlerRegistry()
-
-	const topic = "lerian.streaming.transaction.created"
-
-	if err := p.RegisterOutboxHandler(registry, topic); err != nil {
-		t.Fatalf("first RegisterOutboxHandler err = %v", err)
-	}
-
-	err = p.RegisterOutboxHandler(registry, topic)
+	err = p.RegisterOutboxRelay(registry)
 	if err == nil {
-		t.Fatal("second RegisterOutboxHandler err = nil; want duplicate-registration error")
+		t.Fatal("second RegisterOutboxRelay err = nil; want duplicate-registration error")
 	}
 
 	if !errors.Is(err, outbox.ErrHandlerAlreadyRegistered) {
@@ -325,24 +234,21 @@ func TestProducer_RegisterOutboxHandler_DuplicateSurfacesError(t *testing.T) {
 	}
 }
 
-// TestProducer_RegisterOutboxHandler_NilReceiver and
-// TestProducer_RegisterOutboxHandler_NilRegistry cover the two nil guards
-// on the registration path.
-func TestProducer_RegisterOutboxHandler_NilReceiver(t *testing.T) {
+func TestProducer_RegisterOutboxRelay_NilReceiver(t *testing.T) {
 	t.Parallel()
 
 	var p *Producer
 
-	err := p.RegisterOutboxHandler(outbox.NewHandlerRegistry(), "lerian.streaming.x")
+	err := p.RegisterOutboxRelay(outbox.NewHandlerRegistry())
 	if !errors.Is(err, ErrNilProducer) {
-		t.Errorf("nil.RegisterOutboxHandler err = %v; want ErrNilProducer", err)
+		t.Errorf("nil.RegisterOutboxRelay err = %v; want ErrNilProducer", err)
 	}
 }
 
-func TestProducer_RegisterOutboxHandler_NilRegistry(t *testing.T) {
+func TestProducer_RegisterOutboxRelay_NilRegistry(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -351,9 +257,111 @@ func TestProducer_RegisterOutboxHandler_NilRegistry(t *testing.T) {
 
 	p := asProducer(t, emitter)
 
-	err = p.RegisterOutboxHandler(nil, "lerian.streaming.x")
+	err = p.RegisterOutboxRelay(nil)
 	if !errors.Is(err, ErrNilOutboxRegistry) {
-		t.Errorf("RegisterOutboxHandler(nil registry) err = %v; want ErrNilOutboxRegistry", err)
+		t.Errorf("RegisterOutboxRelay(nil registry) err = %v; want ErrNilOutboxRegistry", err)
+	}
+}
+
+// TestHandleOutboxRow_BypassesCBWhenOpen locks TRD §C7: the outbox relay
+// handler MUST use publishDirect — not Emit — so that an in-flight replay
+// during a sustained broker outage cannot re-enqueue itself when the
+// breaker is OPEN. The fake CB manager is forced OPEN; handleOutboxRow
+// must still reach the broker AND must never invoke cb.Execute.
+func TestHandleOutboxRow_BypassesCBWhenOpen(t *testing.T) {
+	cfg, cluster := kfakeConfig(t)
+
+	fakeMgr := newFakeCBManager()
+
+	emitter, err := New(
+		context.Background(),
+		cfg,
+		WithLogger(log.NewNop()),
+		WithCatalog(sampleCatalog(t)),
+		WithCircuitBreakerManager(fakeMgr),
+	)
+	if err != nil {
+		t.Fatalf("New err = %v", err)
+	}
+
+	t.Cleanup(func() { _ = emitter.Close() })
+
+	p := asProducer(t, emitter)
+
+	// Force the breaker OPEN. A synchronous Emit would now short-circuit with
+	// ErrCircuitOpen (or route to outbox if one were wired). handleOutboxRow
+	// must bypass that logic entirely.
+	fakeMgr.ForceTransition(p.cbServiceName, circuitbreaker.StateOpen)
+
+	if got := p.cbStateFlag.Load(); got != flagCBOpen {
+		t.Fatalf("cbStateFlag after OPEN = %d; want %d", got, flagCBOpen)
+	}
+
+	// Retrieve the fake breaker instance so we can assert Execute call count
+	// at the end. GetOrCreate returns the same instance already registered
+	// for this producer's cbServiceName.
+	cbIface, err := fakeMgr.GetOrCreate(p.cbServiceName, circuitbreaker.HTTPServiceConfig())
+	if err != nil {
+		t.Fatalf("GetOrCreate err = %v", err)
+	}
+
+	fake, ok := cbIface.(*fakeCB)
+	if !ok {
+		t.Fatalf("GetOrCreate returned %T; want *fakeCB", cbIface)
+	}
+
+	baseline := fake.executeCalls()
+
+	// Build a valid v0.2.0 envelope around sampleEvent and feed it to the
+	// handler. sampleEvent()'s topic matches the catalog, so preflight will
+	// accept it.
+	event := sampleEvent()
+	event.ApplyDefaults()
+	envelope := testOutboxEnvelope(event, event.Topic(), "transaction.created", DefaultDeliveryPolicy(), newTestUUIDv7(t))
+
+	payload, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatalf("json.Marshal envelope err = %v", err)
+	}
+
+	row := &outbox.OutboxEvent{
+		ID:          newTestUUIDv7(t),
+		EventType:   StreamingOutboxEventType,
+		AggregateID: envelope.AggregateID,
+		Payload:     payload,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := p.handleOutboxRow(ctx, row); err != nil {
+		t.Fatalf("handleOutboxRow err = %v; want nil (replay must succeed even with CB OPEN)", err)
+	}
+
+	// Assertion 1: broker received the record. publishDirect did run.
+	consumer := newConsumer(t, cluster, event.Topic())
+
+	fetchCtx, fetchCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer fetchCancel()
+
+	fetches := consumer.PollFetches(fetchCtx)
+
+	var gotRec *kgo.Record
+	fetches.EachRecord(func(r *kgo.Record) {
+		if gotRec == nil {
+			gotRec = r
+		}
+	})
+
+	if gotRec == nil {
+		t.Fatalf("no record on broker after replay with CB OPEN; publishDirect was not invoked")
+	}
+
+	// Assertion 2: cb.Execute was NEVER called. If this grew, it would mean
+	// handleOutboxRow drifted from publishDirect to the Emit → cb.Execute
+	// path and the loop-prevention property is broken.
+	if got := fake.executeCalls(); got != baseline {
+		t.Errorf("cb.Execute call count = %d; want %d (replay must bypass CB entirely per TRD §C7)", got, baseline)
 	}
 }
 
@@ -374,7 +382,7 @@ func TestProducer_HandleOutboxRow_NilReceiver(t *testing.T) {
 func TestProducer_HandleOutboxRow_NilRow(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -386,6 +394,186 @@ func TestProducer_HandleOutboxRow_NilRow(t *testing.T) {
 	err = p.handleOutboxRow(context.Background(), nil)
 	if !errors.Is(err, outbox.ErrOutboxEventRequired) {
 		t.Errorf("handleOutboxRow(nil row) err = %v; want outbox.ErrOutboxEventRequired", err)
+	}
+}
+
+// TestDecodeOutboxRow_LegacyV01Payload_SynthesizedAndReplayed proves the
+// v0.1.0 backward-compat shim: a row whose Payload is the bare
+// json.Marshal(Event) (no envelope wrapper, no version field) must be
+// synthesized into a valid OutboxEnvelope and a WARN must be logged so
+// operators see the residue and can drain it.
+func TestDecodeOutboxRow_LegacyV01Payload_SynthesizedAndReplayed(t *testing.T) {
+	cfg, _ := kfakeConfig(t)
+
+	spy := &spyLogger{}
+
+	emitter, err := New(context.Background(), cfg,
+		WithLogger(spy),
+		WithCatalog(sampleCatalog(t)),
+	)
+	if err != nil {
+		t.Fatalf("New err = %v", err)
+	}
+	t.Cleanup(func() { _ = emitter.Close() })
+
+	p := asProducer(t, emitter)
+
+	legacyEvent := sampleEvent()
+	legacyEvent.Payload = json.RawMessage(`{}`)
+	legacyEvent.ApplyDefaults()
+
+	legacyPayload, err := json.Marshal(legacyEvent)
+	if err != nil {
+		t.Fatalf("json.Marshal legacyEvent err = %v", err)
+	}
+
+	row := &outbox.OutboxEvent{
+		ID:          newTestUUIDv7(t),
+		EventType:   StreamingOutboxEventType,
+		AggregateID: newTestUUIDv7(t),
+		Payload:     legacyPayload,
+	}
+
+	envelope, err := p.decodeOutboxRow(context.Background(), row)
+	if err != nil {
+		t.Fatalf("decodeOutboxRow err = %v; want synthesized envelope", err)
+	}
+
+	if envelope.Version != outboxEnvelopeVersion {
+		t.Errorf("envelope.Version = %d; want %d", envelope.Version, outboxEnvelopeVersion)
+	}
+
+	if envelope.Topic != legacyEvent.Topic() {
+		t.Errorf("envelope.Topic = %q; want %q", envelope.Topic, legacyEvent.Topic())
+	}
+
+	if envelope.Event.EventID != legacyEvent.EventID {
+		t.Errorf("envelope.Event.EventID = %q; want %q", envelope.Event.EventID, legacyEvent.EventID)
+	}
+
+	if envelope.Policy != DefaultDeliveryPolicy() {
+		t.Errorf("envelope.Policy = %+v; want DefaultDeliveryPolicy", envelope.Policy)
+	}
+
+	// Assert the WARN was emitted.
+	spy.mu.Lock()
+	defer spy.mu.Unlock()
+
+	var warnEntry *spyEntry
+	for i := range spy.entries {
+		e := &spy.entries[i]
+		if e.level == log.LevelWarn && strings.Contains(e.msg, "legacy v0.1.0 outbox row migrated") {
+			warnEntry = e
+			break
+		}
+	}
+	if warnEntry == nil {
+		t.Fatalf("expected WARN entry about legacy migration; got %d entries", len(spy.entries))
+	}
+
+	if got, ok := warnEntry.fields["row_id"].(string); !ok || got != row.ID.String() {
+		t.Errorf("warn row_id = %v; want %q", warnEntry.fields["row_id"], row.ID.String())
+	}
+}
+
+// TestDecodeOutboxRow_LegacyEmptyPayload_StillRejects proves the shim does
+// NOT synthesize a bogus envelope for a zero-value Event. An empty legacy
+// payload is indistinguishable from garbage and must surface the original
+// validation error so the Dispatcher marks the row FAILED.
+func TestDecodeOutboxRow_LegacyEmptyPayload_StillRejects(t *testing.T) {
+	cfg, _ := kfakeConfig(t)
+
+	emitter, err := New(context.Background(), cfg,
+		WithLogger(log.NewNop()),
+		WithCatalog(sampleCatalog(t)),
+	)
+	if err != nil {
+		t.Fatalf("New err = %v", err)
+	}
+	t.Cleanup(func() { _ = emitter.Close() })
+
+	p := asProducer(t, emitter)
+
+	emptyPayload, err := json.Marshal(Event{})
+	if err != nil {
+		t.Fatalf("json.Marshal(Event{}) err = %v", err)
+	}
+
+	row := &outbox.OutboxEvent{
+		ID:          newTestUUIDv7(t),
+		EventType:   StreamingOutboxEventType,
+		AggregateID: newTestUUIDv7(t),
+		Payload:     emptyPayload,
+	}
+
+	_, err = p.decodeOutboxRow(context.Background(), row)
+	if err == nil {
+		t.Fatal("decodeOutboxRow err = nil; want validation error for zero-value Event")
+	}
+
+	if !strings.Contains(err.Error(), "invalid outbox envelope") {
+		t.Errorf("err = %q; want substring %q", err.Error(), "invalid outbox envelope")
+	}
+}
+
+// TestDecodeOutboxRow_ExplicitVersionZero_Rejects proves the legacy shim
+// does NOT synthesize a v0.2.0 envelope for a payload that explicitly sets
+// "version": 0. The shim must gate on ABSENCE of the version field — a
+// malformed or tampered row that sets version:0 explicitly must be rejected
+// by envelope.Validate() rather than bypassing strict validation via the
+// legacy fallback.
+func TestDecodeOutboxRow_ExplicitVersionZero_Rejects(t *testing.T) {
+	cfg, _ := kfakeConfig(t)
+
+	emitter, err := New(context.Background(), cfg,
+		WithLogger(log.NewNop()),
+		WithCatalog(sampleCatalog(t)),
+	)
+	if err != nil {
+		t.Fatalf("New err = %v", err)
+	}
+	t.Cleanup(func() { _ = emitter.Close() })
+
+	p := asProducer(t, emitter)
+
+	// Legacy-shaped event fields + explicit version:0. Without the absence
+	// gate, the shim would synthesize a valid-looking envelope around this
+	// payload and silently accept a tampered row.
+	legacyEvent := sampleEvent()
+	legacyEvent.Payload = json.RawMessage(`{}`)
+	legacyEvent.ApplyDefaults()
+
+	tampered := map[string]any{
+		"version":         0,
+		"TenantID":        legacyEvent.TenantID,
+		"ResourceType":    legacyEvent.ResourceType,
+		"EventType":       legacyEvent.EventType,
+		"EventID":         legacyEvent.EventID,
+		"SchemaVersion":   legacyEvent.SchemaVersion,
+		"Timestamp":       legacyEvent.Timestamp,
+		"Source":          legacyEvent.Source,
+		"DataContentType": legacyEvent.DataContentType,
+		"Payload":         legacyEvent.Payload,
+	}
+	payload, err := json.Marshal(tampered)
+	if err != nil {
+		t.Fatalf("json.Marshal tampered err = %v", err)
+	}
+
+	row := &outbox.OutboxEvent{
+		ID:          newTestUUIDv7(t),
+		EventType:   StreamingOutboxEventType,
+		AggregateID: newTestUUIDv7(t),
+		Payload:     payload,
+	}
+
+	_, err = p.decodeOutboxRow(context.Background(), row)
+	if err == nil {
+		t.Fatal("decodeOutboxRow err = nil; want rejection for explicit version:0")
+	}
+
+	if !strings.Contains(err.Error(), "invalid outbox envelope") {
+		t.Errorf("err = %q; want substring %q", err.Error(), "invalid outbox envelope")
 	}
 }
 
@@ -407,7 +595,7 @@ func TestProducer_EndToEnd_OutboxFallbackAndRelay(t *testing.T) {
 	emitter, err := New(
 		context.Background(),
 		cfg,
-		WithLogger(log.NewNop()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithCircuitBreakerManager(fakeMgr),
 		WithOutboxRepository(fakeRepo),
 	)
@@ -422,7 +610,7 @@ func TestProducer_EndToEnd_OutboxFallbackAndRelay(t *testing.T) {
 	// Phase 1: CB OPEN, Emit routes to outbox.
 	fakeMgr.ForceTransition(p.cbServiceName, circuitbreaker.StateOpen)
 
-	event := sampleEvent()
+	event := sampleRequest()
 	event.Subject = "end-to-end-subject"
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -442,16 +630,22 @@ func TestProducer_EndToEnd_OutboxFallbackAndRelay(t *testing.T) {
 	fakeMgr.ForceTransition(p.cbServiceName, circuitbreaker.StateClosed)
 
 	registry := outbox.NewHandlerRegistry()
-	if err := p.RegisterOutboxHandler(registry, row.EventType); err != nil {
-		t.Fatalf("RegisterOutboxHandler err = %v", err)
+	if err := p.RegisterOutboxRelay(registry); err != nil {
+		t.Fatalf("RegisterOutboxRelay err = %v", err)
 	}
 
 	if err := registry.Handle(ctx, row); err != nil {
 		t.Fatalf("registry.Handle err = %v", err)
 	}
 
-	// Phase 3: The record is now on the broker.
-	consumer := newConsumer(t, cluster, event.Topic())
+	// Phase 3: The record is now on the broker. Derive the topic from the
+	// persisted envelope so the assertion cannot silently drift from what
+	// publishDirect actually produced.
+	decodedEnvelope, err := p.decodeOutboxRow(ctx, row)
+	if err != nil {
+		t.Fatalf("decodeOutboxRow err = %v", err)
+	}
+	consumer := newConsumer(t, cluster, decodedEnvelope.Topic)
 
 	fetchCtx, fetchCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer fetchCancel()

@@ -25,11 +25,14 @@ import (
 // calls directly to the closure. It intentionally does NOT track failures —
 // tests drive state via fakeCBManager.ForceTransition.
 type fakeCB struct {
-	state circuitbreaker.State
-	mu    sync.Mutex
+	state    circuitbreaker.State
+	executeN atomic.Int64
+	mu       sync.Mutex
 }
 
 func (f *fakeCB) Execute(fn func() (any, error)) (any, error) {
+	f.executeN.Add(1)
+
 	if fn == nil {
 		return nil, circuitbreaker.ErrNilCallback
 	}
@@ -39,6 +42,13 @@ func (f *fakeCB) Execute(fn func() (any, error)) (any, error) {
 	// path is about the flag mirror, not about what gobreaker does
 	// pre-trip.
 	return fn()
+}
+
+// executeCalls returns the number of Execute invocations on this fake. Used
+// by tests that need to prove a code path either went through or bypassed
+// the breaker.
+func (f *fakeCB) executeCalls() int64 {
+	return f.executeN.Load()
 }
 
 func (f *fakeCB) State() circuitbreaker.State {
@@ -167,7 +177,7 @@ func (f *fakeCBManager) listenerCount() int {
 func TestProducer_Emit_CircuitClosed_PublishesToBroker(t *testing.T) {
 	cfg, cluster := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -183,7 +193,7 @@ func TestProducer_Emit_CircuitClosed_PublishesToBroker(t *testing.T) {
 		t.Errorf("initial circuitState = %d; want %d (closed)", got, flagCBClosed)
 	}
 
-	event := sampleEvent()
+	event := sampleRequest()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -193,7 +203,7 @@ func TestProducer_Emit_CircuitClosed_PublishesToBroker(t *testing.T) {
 	}
 
 	// Confirm a record actually landed on the broker.
-	consumer := newConsumer(t, cluster, event.Topic())
+	consumer := newConsumer(t, cluster, "lerian.streaming.transaction.created")
 
 	fetchCtx, fetchCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer fetchCancel()
@@ -208,7 +218,7 @@ func TestProducer_Emit_CircuitClosed_PublishesToBroker(t *testing.T) {
 	})
 
 	if gotRec == nil {
-		t.Fatalf("no record fetched from %s; kfake did not receive", event.Topic())
+		t.Fatalf("no record fetched from %s; kfake did not receive", "lerian.streaming.transaction.created")
 	}
 }
 
@@ -223,7 +233,7 @@ func TestProducer_Emit_CircuitOpen_ReturnsErrCircuitOpen(t *testing.T) {
 	emitter, err := New(
 		context.Background(),
 		cfg,
-		WithLogger(log.NewNop()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithCircuitBreakerManager(fakeMgr),
 	)
 	if err != nil {
@@ -244,15 +254,14 @@ func TestProducer_Emit_CircuitOpen_ReturnsErrCircuitOpen(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	err = emitter.Emit(ctx, sampleEvent())
+	err = emitter.Emit(ctx, sampleRequest())
 	if !errors.Is(err, ErrCircuitOpen) {
 		t.Fatalf("Emit err = %v; want ErrCircuitOpen", err)
 	}
 
 	// Broker must have zero records on our topic — the circuit open branch
 	// MUST bypass publishDirect.
-	ev := sampleEvent()
-	consumer := newConsumer(t, cluster, ev.Topic())
+	consumer := newConsumer(t, cluster, "lerian.streaming.transaction.created")
 
 	fetchCtx, fetchCancel := context.WithTimeout(ctx, 1*time.Second)
 	defer fetchCancel()
@@ -277,7 +286,7 @@ func TestProducer_CBStateListener_UpdatesFlag(t *testing.T) {
 	emitter, err := New(
 		context.Background(),
 		cfg,
-		WithLogger(log.NewNop()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithCircuitBreakerManager(fakeMgr),
 	)
 	if err != nil {
@@ -325,7 +334,7 @@ func TestProducer_CBStateListener_IgnoresOtherServices(t *testing.T) {
 	emitter, err := New(
 		context.Background(),
 		cfg,
-		WithLogger(log.NewNop()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithCircuitBreakerManager(fakeMgr),
 	)
 	if err != nil {
@@ -397,6 +406,7 @@ func TestProducer_CBListener_PanicSafe(t *testing.T) {
 		context.Background(),
 		cfg,
 		WithLogger(logger),
+		WithCatalog(sampleCatalog(t)),
 		WithCircuitBreakerManager(fakeMgr),
 	)
 	if err != nil {
@@ -451,7 +461,7 @@ func TestProducer_CBListener_SubMillisecond(t *testing.T) {
 	emitter, err := New(
 		context.Background(),
 		cfg,
-		WithLogger(log.NewNop()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithCircuitBreakerManager(fakeMgr),
 	)
 	if err != nil {
@@ -501,7 +511,7 @@ func TestProducer_CBListener_SubMillisecond(t *testing.T) {
 func TestProducer_PreFlight_DoesNotFeedCB(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -510,9 +520,8 @@ func TestProducer_PreFlight_DoesNotFeedCB(t *testing.T) {
 
 	p := asProducer(t, emitter)
 
-	bad := sampleEvent()
+	bad := sampleRequest()
 	bad.TenantID = ""
-	bad.SystemEvent = false
 
 	// Emit far more than CBMinRequests (10) of the bad event — if pre-flight
 	// fed the breaker, a ratio > 0.5 would trip it OPEN.
@@ -545,7 +554,7 @@ func TestProducer_WithCircuitBreakerManager_ReusesCallerManager(t *testing.T) {
 	emitter, err := New(
 		context.Background(),
 		cfg,
-		WithLogger(log.NewNop()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithCircuitBreakerManager(callerMgr),
 	)
 	if err != nil {
@@ -571,7 +580,7 @@ func TestProducer_WithCircuitBreakerManager_ReusesCallerManager(t *testing.T) {
 func TestProducer_WithoutCallerManager_BuildsOwnManager(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -606,7 +615,7 @@ func TestProducer_Emit_CB_RaceWithListener(t *testing.T) {
 	emitter, err := New(
 		context.Background(),
 		cfg,
-		WithLogger(log.NewNop()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithCircuitBreakerManager(fakeMgr),
 	)
 	if err != nil {
@@ -662,7 +671,7 @@ func TestProducer_Emit_CB_RaceWithListener(t *testing.T) {
 			// Each goroutine issues a handful of emits; we don't care about
 			// the return value beyond "no panic".
 			for j := 0; j < 5; j++ {
-				_ = emitter.Emit(ctx, sampleEvent())
+				_ = emitter.Emit(ctx, sampleRequest())
 				emitCount.Add(1)
 			}
 		}()
@@ -749,7 +758,7 @@ func TestProducer_CBStateListener_UnknownStateLogsWarning(t *testing.T) {
 	emitter, err := New(
 		context.Background(),
 		cfg,
-		WithLogger(log.NewNop()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithCircuitBreakerManager(fakeMgr),
 	)
 	if err != nil {

@@ -2,7 +2,6 @@ package streaming
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 )
@@ -73,6 +72,17 @@ func (p *Producer) CloseContext(ctx context.Context) error {
 	p.signalStop()
 
 	if p.client == nil {
+		// Invariant violation: NewProducer always assigns p.client, so a
+		// nil client at Close time means the *Producer was hand-built
+		// bypassing the constructor. Fire the observability trident so the
+		// fixture-antipattern is visible; return nil to preserve the
+		// idempotent-Close contract (the CAS above already flipped the
+		// closed flag, and a fixture without a client has nothing to flush).
+		a := p.newAsserter("lifecycle.close")
+		_ = a.NotNil(ctx, p.client, "producer client must be initialized at Close time",
+			"producer_id", p.producerID,
+		)
+
 		return nil
 	}
 
@@ -105,9 +115,23 @@ func (p *Producer) signalStop() {
 	}
 
 	p.stopOnce.Do(func() {
-		if p.stop != nil {
-			close(p.stop)
+		if p.stop == nil {
+			// Invariant violation: NewProducer unconditionally assigns
+			// p.stop = make(chan struct{}), so a nil channel here means the
+			// *Producer was hand-built bypassing the constructor. Without
+			// this signal a running RunContext hangs forever on shutdown.
+			// Fire the observability trident; close(p.stop) is still
+			// guarded by sync.Once so no double-close panic if someone
+			// later assigns a channel.
+			a := p.newAsserter("lifecycle.signal_stop")
+			_ = a.NotNil(context.Background(), p.stop, "producer stop channel must be initialized post-construction",
+				"producer_id", p.producerID,
+			)
+
+			return
 		}
+
+		close(p.stop)
 	})
 }
 
@@ -118,9 +142,9 @@ func (p *Producer) signalStop() {
 //
 // State semantics:
 //   - Healthy: broker ping succeeds.
-//   - Degraded: broker unreachable BUT an outbox is wired (via
-//     WithOutboxRepository). Emits still succeed (routed to outbox on CB
-//     open) so readiness consumers can keep serving traffic.
+//   - Degraded: broker unreachable BUT an outbox writer is wired. Events whose
+//     policy permits outbox fallback can still be captured durably, so
+//     readiness consumers can keep serving traffic.
 //   - Down: broker unreachable AND no outbox wired. Emits will return
 //     ErrCircuitOpen once the breaker trips. Readiness consumers should
 //     route away.
@@ -142,7 +166,19 @@ func (p *Producer) Healthy(ctx context.Context) error {
 	}
 
 	if p.client == nil {
-		return NewHealthError(Down, errors.New("streaming: client not initialized"))
+		// Invariant violation: NewProducer always assigns p.client from a
+		// successful kgo.NewClient; reaching here means a caller hand-built
+		// a *Producer bypassing the constructor. Fire the observability
+		// trident so the construction antipattern shows up on dashboards
+		// rather than masquerading as a broker-outage signal under an
+		// opaque "client not initialized" string. Public API contract is
+		// preserved: Healthy still returns *HealthError with State()==Down.
+		a := p.newAsserter("health.healthy")
+		clientNilErr := a.NotNil(ctx, p.client, "producer client must be initialized post-construction",
+			"producer_id", p.producerID,
+		)
+
+		return NewHealthError(Down, clientNilErr)
 	}
 
 	pingCtx, cancel := context.WithTimeout(ctx, healthPingTimeout)
@@ -160,7 +196,7 @@ func (p *Producer) Healthy(ctx context.Context) error {
 		// an interface change outside this package's scope. Non-nil check
 		// is sufficient: OutboxRepository is wired at construction and
 		// cannot become nil afterward.
-		if p.outbox == nil {
+		if p.outboxWriter == nil {
 			return NewHealthError(Down, err)
 		}
 

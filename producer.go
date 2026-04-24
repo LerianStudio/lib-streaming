@@ -3,7 +3,6 @@ package streaming
 import (
 	"context"
 	"fmt"
-	"maps"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -13,9 +12,9 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/LerianStudio/lib-commons/v5/commons"
 	"github.com/LerianStudio/lib-commons/v5/commons/circuitbreaker"
 	"github.com/LerianStudio/lib-commons/v5/commons/log"
-	"github.com/LerianStudio/lib-commons/v5/commons/outbox"
 )
 
 // tracerName + emitSpanName live in emit_span.go (colocated with the
@@ -111,31 +110,26 @@ type Producer struct {
 	// Default (nil) means struct-level PartitionKey().
 	partFn func(Event) string
 
-	// toggles is a point-in-time COPY of Config.EventToggles taken at
-	// construction (via maps.Clone in NewProducer). The copy protects the
-	// Producer from caller-side mutation of the source map after
-	// construction; under -race a shared reference would surface as a data
-	// race between the caller goroutine and the publishDirect read. Reads
-	// in publishDirect otherwise remain unsynchronized by design — operators
-	// are expected to redeploy to flip an event toggle, not hot-reload.
-	toggles map[string]bool
-
 	// closeTimeout caps Close's Flush deadline. Resolved in New from the
 	// option override or Config.CloseTimeout.
 	closeTimeout time.Duration
 
-	// outbox, when non-nil, enables the circuit-open fallback: Emit writes
-	// a serialized event to the OutboxRepository and returns nil instead
-	// of ErrCircuitOpen while the breaker is open. The corresponding relay
-	// is registered via RegisterOutboxHandler on the outbox Dispatcher's
-	// HandlerRegistry. Nil means fallback is disabled (T3 behavior).
-	outbox outbox.OutboxRepository
+	// outboxWriter, when non-nil, enables deferred durable delivery. Emit writes
+	// a versioned OutboxEnvelope and returns nil on policy-selected outbox
+	// paths. Nil means fallback is disabled.
+	outboxWriter OutboxWriter
 
 	// allowSystemEvents, when true, permits Event.SystemEvent=true through
 	// preflight. When false (the default), any SystemEvent emission is
 	// rejected synchronously with ErrSystemEventsNotAllowed. See
 	// WithAllowSystemEvents.
 	allowSystemEvents bool
+
+	// catalog is the immutable source of truth for the catalog-backed API.
+	catalog Catalog
+
+	// policyOverrides is a point-in-time copy of Config.PolicyOverrides.
+	policyOverrides map[string]DeliveryPolicyOverride
 }
 
 // Compile-time assertion: *Producer must satisfy Emitter. A missing method
@@ -205,6 +199,10 @@ func NewProducer(ctx context.Context, cfg Config, opts ...EmitterOption) (*Produ
 		closeTimeout = 30 * time.Second
 	}
 
+	if err := validateCatalogAtBootstrap(resolvedOpts.catalog, cfg.PolicyOverrides, resolvedOpts.allowSystemEvents); err != nil {
+		return nil, err
+	}
+
 	// Build the franz-go options slice. Every knob is pinned explicitly per
 	// TRD risk R1 — franz-go's defaults have flipped between versions in
 	// the past, and a silent latency change would be operationally
@@ -234,6 +232,16 @@ func NewProducer(ctx context.Context, cfg Config, opts ...EmitterOption) (*Produ
 		tracer = otel.Tracer(tracerName)
 	}
 
+	// UUIDv7 is time-ordered; producerID shows up in CB service names, span
+	// attributes, and DLQ headers — sortable IDs make operator triage easier.
+	// Fall back to v4 if v7 generation ever fails (vanishingly unlikely).
+	var producerID string
+	if id, err := commons.GenerateUUIDv7(); err == nil {
+		producerID = id.String()
+	} else {
+		producerID = uuid.NewString()
+	}
+
 	p := &Producer{
 		client:            client,
 		cfg:               cfg,
@@ -241,13 +249,14 @@ func NewProducer(ctx context.Context, cfg Config, opts ...EmitterOption) (*Produ
 		tracer:            tracer,
 		logger:            logger,
 		metrics:           newStreamingMetrics(resolvedOpts.metricsFactory, logger),
-		producerID:        uuid.NewString(),
+		producerID:        producerID,
 		partFn:            resolvedOpts.partitionKeyFn,
-		toggles:           maps.Clone(cfg.EventToggles),
 		closeTimeout:      closeTimeout,
-		outbox:            resolvedOpts.outbox,
+		outboxWriter:      resolvedOpts.outboxWriter,
 		stop:              make(chan struct{}),
 		allowSystemEvents: resolvedOpts.allowSystemEvents,
+		catalog:           resolvedOpts.catalog,
+		policyOverrides:   cloneDeliveryPolicyOverrides(cfg.PolicyOverrides),
 	}
 
 	// Wire the circuit breaker: resolve manager, register service-named
@@ -266,3 +275,56 @@ func NewProducer(ctx context.Context, cfg Config, opts ...EmitterOption) (*Produ
 // Emit and its helpers live in emit.go (plus setEmitSpanAttributes in
 // emit_span.go). Keeping producer.go focused on construction/lifecycle
 // makes it easier to audit the hot path in isolation.
+
+// Descriptor returns a validated PublisherDescriptor with ProducerID populated
+// from this Producer instance. Callers pass their app-owned base descriptor
+// (service name, source base, versions, route path) and receive back the
+// normalized descriptor with the runtime-generated ProducerID attached.
+//
+// The ProducerID is an opaque identifier chosen at construction (currently a
+// UUIDv7, but callers must treat it as opaque); it is NOT stable across
+// process restarts. Intended use: feeding BuildManifest so the exported
+// manifest identifies which replica served it.
+//
+// Nil-receiver safe: returns a zero descriptor and ErrNilProducer rather than
+// panicking, matching the contract of Emit/Healthy/Close.
+func (p *Producer) Descriptor(base PublisherDescriptor) (PublisherDescriptor, error) {
+	if p == nil {
+		return PublisherDescriptor{}, ErrNilProducer
+	}
+
+	base.ProducerID = p.producerID
+
+	return NewPublisherDescriptor(base)
+}
+
+// validateCatalogAtBootstrap enforces the three catalog invariants required at
+// NewProducer time: non-empty catalog, every PolicyOverride key matches a
+// definition, and SystemEvent definitions require explicit caller opt-in.
+//
+// Failing fast at construction (rather than at first Emit) means a misconfigured
+// service crashes at startup with a precise message, instead of silently
+// dropping every system-event emission in production.
+func validateCatalogAtBootstrap(catalog Catalog, policyOverrides map[string]DeliveryPolicyOverride, allowSystemEvents bool) error {
+	if catalog.Len() == 0 {
+		return fmt.Errorf("%w: catalog is empty (WithCatalog requires at least one EventDefinition)", ErrInvalidEventDefinition)
+	}
+
+	for key := range policyOverrides {
+		if _, ok := catalog.Lookup(key); !ok {
+			return fmt.Errorf("streaming: invalid policy override: %w: %q", ErrUnknownEventDefinition, key)
+		}
+	}
+
+	if allowSystemEvents {
+		return nil
+	}
+
+	for _, def := range catalog.Definitions() {
+		if def.SystemEvent {
+			return fmt.Errorf("%w: catalog contains system event %q but Producer was not constructed with WithAllowSystemEvents()", ErrSystemEventsNotAllowed, def.Key)
+		}
+	}
+
+	return nil
+}

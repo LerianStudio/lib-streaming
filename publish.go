@@ -59,7 +59,7 @@ func hasControlChar(s string) bool {
 //
 //  1. SystemEvent capability gate: reject before any other work if the
 //     Producer did not opt into system events.
-//  2. Event toggle: resource.event key opts the event out at runtime.
+//  2. Topic-forming fields: resource and event type must be populated.
 //  3. Tenant: non-system events require a tenant.
 //  4. Source: required CloudEvents ce-source.
 //  5. Header sanitization: TenantID / ResourceType / EventType / Source /
@@ -68,10 +68,10 @@ func hasControlChar(s string) bool {
 //  7. Payload JSON validity: prevents DLQ poisoning downstream.
 //
 // Returns one of the caller sentinel errors (ErrSystemEventsNotAllowed,
-// ErrEventDisabled, ErrMissingTenantID, ErrMissingSource, ErrInvalid*,
-// ErrPayloadTooLarge, ErrNotJSON). Never returns an *EmitError — caller
-// faults have no Kafka-level class.
-func (p *Producer) preFlight(event Event) error {
+// ErrMissingResourceType, ErrMissingEventType, ErrMissingTenantID,
+// ErrMissingSource, ErrInvalid*, ErrPayloadTooLarge, ErrNotJSON). Never
+// returns an *EmitError — caller faults have no Kafka-level class.
+func (p *Producer) preFlightWithPayload(event Event, validatePayload bool) error {
 	// SystemEvent capability gate — runs FIRST so an opt-in violation is
 	// rejected before any other validation can mask it. A service that
 	// sets SystemEvent=true without WithAllowSystemEvents would otherwise
@@ -94,15 +94,6 @@ func (p *Producer) preFlight(event Event) error {
 
 	if event.EventType == "" {
 		return ErrMissingEventType
-	}
-
-	// Event-type toggle. Built from STREAMING_EVENT_TOGGLES at LoadConfig;
-	// empty map (nil) means every event is enabled by default.
-	if p.toggles != nil {
-		key := event.ResourceType + "." + event.EventType
-		if enabled, present := p.toggles[key]; present && !enabled {
-			return ErrEventDisabled
-		}
 	}
 
 	// Tenant discipline. System events (`ce-systemevent: true`) opt out of
@@ -130,17 +121,19 @@ func (p *Producer) preFlight(event Event) error {
 	// Pre-flight size cap. 1 MiB is the Redpanda default; we check BEFORE
 	// JSON validity so the dominant caller mistake (huge payload) short-
 	// circuits the slightly more expensive json.Valid scan.
-	if len(event.Payload) > maxPayloadBytes {
-		return ErrPayloadTooLarge
-	}
+	if validatePayload {
+		if len(event.Payload) > maxPayloadBytes {
+			return ErrPayloadTooLarge
+		}
 
-	// Payload must parse as JSON. This is the line of defense that keeps
-	// malformed bytes out of consumers and prevents DLQ replay from
-	// repeatedly re-poisoning the same topic. An empty payload is
-	// permitted ONLY when it's valid JSON (e.g. `null`, `{}`); a genuinely
-	// empty byte slice fails json.Valid and surfaces ErrNotJSON.
-	if !json.Valid(event.Payload) {
-		return ErrNotJSON
+		// Payload must parse as JSON. This is the line of defense that keeps
+		// malformed bytes out of consumers and prevents DLQ replay from
+		// repeatedly re-poisoning the same topic. An empty payload is
+		// permitted ONLY when it's valid JSON (e.g. `null`, `{}`); a genuinely
+		// empty byte slice fails json.Valid and surfaces ErrNotJSON.
+		if !json.Valid(event.Payload) {
+			return ErrNotJSON
+		}
 	}
 
 	return nil
@@ -205,7 +198,7 @@ func (*Producer) validateHeaderSafeFields(event Event) error {
 // topic is passed through from Emit (already computed once and threaded to
 // every downstream call site) so we avoid recomputing event.Topic() on the
 // hot path.
-func (p *Producer) publishDirect(ctx context.Context, event Event, topic string) error {
+func (p *Producer) publishDirect(ctx context.Context, event Event, topic string, policy DeliveryPolicy) error {
 	if p == nil {
 		return ErrNilProducer
 	}
@@ -255,7 +248,10 @@ func (p *Producer) publishDirect(ctx context.Context, event Event, topic string)
 	// isDLQRoutable for the two-class deny-list. DLQ publish is
 	// best-effort — failures are logged and metricked inside publishDLQ
 	// and do not propagate here.
-	cls := p.routeToDLQIfApplicable(ctx, event, err, topic, firstAttempt)
+	cls := classifyError(err)
+	if policy.dlqAllowed() {
+		cls = p.routeToDLQIfApplicable(ctx, event, err, topic, firstAttempt)
+	}
 
 	return buildEmitError(event, err, topic, cls)
 }

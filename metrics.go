@@ -17,6 +17,7 @@ import (
 //   - outcomeCircuitOpen:  circuit OPEN and no outbox → caller got ErrCircuitOpen.
 //   - outcomeCallerError:  preflight rejection or caller-class EmitError.
 //   - outcomeDLQ:          publish failed with an infra class; payload went to {topic}.dlq.
+//   - outcomeFailed:       direct publish failed and no DLQ route was taken.
 //   - outcomeOutboxFailed: outbox fallback attempted but the outbox write
 //     itself failed — distinct from outcomeCallerError because the root
 //     cause is outbox infrastructure, not caller input.
@@ -26,6 +27,7 @@ const (
 	outcomeCircuitOpen  = "circuit_open"
 	outcomeCallerError  = "caller_error"
 	outcomeDLQ          = "dlq"
+	outcomeFailed       = "failed"
 	outcomeOutboxFailed = "outbox_failed"
 )
 
@@ -39,6 +41,7 @@ const (
 	metricNameDLQFailed      = "streaming_dlq_publish_failed_total"
 	metricNameOutboxRouted   = "streaming_outbox_routed_total"
 	metricNameCircuitState   = "streaming_circuit_state"
+	metricTopicUnresolved    = "__unresolved__"
 )
 
 // streamingMetrics holds lazy-initialised OTEL instruments for the streaming

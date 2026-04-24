@@ -119,7 +119,7 @@ func TestEmit_Span_SingleStreamingEmitSpan(t *testing.T) {
 	tracer, getSpans := newSpanRecorder(t)
 
 	emitter, err := New(context.Background(), cfg,
-		WithLogger(log.NewNop()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithTracer(tracer),
 	)
 	if err != nil {
@@ -131,7 +131,8 @@ func TestEmit_Span_SingleStreamingEmitSpan(t *testing.T) {
 	defer cancel()
 
 	event := sampleEvent()
-	if err := emitter.Emit(ctx, event); err != nil {
+	request := eventToRequest(event)
+	if err := emitter.Emit(ctx, request); err != nil {
 		t.Fatalf("Emit err = %v", err)
 	}
 
@@ -144,7 +145,9 @@ func TestEmit_Span_SingleStreamingEmitSpan(t *testing.T) {
 
 	attrs := spanAttrs(span)
 
-	// TRD §7.2 required attributes.
+	// TRD §7.2 required attributes. event.policy combines direct/outbox/dlq
+	// modes into a single key (v0.2.0 post-review fix #23) to keep span
+	// cardinality at 10 keys.
 	wantAttrs := map[string]string{
 		"messaging.system":           "kafka",
 		"messaging.destination.name": event.Topic(),
@@ -152,6 +155,8 @@ func TestEmit_Span_SingleStreamingEmitSpan(t *testing.T) {
 		"messaging.client.id":        cfg.ClientID,
 		"event.resource_type":        event.ResourceType,
 		"event.event_type":           event.EventType,
+		"event.definition_key":       "transaction.created",
+		"event.policy":               "direct:direct,outbox:fallback_on_circuit_open,dlq:on_routable_failure",
 		"tenant.id":                  event.TenantID,
 		"event.outcome":              outcomeProduced,
 	}
@@ -202,13 +207,13 @@ func TestEmit_Span_OutcomeAttributeReflectsBranch(t *testing.T) {
 		tracer, getSpans := newSpanRecorder(t)
 
 		emitter, err := New(context.Background(), cfg,
-			WithLogger(log.NewNop()), WithTracer(tracer))
+			WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)), WithTracer(tracer))
 		if err != nil {
 			t.Fatalf("New err = %v", err)
 		}
 		t.Cleanup(func() { _ = emitter.Close() })
 
-		if err := emitter.Emit(context.Background(), sampleEvent()); err != nil {
+		if err := emitter.Emit(context.Background(), sampleRequest()); err != nil {
 			t.Fatalf("Emit err = %v", err)
 		}
 
@@ -224,7 +229,7 @@ func TestEmit_Span_OutcomeAttributeReflectsBranch(t *testing.T) {
 
 		repo := &fakeOutboxRepo{}
 		emitter, err := New(context.Background(), cfg,
-			WithLogger(log.NewNop()), WithTracer(tracer),
+			WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)), WithTracer(tracer),
 			WithOutboxRepository(repo))
 		if err != nil {
 			t.Fatalf("New err = %v", err)
@@ -234,7 +239,7 @@ func TestEmit_Span_OutcomeAttributeReflectsBranch(t *testing.T) {
 		p := asProducer(t, emitter)
 		p.cbStateFlag.Store(flagCBOpen)
 
-		if err := emitter.Emit(context.Background(), sampleEvent()); err != nil {
+		if err := emitter.Emit(context.Background(), sampleRequest()); err != nil {
 			t.Fatalf("Emit err = %v", err)
 		}
 
@@ -267,7 +272,7 @@ func TestEmit_Span_OutcomeAttributeReflectsBranch(t *testing.T) {
 		tracer, getSpans := newSpanRecorder(t)
 
 		emitter, err := New(context.Background(), cfg,
-			WithLogger(log.NewNop()), WithTracer(tracer))
+			WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)), WithTracer(tracer))
 		if err != nil {
 			t.Fatalf("New err = %v", err)
 		}
@@ -276,7 +281,7 @@ func TestEmit_Span_OutcomeAttributeReflectsBranch(t *testing.T) {
 		p := asProducer(t, emitter)
 		p.cbStateFlag.Store(flagCBOpen)
 
-		if err := emitter.Emit(context.Background(), sampleEvent()); !errors.Is(err, ErrCircuitOpen) {
+		if err := emitter.Emit(context.Background(), sampleRequest()); !errors.Is(err, ErrCircuitOpen) {
 			t.Fatalf("Emit err = %v; want ErrCircuitOpen", err)
 		}
 
@@ -293,7 +298,7 @@ func TestEmit_Span_OutcomeAttributeReflectsBranch(t *testing.T) {
 
 		tracer, getSpans := newSpanRecorder(t)
 		emitter, err := New(context.Background(), cfg,
-			WithLogger(log.NewNop()), WithTracer(tracer))
+			WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)), WithTracer(tracer))
 		if err != nil {
 			t.Fatalf("New err = %v", err)
 		}
@@ -302,7 +307,7 @@ func TestEmit_Span_OutcomeAttributeReflectsBranch(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		if err := emitter.Emit(ctx, sampleEvent()); err == nil {
+		if err := emitter.Emit(ctx, sampleRequest()); err == nil {
 			t.Fatalf("Emit err = nil; want an error")
 		}
 
@@ -330,13 +335,13 @@ func TestEmit_Span_PreflightFailure_NoSpan(t *testing.T) {
 	tracer, getSpans := newSpanRecorder(t)
 
 	emitter, err := New(context.Background(), cfg,
-		WithLogger(log.NewNop()), WithTracer(tracer))
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)), WithTracer(tracer))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
 	t.Cleanup(func() { _ = emitter.Close() })
 
-	bad := sampleEvent()
+	bad := sampleRequest()
 	bad.TenantID = "" // triggers ErrMissingTenantID
 
 	if err := emitter.Emit(context.Background(), bad); !errors.Is(err, ErrMissingTenantID) {
@@ -365,13 +370,13 @@ func TestEmit_Span_DebugLevelEmitsMessageKey(t *testing.T) {
 		tracer, getSpans := newSpanRecorder(t)
 
 		emitter, err := New(context.Background(), cfg,
-			WithLogger(&debugLogger{}), WithTracer(tracer))
+			WithLogger(&debugLogger{}), WithCatalog(sampleCatalog(t)), WithTracer(tracer))
 		if err != nil {
 			t.Fatalf("New err = %v", err)
 		}
 		t.Cleanup(func() { _ = emitter.Close() })
 
-		event := sampleEvent()
+		event := sampleRequest()
 		if err := emitter.Emit(context.Background(), event); err != nil {
 			t.Fatalf("Emit err = %v", err)
 		}
@@ -383,9 +388,9 @@ func TestEmit_Span_DebugLevelEmitsMessageKey(t *testing.T) {
 		if !ok {
 			t.Fatalf("messaging.kafka.message.key absent with DEBUG logger; want present")
 		}
-		if got != event.PartitionKey() {
+		if got != event.TenantID {
 			t.Errorf("messaging.kafka.message.key = %q; want %q (tenant ID)",
-				got, event.PartitionKey())
+				got, event.TenantID)
 		}
 	})
 
@@ -394,13 +399,13 @@ func TestEmit_Span_DebugLevelEmitsMessageKey(t *testing.T) {
 		tracer, getSpans := newSpanRecorder(t)
 
 		emitter, err := New(context.Background(), cfg,
-			WithLogger(&infoLogger{}), WithTracer(tracer))
+			WithLogger(&infoLogger{}), WithCatalog(sampleCatalog(t)), WithTracer(tracer))
 		if err != nil {
 			t.Fatalf("New err = %v", err)
 		}
 		t.Cleanup(func() { _ = emitter.Close() })
 
-		if err := emitter.Emit(context.Background(), sampleEvent()); err != nil {
+		if err := emitter.Emit(context.Background(), sampleRequest()); err != nil {
 			t.Fatalf("Emit err = %v", err)
 		}
 
@@ -422,7 +427,7 @@ func TestEmit_SpanError_RecordedOnFailure(t *testing.T) {
 
 	tracer, getSpans := newSpanRecorder(t)
 	emitter, err := New(context.Background(), cfg,
-		WithLogger(log.NewNop()), WithTracer(tracer))
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)), WithTracer(tracer))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -431,7 +436,7 @@ func TestEmit_SpanError_RecordedOnFailure(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := emitter.Emit(ctx, sampleEvent()); err == nil {
+	if err := emitter.Emit(ctx, sampleRequest()); err == nil {
 		t.Fatalf("Emit err = nil; want a classified error")
 	}
 
@@ -476,7 +481,7 @@ func TestEmit_Span_NilTracerFallback(t *testing.T) {
 
 	// Deliberately omit WithTracer.
 	emitter, err := New(context.Background(), cfg,
-		WithLogger(log.NewNop()))
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -487,7 +492,7 @@ func TestEmit_Span_NilTracerFallback(t *testing.T) {
 		t.Errorf("p.tracer = nil after NewProducer; want fallback to otel.Tracer(%q)", tracerName)
 	}
 
-	if err := emitter.Emit(context.Background(), sampleEvent()); err != nil {
+	if err := emitter.Emit(context.Background(), sampleRequest()); err != nil {
 		t.Errorf("Emit err = %v; want nil (no-op tracer)", err)
 	}
 }
@@ -507,7 +512,7 @@ func TestEmit_Span_IsRecordingFastPath(t *testing.T) {
 	t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
 
 	emitter, err := New(context.Background(), cfg,
-		WithLogger(log.NewNop()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithTracer(provider.Tracer("no-record")))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
@@ -518,7 +523,7 @@ func TestEmit_Span_IsRecordingFastPath(t *testing.T) {
 	// is non-recording, there are no observable side effects for us to
 	// check via span. The fast-path guard is exercised simply by the
 	// Emit completing without walking the SetAttributes codepath.
-	if err := emitter.Emit(context.Background(), sampleEvent()); err != nil {
+	if err := emitter.Emit(context.Background(), sampleRequest()); err != nil {
 		t.Errorf("Emit err = %v; want nil", err)
 	}
 }
@@ -533,13 +538,13 @@ func TestEmit_Span_AttributeCountInvariant(t *testing.T) {
 	tracer, getSpans := newSpanRecorder(t)
 
 	emitter, err := New(context.Background(), cfg,
-		WithLogger(log.NewNop()), WithTracer(tracer))
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)), WithTracer(tracer))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
 	t.Cleanup(func() { _ = emitter.Close() })
 
-	if err := emitter.Emit(context.Background(), sampleEvent()); err != nil {
+	if err := emitter.Emit(context.Background(), sampleRequest()); err != nil {
 		t.Fatalf("Emit err = %v", err)
 	}
 
@@ -556,6 +561,8 @@ func TestEmit_Span_AttributeCountInvariant(t *testing.T) {
 		"messaging.client.id",
 		"event.resource_type",
 		"event.event_type",
+		"event.definition_key",
+		"event.policy",
 		"tenant.id",
 		"streaming.producer_id",
 		"event.outcome",

@@ -4,6 +4,7 @@ package streaming
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -16,7 +17,7 @@ func TestLoadConfig_Defaults(t *testing.T) {
 	// but os.Getenv reads are cross-test so we keep this sequential for clarity.
 	clearStreamingEnv(t)
 
-	cfg, err := LoadConfig()
+	cfg, _, err := LoadConfig()
 	if err != nil {
 		t.Fatalf("LoadConfig() returned unexpected error: %v", err)
 	}
@@ -73,7 +74,7 @@ func TestLoadConfig_EnabledWithoutBrokers(t *testing.T) {
 	t.Setenv("STREAMING_BROKERS", " , , ")
 	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.midaz/tx-service")
 
-	_, err := LoadConfig()
+	_, _, err := LoadConfig()
 	if !errors.Is(err, ErrMissingBrokers) {
 		t.Fatalf("LoadConfig() err = %v; want ErrMissingBrokers", err)
 	}
@@ -87,7 +88,7 @@ func TestLoadConfig_EnabledWithoutSource(t *testing.T) {
 	t.Setenv("STREAMING_BROKERS", "broker:9092")
 	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "")
 
-	_, err := LoadConfig()
+	_, _, err := LoadConfig()
 	if !errors.Is(err, ErrMissingSource) {
 		t.Fatalf("LoadConfig() err = %v; want ErrMissingSource", err)
 	}
@@ -102,7 +103,7 @@ func TestLoadConfig_InvalidCompression(t *testing.T) {
 	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.midaz/tx-service")
 	t.Setenv("STREAMING_COMPRESSION", "brotli")
 
-	_, err := LoadConfig()
+	_, _, err := LoadConfig()
 	if !errors.Is(err, ErrInvalidCompression) {
 		t.Fatalf("LoadConfig() err = %v; want ErrInvalidCompression", err)
 	}
@@ -116,7 +117,7 @@ func TestLoadConfig_InvalidAcks(t *testing.T) {
 	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.midaz/tx-service")
 	t.Setenv("STREAMING_REQUIRED_ACKS", "maybe")
 
-	_, err := LoadConfig()
+	_, _, err := LoadConfig()
 	if !errors.Is(err, ErrInvalidAcks) {
 		t.Fatalf("LoadConfig() err = %v; want ErrInvalidAcks", err)
 	}
@@ -131,7 +132,7 @@ func TestLoadConfig_DisabledSkipsValidation(t *testing.T) {
 	t.Setenv("STREAMING_BROKERS", "")
 	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "")
 
-	cfg, err := LoadConfig()
+	cfg, _, err := LoadConfig()
 	if err != nil {
 		t.Fatalf("LoadConfig() with disabled returned unexpected error: %v", err)
 	}
@@ -148,7 +149,7 @@ func TestLoadConfig_ValidCSVBrokers(t *testing.T) {
 	t.Setenv("STREAMING_BROKERS", "broker1:9092, broker2:9092 ,broker3:9092")
 	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.midaz/tx-service")
 
-	cfg, err := LoadConfig()
+	cfg, _, err := LoadConfig()
 	if err != nil {
 		t.Fatalf("LoadConfig() err = %v", err)
 	}
@@ -173,7 +174,7 @@ func TestLoadConfig_AllValidCompressionCodecs(t *testing.T) {
 			t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.midaz/tx-service")
 			t.Setenv("STREAMING_COMPRESSION", codec)
 
-			cfg, err := LoadConfig()
+			cfg, _, err := LoadConfig()
 			if err != nil {
 				t.Fatalf("LoadConfig(%s) err = %v", codec, err)
 			}
@@ -194,7 +195,7 @@ func TestLoadConfig_AllValidAcks(t *testing.T) {
 			t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.midaz/tx-service")
 			t.Setenv("STREAMING_REQUIRED_ACKS", acks)
 
-			cfg, err := LoadConfig()
+			cfg, _, err := LoadConfig()
 			if err != nil {
 				t.Fatalf("LoadConfig(%s) err = %v", acks, err)
 			}
@@ -214,7 +215,7 @@ func TestLoadConfig_CBFailureRatioOverride(t *testing.T) {
 	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.midaz/tx-service")
 	t.Setenv("STREAMING_CB_FAILURE_RATIO", "0.25")
 
-	cfg, err := LoadConfig()
+	cfg, _, err := LoadConfig()
 	if err != nil {
 		t.Fatalf("LoadConfig() err = %v", err)
 	}
@@ -232,7 +233,7 @@ func TestLoadConfig_CBFailureRatioBadValueUsesDefault(t *testing.T) {
 	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.midaz/tx-service")
 	t.Setenv("STREAMING_CB_FAILURE_RATIO", "not-a-float")
 
-	cfg, err := LoadConfig()
+	cfg, _, err := LoadConfig()
 	if err != nil {
 		t.Fatalf("LoadConfig() err = %v", err)
 	}
@@ -241,46 +242,123 @@ func TestLoadConfig_CBFailureRatioBadValueUsesDefault(t *testing.T) {
 	}
 }
 
-// TestLoadConfig_EventTogglesBogusEntriesSkipped exercises the forgiving
-// parser — a malformed entry doesn't poison the whole toggle map.
-func TestLoadConfig_EventTogglesBogusEntriesSkipped(t *testing.T) {
+func TestLoadConfig_EventPolicies(t *testing.T) {
 	clearStreamingEnv(t)
 	t.Setenv("STREAMING_ENABLED", "true")
 	t.Setenv("STREAMING_BROKERS", "broker:9092")
 	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.midaz/tx-service")
-	// "no-equals" lacks =, "=value" lacks key, "key=maybe" has unknown value.
-	t.Setenv("STREAMING_EVENT_TOGGLES", "no-equals,=value,key=maybe,real.event=true")
+	t.Setenv(
+		"STREAMING_EVENT_POLICIES",
+		"transaction.created.enabled=false,transaction.created.outbox=always;transaction.created.dlq=never\naccount.updated.direct=skip,account.updated.outbox=always",
+	)
 
-	cfg, err := LoadConfig()
+	cfg, _, err := LoadConfig()
 	if err != nil {
 		t.Fatalf("LoadConfig() err = %v", err)
 	}
-	if got := cfg.EventToggles["real.event"]; !got {
-		t.Errorf("real.event toggle = %v; want true", got)
+
+	tx := cfg.PolicyOverrides["transaction.created"]
+	if tx.Enabled == nil || *tx.Enabled {
+		t.Fatalf("transaction.created enabled override = %v; want false", tx.Enabled)
 	}
-	// Malformed entries should not create spurious keys.
-	if _, exists := cfg.EventToggles["no-equals"]; exists {
-		t.Errorf("no-equals unexpectedly parsed into EventToggles")
+	if tx.Outbox != OutboxModeAlways {
+		t.Errorf("transaction.created outbox = %q; want %q", tx.Outbox, OutboxModeAlways)
+	}
+	if tx.DLQ != DLQModeNever {
+		t.Errorf("transaction.created dlq = %q; want %q", tx.DLQ, DLQModeNever)
+	}
+
+	account := cfg.PolicyOverrides["account.updated"]
+	if account.Direct != DirectModeSkip {
+		t.Errorf("account.updated direct = %q; want %q", account.Direct, DirectModeSkip)
+	}
+	if account.Outbox != OutboxModeAlways {
+		t.Errorf("account.updated outbox = %q; want %q", account.Outbox, OutboxModeAlways)
 	}
 }
 
-// TestLoadConfig_EventToggles parses the CSV "resource.event=bool" format.
-func TestLoadConfig_EventToggles(t *testing.T) {
+func TestLoadConfig_EventPoliciesInvalidMode(t *testing.T) {
 	clearStreamingEnv(t)
 	t.Setenv("STREAMING_ENABLED", "true")
 	t.Setenv("STREAMING_BROKERS", "broker:9092")
 	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.midaz/tx-service")
-	t.Setenv("STREAMING_EVENT_TOGGLES", "transaction.created=false,account.updated=true")
+	t.Setenv("STREAMING_EVENT_POLICIES", "transaction.created.outbox=sometimes")
 
-	cfg, err := LoadConfig()
+	_, _, err := LoadConfig()
+	if !errors.Is(err, ErrInvalidDeliveryPolicy) {
+		t.Fatalf("LoadConfig() err = %v; want ErrInvalidDeliveryPolicy", err)
+	}
+}
+
+func TestLoadConfig_EventPoliciesMalformedEntry(t *testing.T) {
+	clearStreamingEnv(t)
+	t.Setenv("STREAMING_ENABLED", "true")
+	t.Setenv("STREAMING_BROKERS", "broker:9092")
+	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.midaz/tx-service")
+	t.Setenv("STREAMING_EVENT_POLICIES", "transaction.created.enabled")
+
+	_, _, err := LoadConfig()
+	if !errors.Is(err, ErrInvalidDeliveryPolicy) {
+		t.Fatalf("LoadConfig() err = %v; want ErrInvalidDeliveryPolicy", err)
+	}
+}
+
+func TestParseEventPolicies_RejectsExcessiveEntries(t *testing.T) {
+	t.Parallel()
+
+	// Build a policy string with (cap+1) valid entries; each entry is the
+	// minimal-legal shape ("a.enabled=true"). The value side doesn't matter
+	// for the entry-count guard — the parser must reject before touching
+	// per-entry attributes.
+	var b strings.Builder
+	for i := 0; i <= maxEventPolicyEntries; i++ {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString("a.enabled=true")
+	}
+
+	_, err := parseEventPolicies(b.String())
+	if !errors.Is(err, ErrInvalidDeliveryPolicy) {
+		t.Fatalf("parseEventPolicies() err = %v; want ErrInvalidDeliveryPolicy", err)
+	}
+	if !strings.Contains(err.Error(), "entries") {
+		t.Errorf("err message missing 'entries' hint: %v", err)
+	}
+}
+
+func TestParseEventPolicies_RejectsLongKey(t *testing.T) {
+	t.Parallel()
+
+	// Construct a key longer than maxEventPolicyKeyBytes. The key is the
+	// left side minus the trailing ".attr", so we need len(key)>256 before
+	// adding ".enabled".
+	longKey := strings.Repeat("a", maxEventPolicyKeyBytes+1)
+	entry := longKey + ".enabled=true"
+
+	_, err := parseEventPolicies(entry)
+	if !errors.Is(err, ErrInvalidDeliveryPolicy) {
+		t.Fatalf("parseEventPolicies() err = %v; want ErrInvalidDeliveryPolicy", err)
+	}
+	if !strings.Contains(err.Error(), "bytes") {
+		t.Errorf("err message missing 'bytes' hint: %v", err)
+	}
+}
+
+func TestLoadConfig_DisabledSkipsInvalidEventPolicies(t *testing.T) {
+	clearStreamingEnv(t)
+	t.Setenv("STREAMING_ENABLED", "false")
+	t.Setenv("STREAMING_EVENT_POLICIES", "transaction.created.outbox=sometimes")
+
+	cfg, _, err := LoadConfig()
 	if err != nil {
-		t.Fatalf("LoadConfig() err = %v", err)
+		t.Fatalf("LoadConfig() with disabled returned unexpected error: %v", err)
 	}
-	if cfg.EventToggles["transaction.created"] != false {
-		t.Errorf("EventToggles[transaction.created] = %v; want false", cfg.EventToggles["transaction.created"])
+	if cfg.Enabled {
+		t.Error("cfg.Enabled = true; want false")
 	}
-	if cfg.EventToggles["account.updated"] != true {
-		t.Errorf("EventToggles[account.updated] = %v; want true", cfg.EventToggles["account.updated"])
+	if len(cfg.PolicyOverrides) != 0 {
+		t.Errorf("len(PolicyOverrides) = %d; want 0 for invalid disabled policy env", len(cfg.PolicyOverrides))
 	}
 }
 
@@ -306,9 +384,87 @@ func clearStreamingEnv(t *testing.T) {
 		"STREAMING_CB_TIMEOUT_S",
 		"STREAMING_CLOSE_TIMEOUT_S",
 		"STREAMING_CLOUDEVENTS_SOURCE",
+		"STREAMING_EVENT_POLICIES",
 		"STREAMING_EVENT_TOGGLES",
 	}
 	for _, v := range vars {
 		t.Setenv(v, "")
+	}
+}
+
+// TestLegacyEventTogglesEnvWarnings_EmitsWhenOnlyLegacySet is the direct
+// helper-level check: the returned slice carries a single warning naming both
+// the old and new var names so operators can grep either one.
+func TestLegacyEventTogglesEnvWarnings_EmitsWhenOnlyLegacySet(t *testing.T) {
+	clearStreamingEnv(t)
+	t.Setenv("STREAMING_EVENT_TOGGLES", "foo.bar=true")
+
+	warnings := legacyEventTogglesEnvWarnings()
+
+	if len(warnings) != 1 {
+		t.Fatalf("len(warnings) = %d; want 1", len(warnings))
+	}
+	got := warnings[0]
+	if !strings.Contains(got, "STREAMING_EVENT_TOGGLES") {
+		t.Errorf("warning missing legacy var name: %q", got)
+	}
+	if !strings.Contains(got, "STREAMING_EVENT_POLICIES") {
+		t.Errorf("warning missing replacement var name: %q", got)
+	}
+}
+
+// TestLegacyEventTogglesEnvWarnings_SilentWhenBothSet exercises the dual-set
+// branch: operator is already on the new var and happens to still have the
+// legacy var defined — no warning should fire.
+func TestLegacyEventTogglesEnvWarnings_SilentWhenBothSet(t *testing.T) {
+	clearStreamingEnv(t)
+	t.Setenv("STREAMING_EVENT_TOGGLES", "foo.bar=true")
+	t.Setenv("STREAMING_EVENT_POLICIES", "foo.bar.enabled=true")
+
+	warnings := legacyEventTogglesEnvWarnings()
+
+	if len(warnings) != 0 {
+		t.Errorf("expected no warnings when both env vars are set; got %v", warnings)
+	}
+}
+
+// TestLegacyEventTogglesEnvWarnings_EmptyWhenNeitherSet asserts the helper
+// returns an empty (non-nil) slice when no migration warning applies, so
+// callers can range-for without a nil check.
+func TestLegacyEventTogglesEnvWarnings_EmptyWhenNeitherSet(t *testing.T) {
+	clearStreamingEnv(t)
+
+	warnings := legacyEventTogglesEnvWarnings()
+
+	if warnings == nil {
+		t.Error("warnings = nil; want empty (non-nil) slice")
+	}
+	if len(warnings) != 0 {
+		t.Errorf("len(warnings) = %d; want 0", len(warnings))
+	}
+}
+
+// TestLoadConfig_ReturnsLegacyEventTogglesWarning is the end-to-end check: a
+// LoadConfig call with only the legacy var set surfaces the migration warning
+// through the returned []string rather than writing to stderr or a logger.
+func TestLoadConfig_ReturnsLegacyEventTogglesWarning(t *testing.T) {
+	clearStreamingEnv(t)
+	t.Setenv("STREAMING_EVENT_TOGGLES", "foo.bar=true")
+
+	_, warnings, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig() err = %v", err)
+	}
+
+	if len(warnings) != 1 {
+		t.Fatalf("len(warnings) = %d; want 1", len(warnings))
+	}
+
+	got := warnings[0]
+	if !strings.Contains(got, "STREAMING_EVENT_TOGGLES") {
+		t.Errorf("warning missing legacy var name: %q", got)
+	}
+	if !strings.Contains(got, "STREAMING_EVENT_POLICIES") {
+		t.Errorf("warning missing replacement var name: %q", got)
 	}
 }

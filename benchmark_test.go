@@ -112,14 +112,14 @@ func BenchmarkEmit_HappyPath(b *testing.B) {
 
 	cfg, _ := kfakeBenchConfig(b)
 
-	p, err := NewProducer(context.Background(), cfg, WithLogger(log.NewNop()))
+	p, err := NewProducer(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(b)))
 	if err != nil {
 		b.Fatalf("NewProducer err = %v", err)
 	}
 	b.Cleanup(func() { _ = p.Close() })
 
 	ctx := context.Background()
-	event := sampleEvent()
+	event := sampleRequest()
 
 	for b.Loop() {
 		if err := p.Emit(ctx, event); err != nil {
@@ -138,7 +138,7 @@ func BenchmarkEmit_CircuitOpenOutbox(b *testing.B) {
 	repo := &fakeOutboxRepo{}
 
 	p, err := NewProducer(context.Background(), cfg,
-		WithLogger(log.NewNop()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(b)),
 		WithOutboxRepository(repo),
 	)
 	if err != nil {
@@ -150,7 +150,7 @@ func BenchmarkEmit_CircuitOpenOutbox(b *testing.B) {
 	p.cbStateFlag.Store(flagCBOpen)
 
 	ctx := context.Background()
-	event := sampleEvent()
+	event := sampleRequest()
 
 	for b.Loop() {
 		if err := p.Emit(ctx, event); err != nil {
@@ -171,14 +171,14 @@ func BenchmarkEmit_DLQRoute(b *testing.B) {
 	injectProduceError(cluster, "lerian.streaming.transaction.created",
 		kerr.MessageTooLarge.Code)
 
-	p, err := NewProducer(context.Background(), cfg, WithLogger(log.NewNop()))
+	p, err := NewProducer(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(b)))
 	if err != nil {
 		b.Fatalf("NewProducer err = %v", err)
 	}
 	b.Cleanup(func() { _ = p.Close() })
 
 	ctx := context.Background()
-	event := sampleEvent()
+	event := sampleRequest()
 
 	for b.Loop() {
 		// Every Emit returns a non-nil *EmitError (class=serialization).
@@ -300,14 +300,13 @@ func BenchmarkPreFlight(b *testing.B) {
 	// measurement isolated to preflight-touched fields.
 	p := &Producer{
 		allowSystemEvents: false,
-		toggles:           nil,
 	}
 
 	event := sampleEvent()
 	(&event).ApplyDefaults()
 
 	for b.Loop() {
-		if err := p.preFlight(event); err != nil {
+		if err := p.preFlightWithPayload(event, true); err != nil {
 			b.Fatalf("preFlight err = %v", err)
 		}
 	}

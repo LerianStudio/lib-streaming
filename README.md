@@ -5,15 +5,26 @@ CloudEvents-framed domain event publisher to Redpanda/Kafka, with circuit-breake
 Producer-only. Orthogonal to `github.com/LerianStudio/lib-commons/v5/commons/rabbitmq` (internal command queues) — neither deprecates the other.
 
 - Module: `github.com/LerianStudio/lib-streaming`
-- Version: `v0.1.0`
+- Version: `v0.2.0`
 - Go: `1.25.9`
 - License: Elastic License 2.0 (see [LICENSE](./LICENSE))
 
 ## Install
 
 ```
-go get github.com/LerianStudio/lib-streaming@v0.1.0
+go get github.com/LerianStudio/lib-streaming@v0.2.0
 ```
+
+## Upgrading from v0.1.0
+
+v0.2.0 is a breaking change. Highlights:
+
+- `NewProducer` now requires `WithCatalog(catalog)`; build a `Catalog` of `EventDefinition` records at bootstrap.
+- `Emit` takes `EmitRequest{DefinitionKey, TenantID, Payload, ...}` — the catalog owns `ResourceType`/`EventType`/`SchemaVersion`.
+- `Config.EventToggles` / `STREAMING_EVENT_TOGGLES` replaced by `Config.PolicyOverrides` / `STREAMING_EVENT_POLICIES`.
+- `RegisterOutboxHandler(registry, eventTypes...)` collapsed to `RegisterOutboxRelay(registry)` — one stable relay event type.
+
+See [`CHANGELOG.md`](./CHANGELOG.md) for the full list and the outbox-row compatibility notes.
 
 ## Quick start
 
@@ -23,27 +34,34 @@ Bootstrap in `main.go`:
 cfg, err := streaming.LoadConfig()
 if err != nil { return err }
 
+catalog, err := streaming.NewCatalog(streaming.EventDefinition{
+    Key:          "transaction.created",
+    ResourceType: "transaction",
+    EventType:    "created",
+})
+if err != nil { return err }
+
 producer, err := streaming.NewProducer(ctx, cfg,
     streaming.WithLogger(logger),
     streaming.WithMetricsFactory(metricsFactory),
     streaming.WithTracer(tracer),
     streaming.WithCircuitBreakerManager(cbManager),
     streaming.WithOutboxRepository(outboxRepo),
+    streaming.WithCatalog(catalog),
 )
 if err != nil { return err }
+if err := producer.RegisterOutboxRelay(outboxRegistry); err != nil { return err }
 launcher.Add("streaming", producer)
 ```
 
 Service method uses the injected `Emitter`:
 
 ```go
-err := emitter.Emit(ctx, streaming.Event{
-    TenantID:     "t-abc",
-    ResourceType: "transaction",
-    EventType:    "created",
-    Source:       "//lerian.midaz/transaction-service",
-    Subject:      "tx-123",
-    Payload:      payloadBytes,
+err := emitter.Emit(ctx, streaming.EmitRequest{
+    DefinitionKey: "transaction.created",
+    TenantID:      "t-abc",
+    Subject:       "tx-123",
+    Payload:       payloadBytes,
 })
 ```
 
@@ -53,7 +71,7 @@ Unit-test with the mock emitter:
 mock := streaming.NewMockEmitter()
 svc := NewMyService(mock)
 svc.DoSomething(ctx)
-streaming.AssertEventEmitted(t, mock, "transaction", "created")
+streaming.AssertEventEmitted(t, mock, "transaction.created")
 ```
 
 ## Features
@@ -61,7 +79,8 @@ streaming.AssertEventEmitted(t, mock, "transaction", "created")
 - **CloudEvents 1.0 binary mode.** Headers carry `ce-*` context attributes; payload is raw JSON.
 - **franz-go backing.** Battle-tested Kafka client with automatic batching, retries, and backpressure.
 - **Circuit breaker.** Opens on broker failure; half-open probes recover automatically.
-- **Outbox fallback.** When the breaker is OPEN and `WithOutboxRepository` is wired, `Emit` writes to the outbox and returns nil; a Dispatcher drains rows through `publishDirect` (bypasses the breaker on replay).
+- **Policy-driven delivery.** Catalog defaults, environment overrides, and call overrides resolve direct publish, outbox, and DLQ behavior per event.
+- **Outbox fallback.** When policy selects outbox (`always` or circuit-open fallback) and `WithOutboxRepository`/`WithOutboxWriter` is wired, `Emit` stores a versioned `OutboxEnvelope` under the stable `lerian.streaming.publish` relay type. Register `RegisterOutboxRelay` once with the app outbox dispatcher.
 - **Per-topic DLQ.** Failures land on `<source>.dlq` with six structured headers (source topic, error class, error message, retry count, first-failure-at, producer ID) for forensic analysis.
 - **Tenant-aware partitioning.** `Event.PartitionKey()` returns `TenantID` by default; `SystemEvent=true` switches to `"system:" + EventType`.
 - **Caller-safe errors.** `IsCallerError(err)` distinguishes caller-correctable faults (validation, payload shape) from infrastructure faults (broker down, network).

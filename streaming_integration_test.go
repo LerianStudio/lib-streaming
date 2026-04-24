@@ -231,7 +231,7 @@ func newTestProducer(t *testing.T, brokers []string) *Producer {
 		CloudEventsSource:     integrationSource,
 	}
 
-	p, err := NewProducer(context.Background(), cfg, WithLogger(log.NewNop()))
+	p, err := NewProducer(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	require.NoError(t, err, "NewProducer")
 
 	t.Cleanup(func() {
@@ -356,7 +356,7 @@ func TestIntegration_RoundTripHeaders(t *testing.T) {
 
 	consumer := newConsumerClient(t, brokers, topic)
 
-	require.NoError(t, p.Emit(context.Background(), event), "Emit")
+	require.NoError(t, p.Emit(context.Background(), eventToRequest(event)), "Emit")
 
 	records := pollRecords(t, consumer, 1, 30*time.Second)
 	require.Len(t, records, 1, "expected exactly 1 record on %s", topic)
@@ -368,12 +368,20 @@ func TestIntegration_RoundTripHeaders(t *testing.T) {
 	parsed, err := ParseCloudEventsHeaders(r.Headers)
 	require.NoError(t, err, "ParseCloudEventsHeaders")
 
+	// Fields supplied by the catalog — assert against the catalog definition,
+	// NOT the inline Event, so drift between the two shows as a real failure
+	// rather than silently passing on coincidental equality. eventToRequest
+	// drops DataContentType/DataSchema/SchemaVersion; resolveEvent fills them
+	// from the catalog.
+	definition, err := sampleCatalog(t).Require("transaction.created")
+	require.NoError(t, err, "sampleCatalog(t).Require(transaction.created)")
+
 	assert.Equal(t, event.EventID, parsed.EventID, "ce-id")
 	assert.Equal(t, event.Source, parsed.Source, "ce-source")
 	assert.Equal(t, event.Subject, parsed.Subject, "ce-subject")
-	assert.Equal(t, event.DataContentType, parsed.DataContentType, "ce-datacontenttype")
-	assert.Equal(t, event.DataSchema, parsed.DataSchema, "ce-dataschema")
-	assert.Equal(t, event.SchemaVersion, parsed.SchemaVersion, "ce-schemaversion")
+	assert.Equal(t, definition.DataContentType, parsed.DataContentType, "ce-datacontenttype")
+	assert.Equal(t, definition.DataSchema, parsed.DataSchema, "ce-dataschema")
+	assert.Equal(t, definition.SchemaVersion, parsed.SchemaVersion, "ce-schemaversion")
 	assert.Equal(t, event.ResourceType, parsed.ResourceType, "ce-resourcetype")
 	assert.Equal(t, event.EventType, parsed.EventType, "ce-eventtype")
 	assert.Equal(t, event.TenantID, parsed.TenantID, "ce-tenantid")
@@ -442,7 +450,7 @@ func TestIntegration_PartitionFIFO(t *testing.T) {
 					Source:       integrationSource,
 					Payload:      payload,
 				}
-				if err := p.Emit(gctx, ev); err != nil {
+				if err := p.Emit(gctx, eventToRequest(ev)); err != nil {
 					return fmt.Errorf("emit tenant=%s seq=%d: %w", tenantID, seq, err)
 				}
 			}
@@ -563,7 +571,7 @@ func TestIntegration_DLQRouting(t *testing.T) {
 		CloseTimeout:          5 * time.Second,
 		CloudEventsSource:     integrationSource,
 	}
-	p, err := NewProducer(context.Background(), cfg, WithLogger(log.NewNop()))
+	p, err := NewProducer(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	require.NoError(t, err, "NewProducer")
 	t.Cleanup(func() { _ = p.Close() })
 
@@ -591,7 +599,7 @@ func TestIntegration_DLQRouting(t *testing.T) {
 	// Emit should surface an *EmitError carrying ClassSerialization. The DLQ
 	// write should succeed in the background — the *EmitError.Cause is the
 	// original broker error, not a DLQ-write error.
-	emitErr := p.Emit(context.Background(), event)
+	emitErr := p.Emit(context.Background(), eventToRequest(event))
 	require.Error(t, emitErr, "expected Emit to fail on oversize payload")
 
 	var emitEE *EmitError
@@ -638,9 +646,13 @@ func TestIntegration_DLQRouting(t *testing.T) {
 	assert.Equal(t, eventType, hdrs["ce-eventtype"])
 	assert.NotEmpty(t, hdrs["ce-id"])   // ApplyDefaults generates this
 	assert.NotEmpty(t, hdrs["ce-time"]) // ApplyDefaults generates this
-	// ApplyDefaults fills datacontenttype and schemaversion.
-	assert.Equal(t, defaultDataContentType, hdrs["ce-datacontenttype"])
-	assert.Equal(t, defaultSchemaVersion, hdrs["ce-schemaversion"])
+	// Catalog-sourced fields — assert against the catalog definition so that
+	// drift between the inline Event and the catalog surfaces as a failure
+	// rather than passing on coincidental equality with ApplyDefaults.
+	dlqDefinition, err := sampleCatalog(t).Require(resourceType + "." + eventType)
+	require.NoError(t, err, "sampleCatalog(t).Require("+resourceType+"."+eventType+")")
+	assert.Equal(t, dlqDefinition.DataContentType, hdrs["ce-datacontenttype"])
+	assert.Equal(t, dlqDefinition.SchemaVersion, hdrs["ce-schemaversion"])
 
 	// Byte-equal body preservation on the DLQ side.
 	assert.Equal(t, []byte(payload), dlqRecord.Value, "DLQ body byte-equal")
@@ -767,7 +779,7 @@ CREATE TABLE IF NOT EXISTS outbox_events (
 	}
 
 	p, err := NewProducer(ctx, cfg,
-		WithLogger(log.NewNop()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithOutboxRepository(repo),
 	)
 	require.NoError(t, err, "NewProducer")
@@ -790,7 +802,7 @@ CREATE TABLE IF NOT EXISTS outbox_events (
 			Source:       integrationSource,
 			Payload:      json.RawMessage(fmt.Sprintf(`{"i":%d}`, i)),
 		}
-		require.NoError(t, p.Emit(tenantCtx, ev), "baseline emit %d", i)
+		require.NoError(t, p.Emit(tenantCtx, eventToRequest(ev)), "baseline emit %d", i)
 	}
 
 	// Take the broker down. Stop with a short timeout so the test doesn't
@@ -811,6 +823,14 @@ CREATE TABLE IF NOT EXISTS outbox_events (
 	// sees the flag and routes to outbox. Real production traffic
 	// reaches this code path during the half-open probe window, when
 	// the real listener has not yet updated the mirrored flag.
+	//
+	// This is a deliberate hybrid unit-under-integration technique: the
+	// alternative — tripping the breaker organically — requires CBMinRequests
+	// (10+) failed Emits AND sustaining CBFailureRatio (0.5) until the
+	// breaker flips, which inflates the test by 30s+ for no additional
+	// assurance. The outbox-fallback BEHAVIOUR under a real broker partition
+	// is what this test verifies; the breaker-trip MECHANICS are covered by
+	// the CB unit tests and chaos_test.go. Trade-off chosen deliberately.
 	p.cbStateFlag.Store(flagCBOpen)
 
 	// Emit events with the flag forced OPEN. Each call now hits the
@@ -825,7 +845,7 @@ CREATE TABLE IF NOT EXISTS outbox_events (
 			Payload:      json.RawMessage(fmt.Sprintf(`{"post":%d}`, i)),
 		}
 		emitCtx, emitCancel := context.WithTimeout(tenantCtx, 5*time.Second)
-		require.NoError(t, p.Emit(emitCtx, ev), "fallback emit %d", i)
+		require.NoError(t, p.Emit(emitCtx, eventToRequest(ev)), "fallback emit %d", i)
 		emitCancel()
 	}
 
@@ -898,7 +918,7 @@ func TestIntegration_CloudEventsSDKContract(t *testing.T) {
 
 	consumer := newConsumerClient(t, brokers, topic)
 
-	require.NoError(t, p.Emit(context.Background(), event), "Emit")
+	require.NoError(t, p.Emit(context.Background(), eventToRequest(event)), "Emit")
 
 	records := pollRecords(t, consumer, 1, 30*time.Second)
 	require.Len(t, records, 1)
@@ -999,7 +1019,7 @@ func TestIntegration_CircuitBreaker_TripsOrganically(t *testing.T) {
 		CloudEventsSource:     integrationSource,
 	}
 
-	p, err := NewProducer(context.Background(), cfg, WithLogger(log.NewNop()))
+	p, err := NewProducer(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	require.NoError(t, err, "NewProducer")
 	t.Cleanup(func() { _ = p.Close() })
 
@@ -1018,7 +1038,7 @@ func TestIntegration_CircuitBreaker_TripsOrganically(t *testing.T) {
 	// CBMinRequests=5 so the breaker has a real sample to evaluate.
 	baselineCtx, baselineCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	for i := range 10 {
-		require.NoError(t, p.Emit(baselineCtx, healthyEvent(i)), "baseline emit %d", i)
+		require.NoError(t, p.Emit(baselineCtx, eventToRequest(healthyEvent(i))), "baseline emit %d", i)
 	}
 	baselineCancel()
 
@@ -1046,7 +1066,7 @@ func TestIntegration_CircuitBreaker_TripsOrganically(t *testing.T) {
 		// underlying broker-unreachable error before the trip). We
 		// don't assert on the specific shape — the load-bearing
 		// invariant is the flag transition below.
-		_ = p.Emit(emitCtx, healthyEvent(i+100))
+		_ = p.Emit(emitCtx, eventToRequest(healthyEvent(i+100)))
 		emitCancel()
 
 		if p.cbStateFlag.Load() == flagCBOpen {
@@ -1064,7 +1084,7 @@ func TestIntegration_CircuitBreaker_TripsOrganically(t *testing.T) {
 	failFastCtx, failFastCancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer failFastCancel()
 
-	err = p.Emit(failFastCtx, healthyEvent(9999))
+	err = p.Emit(failFastCtx, eventToRequest(healthyEvent(9999)))
 	require.Error(t, err, "Emit post-trip should not return nil")
 	require.Truef(t, errors.Is(err, ErrCircuitOpen),
 		"Emit post-trip err = %v; want errors.Is(..., ErrCircuitOpen)", err)

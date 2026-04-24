@@ -2,6 +2,8 @@ package streaming
 
 import (
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -50,9 +52,9 @@ type Config struct {
 	CloseTimeout time.Duration
 	// CloudEventsSource is the ce-source default (required when Enabled=true).
 	CloudEventsSource string
-	// EventToggles is a map of "resource.event" -> bool kill switches.
-	// Parsed from STREAMING_EVENT_TOGGLES.
-	EventToggles map[string]bool
+	// PolicyOverrides is a map of event definition key -> delivery policy
+	// override. Parsed from STREAMING_EVENT_POLICIES.
+	PolicyOverrides map[string]DeliveryPolicyOverride
 }
 
 // Default values used by LoadConfig when an environment variable is unset.
@@ -94,13 +96,31 @@ var validAcks = map[string]struct{}{
 // When Enabled=false, validation is skipped so a disabled config always
 // loads clean (the Producer will return a NoopEmitter).
 //
+// The second return value is a slice of human-readable migration warnings
+// (e.g. the legacy STREAMING_EVENT_TOGGLES rename). LoadConfig does NOT write
+// to stderr or use a logger — callers decide how to surface these (log at
+// startup, skip on test paths, etc.). The slice is never nil (empty when
+// there are no warnings) so callers can range-for without a nil check.
+//
 // Errors: ErrMissingBrokers, ErrMissingSource, ErrInvalidCompression,
 // ErrInvalidAcks. Each wraps with fmt.Errorf so callers can errors.Is.
-func LoadConfig() (Config, error) {
+func LoadConfig() (Config, []string, error) {
+	warnings := legacyEventTogglesEnvWarnings()
+
 	brokers := splitCSV(commons.GetenvOrDefault("STREAMING_BROKERS", defaultBroker))
+	enabled := commons.GetenvBoolOrDefault("STREAMING_ENABLED", false)
+
+	policyOverrides, err := parseEventPolicies(commons.GetenvOrDefault("STREAMING_EVENT_POLICIES", ""))
+	if err != nil {
+		if enabled {
+			return Config{}, warnings, err
+		}
+
+		policyOverrides = map[string]DeliveryPolicyOverride{}
+	}
 
 	cfg := Config{
-		Enabled:               commons.GetenvBoolOrDefault("STREAMING_ENABLED", false),
+		Enabled:               enabled,
 		Brokers:               brokers,
 		ClientID:              commons.GetenvOrDefault("STREAMING_CLIENT_ID", ""),
 		BatchLingerMs:         int(commons.GetenvIntOrDefault("STREAMING_BATCH_LINGER_MS", int64(defaultBatchLingerMs))),
@@ -110,23 +130,23 @@ func LoadConfig() (Config, error) {
 		RecordRetries:         int(commons.GetenvIntOrDefault("STREAMING_RECORD_RETRIES", int64(defaultRecordRetries))),
 		RecordDeliveryTimeout: time.Duration(commons.GetenvIntOrDefault("STREAMING_RECORD_DELIVERY_TIMEOUT_S", int64(defaultRecordDeliveryTimeout.Seconds()))) * time.Second,
 		RequiredAcks:          commons.GetenvOrDefault("STREAMING_REQUIRED_ACKS", defaultRequiredAcks),
-		CBFailureRatio:        commons.GetenvFloat64OrDefault("STREAMING_CB_FAILURE_RATIO", defaultCBFailureRatio),
+		CBFailureRatio:        getenvFloat64OrDefault("STREAMING_CB_FAILURE_RATIO", defaultCBFailureRatio),
 		CBMinRequests:         int(commons.GetenvIntOrDefault("STREAMING_CB_MIN_REQUESTS", int64(defaultCBMinRequests))),
 		CBTimeout:             time.Duration(commons.GetenvIntOrDefault("STREAMING_CB_TIMEOUT_S", int64(defaultCBTimeout.Seconds()))) * time.Second,
 		CloseTimeout:          time.Duration(commons.GetenvIntOrDefault("STREAMING_CLOSE_TIMEOUT_S", int64(defaultCloseTimeout.Seconds()))) * time.Second,
 		CloudEventsSource:     commons.GetenvOrDefault("STREAMING_CLOUDEVENTS_SOURCE", ""),
-		EventToggles:          parseEventToggles(commons.GetenvOrDefault("STREAMING_EVENT_TOGGLES", "")),
+		PolicyOverrides:       policyOverrides,
 	}
 
 	if !cfg.Enabled {
-		return cfg, nil
+		return cfg, warnings, nil
 	}
 
 	if err := cfg.validate(); err != nil {
-		return cfg, err
+		return cfg, warnings, err
 	}
 
-	return cfg, nil
+	return cfg, warnings, nil
 }
 
 // validate enforces the fields that must be present when Enabled=true.
@@ -151,6 +171,54 @@ func (c Config) validate() error {
 	return nil
 }
 
+// getenvFloat64OrDefault returns the parsed float value of os.Getenv(key) or
+// defaultValue if unset / unparseable. Inlined because lib-commons v5.0.2
+// removed commons.GetenvFloat64OrDefault — only Bool and Int helpers remain.
+// See CHANGELOG entry for v0.2.0 (lib-commons bump).
+func getenvFloat64OrDefault(key string, defaultValue float64) float64 {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return defaultValue
+	}
+
+	v, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return defaultValue
+	}
+
+	return v
+}
+
+// legacyEventTogglesEnvWarnings returns a one-entry slice of migration
+// warnings when the legacy STREAMING_EVENT_TOGGLES env var is set but its
+// v0.2.0 replacement STREAMING_EVENT_POLICIES is not. Operators who upgraded
+// from v0.1.0 without renaming the var would otherwise silently get default
+// delivery policies — surfacing the mismatch via the LoadConfig return value
+// lets callers log it through their own logger.
+//
+// Returns an empty slice (never nil) when no migration warning applies, so
+// callers can range-for without a nil check. The library does NOT write to
+// os.Stderr or accept a logger parameter: LoadConfig has no logger dependency
+// and the caller decides how to surface these messages.
+func legacyEventTogglesEnvWarnings() []string {
+	warnings := make([]string, 0, 1)
+
+	legacy := os.Getenv("STREAMING_EVENT_TOGGLES")
+	if legacy == "" {
+		return warnings
+	}
+
+	if os.Getenv("STREAMING_EVENT_POLICIES") != "" {
+		return warnings
+	}
+
+	warnings = append(warnings, "streaming: STREAMING_EVENT_TOGGLES is set but STREAMING_EVENT_POLICIES is not. "+
+		"STREAMING_EVENT_TOGGLES was renamed to STREAMING_EVENT_POLICIES in v0.2.0 and is no longer read. "+
+		"See CHANGELOG.md (v0.2.0) for the migration note.")
+
+	return warnings
+}
+
 // splitCSV splits a comma-separated broker list and trims whitespace. Empty
 // entries are dropped. A fully-empty input yields an empty slice (not nil).
 func splitCSV(s string) []string {
@@ -171,37 +239,124 @@ func splitCSV(s string) []string {
 	return result
 }
 
-// parseEventToggles parses the CSV format "resource.event=bool,other=bool"
-// into a map. Unparseable entries are skipped silently — an operator typo
-// should not prevent the whole Producer from starting.
-func parseEventToggles(s string) map[string]bool {
-	result := map[string]bool{}
+// maxEventPolicyEntries caps the number of entries parseEventPolicies will
+// accept from a single STREAMING_EVENT_POLICIES string. A hostile env var
+// (e.g. 10 MB of "a.b=c,...") would otherwise build an unbounded map.
+const maxEventPolicyEntries = 1024
+
+// maxEventPolicyKeyBytes caps the length of each policy key (the left side
+// of "=", minus the trailing ".attr"). 256 matches maxEventIDBytes used
+// elsewhere for header-bound identifiers.
+const maxEventPolicyKeyBytes = 256
+
+// parseEventPolicies parses STREAMING_EVENT_POLICIES entries in the form:
+//
+//	transaction.created.enabled=true,transaction.created.outbox=always
+//
+// Entries may be separated by commas, semicolons, or newlines. Unknown
+// attributes and unsupported values return ErrInvalidDeliveryPolicy so policy
+// typos do not silently change runtime behavior.
+//
+// Hostile-env-var guards: entries are capped at maxEventPolicyEntries
+// (1024) and keys at maxEventPolicyKeyBytes (256) to bound memory for a
+// malicious or accidentally-huge env var.
+func parseEventPolicies(s string) (map[string]DeliveryPolicyOverride, error) {
+	result := map[string]DeliveryPolicyOverride{}
 	if strings.TrimSpace(s) == "" {
-		return result
+		return result, nil
 	}
 
-	for entry := range strings.SplitSeq(s, ",") {
-		entry = strings.TrimSpace(entry)
+	entries := splitPolicyEntries(s)
+	if len(entries) > maxEventPolicyEntries {
+		return nil, fmt.Errorf("%w: STREAMING_EVENT_POLICIES has %d entries (max %d)",
+			ErrInvalidDeliveryPolicy, len(entries), maxEventPolicyEntries)
+	}
 
-		key, value, ok := strings.Cut(entry, "=")
+	for _, entry := range entries {
+		keyAttr, value, ok := strings.Cut(entry, "=")
 		if !ok {
-			continue
+			return nil, fmt.Errorf("%w: malformed policy entry %q", ErrInvalidDeliveryPolicy, entry)
 		}
 
-		key = strings.TrimSpace(key)
+		key, attr, ok := cutLastDot(strings.TrimSpace(keyAttr))
+		if !ok || key == "" || attr == "" {
+			return nil, fmt.Errorf("%w: malformed policy key %q", ErrInvalidDeliveryPolicy, keyAttr)
+		}
+
+		if len(key) > maxEventPolicyKeyBytes {
+			return nil, fmt.Errorf("%w: STREAMING_EVENT_POLICIES key exceeds %d bytes: %d",
+				ErrInvalidDeliveryPolicy, maxEventPolicyKeyBytes, len(key))
+		}
+
+		override := result[key]
 		value = strings.TrimSpace(value)
 
-		if key == "" {
-			continue
+		switch strings.ToLower(strings.TrimSpace(attr)) {
+		case "enabled":
+			enabled, ok := parsePolicyBool(value)
+			if !ok {
+				return nil, fmt.Errorf("%w: %s.%s=%q", ErrInvalidDeliveryPolicy, key, attr, value)
+			}
+
+			override.Enabled = &enabled
+		case "direct":
+			override.Direct = DirectMode(value)
+		case "outbox":
+			override.Outbox = OutboxMode(value)
+		case "dlq":
+			override.DLQ = DLQMode(value)
+		default:
+			return nil, fmt.Errorf("%w: unknown policy attribute %q", ErrInvalidDeliveryPolicy, attr)
 		}
 
-		switch strings.ToLower(value) {
-		case "true", "1", "yes":
-			result[key] = true
-		case "false", "0", "no":
-			result[key] = false
+		result[key] = override
+	}
+
+	// Validate each fully-assembled override AFTER all tokens for that key are
+	// parsed. Validating per-token rejects order-dependent valid combinations
+	// (e.g. direct=skip,outbox=always fails if direct is seen first because
+	// the cross-field rule requires outbox=always).
+	for key, override := range result {
+		if err := override.Validate(); err != nil {
+			return nil, fmt.Errorf("key %q: %w", key, err)
+		}
+	}
+
+	return result, nil
+}
+
+func splitPolicyEntries(s string) []string {
+	s = strings.NewReplacer(";", ",", "\n", ",").Replace(s)
+
+	entries := strings.Split(s, ",")
+
+	result := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		entry = strings.TrimSpace(entry)
+		if entry != "" {
+			result = append(result, entry)
 		}
 	}
 
 	return result
+}
+
+func parsePolicyBool(value string) (bool, bool) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "true", "1", "yes":
+		return true, true
+	case "false", "0", "no":
+		return false, true
+	default:
+		return false, false
+	}
+}
+
+func cutLastDot(s string) (string, string, bool) {
+	i := strings.LastIndex(s, ".")
+	if i < 0 {
+		return "", "", false
+	}
+
+	return s[:i], s[i+1:], true
 }
