@@ -509,9 +509,23 @@ func TestChaos_BrokerLatency_CircuitOpensAndOutboxCatches(t *testing.T) {
 	// the test doesn't need a Dispatcher instance.
 
 	// Allow the CB HALF-OPEN window to open before replaying: CBTimeout is
-	// 10s above. We wait at least that long so the breaker's internal
-	// probe cycle allows passes through.
-	time.Sleep(11 * time.Second)
+	// 10s above, so the breaker transitions OPEN→HALF-OPEN once its probe
+	// cycle elapses. Poll for that transition with a 15s deadline rather
+	// than sleeping a literal 11s — eliminates flake risk from scheduler
+	// delays and decouples the test from the CBTimeout constant.
+	observedHalfOpen := false
+	pollHalfOpenDeadline := time.Now().Add(15 * time.Second)
+
+	for time.Now().Before(pollHalfOpenDeadline) {
+		if p.cbStateFlag.Load() == flagCBHalfOpen {
+			observedHalfOpen = true
+			break
+		}
+
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	require.True(t, observedHalfOpen, "CB never transitioned OPEN→HALF-OPEN within 15s")
 
 	drainCtx, drainCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer drainCancel()

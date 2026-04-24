@@ -823,6 +823,14 @@ CREATE TABLE IF NOT EXISTS outbox_events (
 	// sees the flag and routes to outbox. Real production traffic
 	// reaches this code path during the half-open probe window, when
 	// the real listener has not yet updated the mirrored flag.
+	//
+	// This is a deliberate hybrid unit-under-integration technique: the
+	// alternative — tripping the breaker organically — requires CBMinRequests
+	// (10+) failed Emits AND sustaining CBFailureRatio (0.5) until the
+	// breaker flips, which inflates the test by 30s+ for no additional
+	// assurance. The outbox-fallback BEHAVIOUR under a real broker partition
+	// is what this test verifies; the breaker-trip MECHANICS are covered by
+	// the CB unit tests and chaos_test.go. Trade-off chosen deliberately.
 	p.cbStateFlag.Store(flagCBOpen)
 
 	// Emit events with the flag forced OPEN. Each call now hits the
