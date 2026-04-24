@@ -282,6 +282,125 @@ func TestProducer_HandleOutboxRow_NilRow(t *testing.T) {
 	}
 }
 
+// TestDecodeOutboxRow_LegacyV01Payload_SynthesizedAndReplayed proves the
+// v0.1.0 backward-compat shim: a row whose Payload is the bare
+// json.Marshal(Event) (no envelope wrapper, no version field) must be
+// synthesized into a valid OutboxEnvelope and a WARN must be logged so
+// operators see the residue and can drain it.
+func TestDecodeOutboxRow_LegacyV01Payload_SynthesizedAndReplayed(t *testing.T) {
+	cfg, _ := kfakeConfig(t)
+
+	spy := &spyLogger{}
+
+	emitter, err := New(context.Background(), cfg,
+		WithLogger(spy),
+		WithCatalog(sampleCatalog()),
+	)
+	if err != nil {
+		t.Fatalf("New err = %v", err)
+	}
+	t.Cleanup(func() { _ = emitter.Close() })
+
+	p := asProducer(t, emitter)
+
+	legacyEvent := sampleEvent()
+	legacyEvent.Payload = json.RawMessage(`{}`)
+	legacyEvent.ApplyDefaults()
+
+	legacyPayload, err := json.Marshal(legacyEvent)
+	if err != nil {
+		t.Fatalf("json.Marshal legacyEvent err = %v", err)
+	}
+
+	row := &outbox.OutboxEvent{
+		ID:          uuid.New(),
+		EventType:   StreamingOutboxEventType,
+		AggregateID: uuid.New(),
+		Payload:     legacyPayload,
+	}
+
+	envelope, err := p.decodeOutboxRow(context.Background(), row)
+	if err != nil {
+		t.Fatalf("decodeOutboxRow err = %v; want synthesized envelope", err)
+	}
+
+	if envelope.Version != outboxEnvelopeVersion {
+		t.Errorf("envelope.Version = %d; want %d", envelope.Version, outboxEnvelopeVersion)
+	}
+
+	if envelope.Topic != legacyEvent.Topic() {
+		t.Errorf("envelope.Topic = %q; want %q", envelope.Topic, legacyEvent.Topic())
+	}
+
+	if envelope.Event.EventID != legacyEvent.EventID {
+		t.Errorf("envelope.Event.EventID = %q; want %q", envelope.Event.EventID, legacyEvent.EventID)
+	}
+
+	if envelope.Policy != DefaultDeliveryPolicy() {
+		t.Errorf("envelope.Policy = %+v; want DefaultDeliveryPolicy", envelope.Policy)
+	}
+
+	// Assert the WARN was emitted.
+	spy.mu.Lock()
+	defer spy.mu.Unlock()
+
+	var warnEntry *spyEntry
+	for i := range spy.entries {
+		e := &spy.entries[i]
+		if e.level == log.LevelWarn && strings.Contains(e.msg, "legacy v0.1.0 outbox row migrated") {
+			warnEntry = e
+			break
+		}
+	}
+	if warnEntry == nil {
+		t.Fatalf("expected WARN entry about legacy migration; got %d entries", len(spy.entries))
+	}
+
+	if got, ok := warnEntry.fields["row_id"].(string); !ok || got != row.ID.String() {
+		t.Errorf("warn row_id = %v; want %q", warnEntry.fields["row_id"], row.ID.String())
+	}
+}
+
+// TestDecodeOutboxRow_LegacyEmptyPayload_StillRejects proves the shim does
+// NOT synthesize a bogus envelope for a zero-value Event. An empty legacy
+// payload is indistinguishable from garbage and must surface the original
+// validation error so the Dispatcher marks the row FAILED.
+func TestDecodeOutboxRow_LegacyEmptyPayload_StillRejects(t *testing.T) {
+	cfg, _ := kfakeConfig(t)
+
+	emitter, err := New(context.Background(), cfg,
+		WithLogger(log.NewNop()),
+		WithCatalog(sampleCatalog()),
+	)
+	if err != nil {
+		t.Fatalf("New err = %v", err)
+	}
+	t.Cleanup(func() { _ = emitter.Close() })
+
+	p := asProducer(t, emitter)
+
+	emptyPayload, err := json.Marshal(Event{})
+	if err != nil {
+		t.Fatalf("json.Marshal(Event{}) err = %v", err)
+	}
+
+	row := &outbox.OutboxEvent{
+		ID:          uuid.New(),
+		EventType:   StreamingOutboxEventType,
+		AggregateID: uuid.New(),
+		Payload:     emptyPayload,
+	}
+
+	_, err = p.decodeOutboxRow(context.Background(), row)
+	if err == nil {
+		t.Fatal("decodeOutboxRow err = nil; want validation error for zero-value Event")
+	}
+
+	if !strings.Contains(err.Error(), "invalid outbox envelope") {
+		t.Errorf("err = %q; want substring %q", err.Error(), "invalid outbox envelope")
+	}
+}
+
 // TestProducer_EndToEnd_OutboxFallbackAndRelay wires the full T4 happy
 // path as callers would experience it:
 //

@@ -73,7 +73,7 @@ func (p *Producer) handleOutboxRow(ctx context.Context, row *outbox.OutboxEvent)
 		return nil
 	}
 
-	envelope, err := p.decodeOutboxRow(row)
+	envelope, err := p.decodeOutboxRow(ctx, row)
 	if err != nil {
 		return err
 	}
@@ -108,17 +108,56 @@ func (p *Producer) handleOutboxRow(ctx context.Context, row *outbox.OutboxEvent)
 	return nil
 }
 
-func (p *Producer) decodeOutboxRow(row *outbox.OutboxEvent) (OutboxEnvelope, error) {
+func (p *Producer) decodeOutboxRow(ctx context.Context, row *outbox.OutboxEvent) (OutboxEnvelope, error) {
 	var envelope OutboxEnvelope
 	// musttag nolint: OutboxEnvelope embeds Event, whose wire shape intentionally
 	// uses Go-default field names for CloudEvents fields.
-	if err := json.Unmarshal(row.Payload, &envelope); err != nil { //nolint:musttag
-		return OutboxEnvelope{}, fmt.Errorf("streaming: unmarshal outbox envelope row %s: %w", row.ID, err)
+	unmarshalErr := json.Unmarshal(row.Payload, &envelope) //nolint:musttag
+	if unmarshalErr != nil {
+		return OutboxEnvelope{}, fmt.Errorf("streaming: unmarshal outbox envelope row %s: %w", row.ID, unmarshalErr)
 	}
 
-	if err := envelope.Validate(); err != nil {
-		return OutboxEnvelope{}, fmt.Errorf("streaming: invalid outbox envelope row %s: %w", row.ID, err)
+	// Happy path: v0.2.0+ envelope, versioned and validatable.
+	if envelope.Version == outboxEnvelopeVersion {
+		if err := envelope.Validate(); err != nil {
+			return OutboxEnvelope{}, fmt.Errorf("streaming: invalid outbox envelope row %s: %w", row.ID, err)
+		}
+
+		return envelope, nil
 	}
 
-	return envelope, nil
+	// Backward-compat shim: v0.1.0 rows persisted json.Marshal(Event) directly,
+	// with no envelope wrapper. The JSON unmarshal above succeeds against the
+	// envelope struct but leaves Version=0 because the legacy payload has no
+	// "version" field. Attempt a second unmarshal into a bare Event and, if it
+	// produces a non-empty event, synthesize a valid envelope around it so the
+	// Dispatcher can drain the row. Operators must still drain the outbox to
+	// retire this code path — we log at WARN on every hit so the residue is
+	// visible.
+	if envelope.Version == 0 {
+		var legacyEvent Event
+		if err := json.Unmarshal(row.Payload, &legacyEvent); err == nil &&
+			(legacyEvent.TenantID != "" || legacyEvent.ResourceType != "" || legacyEvent.EventType != "") {
+			synthesized := OutboxEnvelope{
+				Version:       outboxEnvelopeVersion,
+				Topic:         legacyEvent.Topic(),
+				DefinitionKey: "",
+				AggregateID:   p.deriveOutboxAggregateID(legacyEvent),
+				Policy:        DefaultDeliveryPolicy(),
+				Event:         legacyEvent,
+			}
+
+			if err := synthesized.Validate(); err == nil {
+				p.logger.Log(ctx, log.LevelWarn, "legacy v0.1.0 outbox row migrated inline; drain outbox to silence",
+					log.String("row_id", row.ID.String()),
+				)
+
+				return synthesized, nil
+			}
+		}
+	}
+
+	// Neither a v0.2.0 envelope nor a recoverable v0.1.0 row — surface the
+	// original validation failure so the Dispatcher marks the row FAILED.
+	return OutboxEnvelope{}, fmt.Errorf("streaming: invalid outbox envelope row %s: %w", row.ID, envelope.Validate())
 }
