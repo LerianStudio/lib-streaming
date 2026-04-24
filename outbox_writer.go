@@ -9,8 +9,21 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/LerianStudio/lib-commons/v5/commons/assert"
+	"github.com/LerianStudio/lib-commons/v5/commons/log"
 	"github.com/LerianStudio/lib-commons/v5/commons/outbox"
 )
+
+// writerAsserterLogger backs the asserter used by libCommonsOutboxWriter
+// when invariant guards fire. The writer has no *Producer reference (it is
+// adapted from a caller-supplied outbox.OutboxRepository), so the asserter
+// cannot source a logger via p.newAsserter.
+//
+// Default log.NewNop keeps the trident's log layer silent in production;
+// the span-event + assertion_failed_total metric layers still fire. Tests
+// replace this variable in _test.go via swapWriterAsserterLogger to verify
+// the trident emits when the nil-repo guard trips.
+var writerAsserterLogger log.Logger = log.NewNop()
 
 // OutboxWriter is the minimal durable-write boundary lib-streaming needs.
 // Services may adapt their own outbox implementations to this interface; the
@@ -31,7 +44,21 @@ type libCommonsOutboxWriter struct {
 }
 
 func (w *libCommonsOutboxWriter) Write(ctx context.Context, envelope OutboxEnvelope) error {
-	if w == nil || isNilInterface(w.repo) {
+	// Receiver-nil is a DX guard, not an invariant — keep it as a silent
+	// early-return so hand-nil callers see the expected sentinel.
+	if w == nil {
+		return ErrOutboxNotConfigured
+	}
+
+	// Invariant violation: libCommonsOutboxWriter has one construction path
+	// (WithOutboxRepository), which already rejects nil repos via its own
+	// nil-interface guard. Reaching here means a caller hand-built the
+	// writer with a nil repo — a configuration bug indistinguishable from
+	// "no outbox wired" at the caller's outcome-classification layer.
+	// Fire the observability trident; still return ErrOutboxNotConfigured
+	// so callers see the documented sentinel.
+	a := assert.New(context.Background(), writerAsserterLogger, asserterComponent, "outbox_writer.write")
+	if err := a.NotNil(ctx, w.repo, "libCommonsOutboxWriter repo must be non-nil post-construction"); err != nil {
 		return ErrOutboxNotConfigured
 	}
 
@@ -48,7 +75,16 @@ func (w *libCommonsOutboxWriter) Write(ctx context.Context, envelope OutboxEnvel
 }
 
 func (w *libCommonsOutboxWriter) WriteWithTx(ctx context.Context, tx *sql.Tx, envelope OutboxEnvelope) error {
-	if w == nil || isNilInterface(w.repo) {
+	// Receiver-nil DX guard — see Write for rationale.
+	if w == nil {
+		return ErrOutboxNotConfigured
+	}
+
+	// Same invariant as Write: nil repo here means the writer was hand-
+	// built bypassing WithOutboxRepository's nil guard. Fire the trident,
+	// return ErrOutboxNotConfigured.
+	a := assert.New(context.Background(), writerAsserterLogger, asserterComponent, "outbox_writer.write_with_tx")
+	if err := a.NotNil(ctx, w.repo, "libCommonsOutboxWriter repo must be non-nil for WriteWithTx"); err != nil {
 		return ErrOutboxNotConfigured
 	}
 
