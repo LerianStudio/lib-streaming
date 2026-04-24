@@ -3,7 +3,11 @@
 package streaming
 
 import (
+	"bytes"
 	"errors"
+	"io"
+	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -342,8 +346,95 @@ func clearStreamingEnv(t *testing.T) {
 		"STREAMING_CLOSE_TIMEOUT_S",
 		"STREAMING_CLOUDEVENTS_SOURCE",
 		"STREAMING_EVENT_POLICIES",
+		"STREAMING_EVENT_TOGGLES",
 	}
 	for _, v := range vars {
 		t.Setenv(v, "")
+	}
+}
+
+// TestWarnLegacyEventTogglesEnv_WritesWarnWhenOnlyLegacySet is the direct
+// helper-level check: the warning lands on the passed writer and names both
+// the old and new var names so operators can grep either one.
+func TestWarnLegacyEventTogglesEnv_WritesWarnWhenOnlyLegacySet(t *testing.T) {
+	clearStreamingEnv(t)
+	t.Setenv("STREAMING_EVENT_TOGGLES", "foo.bar=true")
+
+	var buf bytes.Buffer
+
+	warnLegacyEventTogglesEnv(&buf)
+
+	got := buf.String()
+	if !strings.Contains(got, "STREAMING_EVENT_TOGGLES") {
+		t.Errorf("warning missing legacy var name: %q", got)
+	}
+	if !strings.Contains(got, "STREAMING_EVENT_POLICIES") {
+		t.Errorf("warning missing replacement var name: %q", got)
+	}
+	if !strings.Contains(got, "WARN") {
+		t.Errorf("warning missing WARN prefix: %q", got)
+	}
+}
+
+// TestWarnLegacyEventTogglesEnv_SilentWhenBothSet exercises the dual-set
+// branch: operator is already on the new var and happens to still have the
+// legacy var defined — no warning should fire.
+func TestWarnLegacyEventTogglesEnv_SilentWhenBothSet(t *testing.T) {
+	clearStreamingEnv(t)
+	t.Setenv("STREAMING_EVENT_TOGGLES", "foo.bar=true")
+	t.Setenv("STREAMING_EVENT_POLICIES", "foo.bar.enabled=true")
+
+	var buf bytes.Buffer
+
+	warnLegacyEventTogglesEnv(&buf)
+
+	if got := buf.String(); got != "" {
+		t.Errorf("expected no warning when both env vars are set; got %q", got)
+	}
+}
+
+// TestLoadConfig_WarnsOnLegacyEventTogglesEnv is the end-to-end check: a
+// LoadConfig call with only the legacy var set captures a WARN on stderr.
+// os.Pipe is used to redirect os.Stderr for the duration of the call; the
+// cleanup restores the original descriptor. See the helper godoc for why we
+// route via io.Writer in the first place.
+func TestLoadConfig_WarnsOnLegacyEventTogglesEnv(t *testing.T) {
+	clearStreamingEnv(t)
+	t.Setenv("STREAMING_EVENT_TOGGLES", "foo.bar=true")
+
+	// Redirect os.Stderr for the duration of the LoadConfig call.
+	originalStderr := os.Stderr
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe err = %v", err)
+	}
+
+	os.Stderr = w
+
+	t.Cleanup(func() {
+		os.Stderr = originalStderr
+	})
+
+	if _, err := LoadConfig(); err != nil {
+		t.Fatalf("LoadConfig() err = %v", err)
+	}
+
+	// Close the writer so the read side sees EOF and io.ReadAll can return.
+	if err := w.Close(); err != nil {
+		t.Fatalf("pipe writer close err = %v", err)
+	}
+
+	captured, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read from pipe err = %v", err)
+	}
+
+	got := string(captured)
+	if !strings.Contains(got, "STREAMING_EVENT_TOGGLES") {
+		t.Errorf("stderr missing legacy var name: %q", got)
+	}
+	if !strings.Contains(got, "STREAMING_EVENT_POLICIES") {
+		t.Errorf("stderr missing replacement var name: %q", got)
 	}
 }

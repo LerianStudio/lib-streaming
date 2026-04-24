@@ -2,6 +2,9 @@ package streaming
 
 import (
 	"fmt"
+	"io"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -97,6 +100,8 @@ var validAcks = map[string]struct{}{
 // Errors: ErrMissingBrokers, ErrMissingSource, ErrInvalidCompression,
 // ErrInvalidAcks. Each wraps with fmt.Errorf so callers can errors.Is.
 func LoadConfig() (Config, error) {
+	warnLegacyEventTogglesEnv(os.Stderr)
+
 	brokers := splitCSV(commons.GetenvOrDefault("STREAMING_BROKERS", defaultBroker))
 	enabled := commons.GetenvBoolOrDefault("STREAMING_ENABLED", false)
 
@@ -120,7 +125,7 @@ func LoadConfig() (Config, error) {
 		RecordRetries:         int(commons.GetenvIntOrDefault("STREAMING_RECORD_RETRIES", int64(defaultRecordRetries))),
 		RecordDeliveryTimeout: time.Duration(commons.GetenvIntOrDefault("STREAMING_RECORD_DELIVERY_TIMEOUT_S", int64(defaultRecordDeliveryTimeout.Seconds()))) * time.Second,
 		RequiredAcks:          commons.GetenvOrDefault("STREAMING_REQUIRED_ACKS", defaultRequiredAcks),
-		CBFailureRatio:        commons.GetenvFloat64OrDefault("STREAMING_CB_FAILURE_RATIO", defaultCBFailureRatio),
+		CBFailureRatio:        getenvFloat64OrDefault("STREAMING_CB_FAILURE_RATIO", defaultCBFailureRatio),
 		CBMinRequests:         int(commons.GetenvIntOrDefault("STREAMING_CB_MIN_REQUESTS", int64(defaultCBMinRequests))),
 		CBTimeout:             time.Duration(commons.GetenvIntOrDefault("STREAMING_CB_TIMEOUT_S", int64(defaultCBTimeout.Seconds()))) * time.Second,
 		CloseTimeout:          time.Duration(commons.GetenvIntOrDefault("STREAMING_CLOSE_TIMEOUT_S", int64(defaultCloseTimeout.Seconds()))) * time.Second,
@@ -159,6 +164,50 @@ func (c Config) validate() error {
 	}
 
 	return nil
+}
+
+// getenvFloat64OrDefault returns the parsed float value of os.Getenv(key) or
+// defaultValue if unset / unparseable. Inlined because lib-commons v5.0.2
+// removed commons.GetenvFloat64OrDefault — only Bool and Int helpers remain.
+// See CHANGELOG entry for v0.2.0 (lib-commons bump).
+func getenvFloat64OrDefault(key string, defaultValue float64) float64 {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return defaultValue
+	}
+
+	v, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return defaultValue
+	}
+
+	return v
+}
+
+// warnLegacyEventTogglesEnv emits a one-line stderr WARN when the legacy
+// STREAMING_EVENT_TOGGLES env var is set but its v0.2.0 replacement
+// STREAMING_EVENT_POLICIES is not. Operators who upgraded from v0.1.0
+// without renaming the var would otherwise silently get default delivery
+// policies — this warning surfaces that mismatch without failing the load.
+//
+// Writes go to the provided writer (os.Stderr in production) so tests can
+// capture the output without interfering with the real stderr stream. The
+// destination is intentionally NOT a structured logger: LoadConfig has no
+// logger dependency and adding one would force every caller to wire one up
+// before reading env vars.
+func warnLegacyEventTogglesEnv(w io.Writer) {
+	legacy := os.Getenv("STREAMING_EVENT_TOGGLES")
+	if legacy == "" {
+		return
+	}
+
+	if os.Getenv("STREAMING_EVENT_POLICIES") != "" {
+		return
+	}
+
+	fmt.Fprintln(w, "WARN streaming: STREAMING_EVENT_TOGGLES is set but STREAMING_EVENT_POLICIES is not. "+
+		"STREAMING_EVENT_TOGGLES was renamed to STREAMING_EVENT_POLICIES in v0.2.0 and is no longer read. "+
+		"See CHANGELOG.md (v0.2.0) for the migration note.")
 }
 
 // splitCSV splits a comma-separated broker list and trims whitespace. Empty
