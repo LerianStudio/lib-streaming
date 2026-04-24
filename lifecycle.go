@@ -2,7 +2,6 @@ package streaming
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 )
@@ -142,7 +141,18 @@ func (p *Producer) Healthy(ctx context.Context) error {
 	}
 
 	if p.client == nil {
-		return NewHealthError(Down, errors.New("streaming: client not initialized"))
+		// Invariant violation: NewProducer always assigns p.client from a
+		// successful kgo.NewClient; reaching here means a caller hand-built
+		// a *Producer bypassing the constructor. Fire the observability
+		// trident so the construction antipattern shows up on dashboards
+		// rather than masquerading as a broker-outage signal under an
+		// opaque "client not initialized" string. Public API contract is
+		// preserved: Healthy still returns *HealthError with State()==Down.
+		a := p.newAsserter("health.healthy")
+		clientNilErr := a.NotNil(ctx, p.client, "producer client must be initialized post-construction",
+			"producer_id", p.producerID,
+		)
+		return NewHealthError(Down, clientNilErr)
 	}
 
 	pingCtx, cancel := context.WithTimeout(ctx, healthPingTimeout)
