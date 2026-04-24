@@ -101,6 +101,66 @@ func TestEventDefinition_New_RejectsInvalidShape(t *testing.T) {
 	}
 }
 
+// TestEventDefinition_Topic_AppendsVersionSuffixForMajorV2Plus locks the
+// contract documented on (*Event).Topic: SchemaVersion major >= 2 appends
+// ".v<major>" to the base topic; majors < 2 and non-semver strings fall
+// through to the base form.
+func TestEventDefinition_Topic_AppendsVersionSuffixForMajorV2Plus(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		schemaVersion string
+		want          string
+	}{
+		{
+			name:          "major 1 uses base form",
+			schemaVersion: "1.0.0",
+			want:          "lerian.streaming.payment.authorized",
+		},
+		{
+			name:          "major 2 appends .v2",
+			schemaVersion: "2.0.0",
+			want:          "lerian.streaming.payment.authorized.v2",
+		},
+		{
+			name:          "major 3 appends .v3 for 3.5.7",
+			schemaVersion: "3.5.7",
+			want:          "lerian.streaming.payment.authorized.v3",
+		},
+		{
+			name:          "major 0 uses base form for 0.9.0",
+			schemaVersion: "0.9.0",
+			want:          "lerian.streaming.payment.authorized",
+		},
+		{
+			name:          "non-semver falls through to base form",
+			schemaVersion: "not-a-semver",
+			want:          "lerian.streaming.payment.authorized",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			definition, err := NewEventDefinition(EventDefinition{
+				Key:           "payment.authorized",
+				ResourceType:  "payment",
+				EventType:     "authorized",
+				SchemaVersion: tt.schemaVersion,
+			})
+			if err != nil {
+				t.Fatalf("NewEventDefinition() error = %v", err)
+			}
+
+			if got := definition.Topic(); got != tt.want {
+				t.Errorf("Topic() = %q; want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestEventDefinition_PartitionKey(t *testing.T) {
 	t.Parallel()
 
