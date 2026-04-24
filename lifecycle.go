@@ -72,6 +72,16 @@ func (p *Producer) CloseContext(ctx context.Context) error {
 	p.signalStop()
 
 	if p.client == nil {
+		// Invariant violation: NewProducer always assigns p.client, so a
+		// nil client at Close time means the *Producer was hand-built
+		// bypassing the constructor. Fire the observability trident so the
+		// fixture-antipattern is visible; return nil to preserve the
+		// idempotent-Close contract (the CAS above already flipped the
+		// closed flag, and a fixture without a client has nothing to flush).
+		a := p.newAsserter("lifecycle.close")
+		_ = a.NotNil(ctx, p.client, "producer client must be initialized at Close time",
+			"producer_id", p.producerID,
+		)
 		return nil
 	}
 
@@ -104,9 +114,21 @@ func (p *Producer) signalStop() {
 	}
 
 	p.stopOnce.Do(func() {
-		if p.stop != nil {
-			close(p.stop)
+		if p.stop == nil {
+			// Invariant violation: NewProducer unconditionally assigns
+			// p.stop = make(chan struct{}), so a nil channel here means the
+			// *Producer was hand-built bypassing the constructor. Without
+			// this signal a running RunContext hangs forever on shutdown.
+			// Fire the observability trident; close(p.stop) is still
+			// guarded by sync.Once so no double-close panic if someone
+			// later assigns a channel.
+			a := p.newAsserter("lifecycle.signal_stop")
+			_ = a.NotNil(context.Background(), p.stop, "producer stop channel must be initialized post-construction",
+				"producer_id", p.producerID,
+			)
+			return
 		}
+		close(p.stop)
 	})
 }
 
