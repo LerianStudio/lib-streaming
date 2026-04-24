@@ -35,7 +35,7 @@ const emitSpanName = "streaming.emit"
 //
 // topic is threaded from Emit (already computed once per Emit) so we avoid
 // recomputing event.Topic() per span attribute set.
-func (p *Producer) setEmitSpanAttributes(span trace.Span, event Event, topic string) {
+func (p *Producer) setEmitSpanAttributes(span trace.Span, event Event, topic, definitionKey string, policy DeliveryPolicy) {
 	if !span.IsRecording() {
 		// Fast path for no-op spans: building the attribute slice is pure
 		// waste when the backend will drop them all. IsRecording is the
@@ -53,8 +53,13 @@ func (p *Producer) setEmitSpanAttributes(span trace.Span, event Event, topic str
 		attribute.String("messaging.client.id", p.cfg.ClientID),
 		attribute.String("event.resource_type", event.ResourceType),
 		attribute.String("event.event_type", event.EventType),
+		attribute.String("event.definition_key", definitionKey),
 		attribute.String("tenant.id", event.TenantID),
 		attribute.String("streaming.producer_id", p.producerID),
+		attribute.Bool("event.delivery_enabled", policy.Enabled),
+		attribute.String("event.direct_mode", string(policy.Direct)),
+		attribute.String("event.outbox_mode", string(policy.Outbox)),
+		attribute.String("event.dlq_mode", string(policy.DLQ)),
 	)
 
 	if p.logger.Enabled(log.LevelDebug) {

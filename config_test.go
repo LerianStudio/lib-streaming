@@ -241,46 +241,81 @@ func TestLoadConfig_CBFailureRatioBadValueUsesDefault(t *testing.T) {
 	}
 }
 
-// TestLoadConfig_EventTogglesBogusEntriesSkipped exercises the forgiving
-// parser — a malformed entry doesn't poison the whole toggle map.
-func TestLoadConfig_EventTogglesBogusEntriesSkipped(t *testing.T) {
+func TestLoadConfig_EventPolicies(t *testing.T) {
 	clearStreamingEnv(t)
 	t.Setenv("STREAMING_ENABLED", "true")
 	t.Setenv("STREAMING_BROKERS", "broker:9092")
 	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.midaz/tx-service")
-	// "no-equals" lacks =, "=value" lacks key, "key=maybe" has unknown value.
-	t.Setenv("STREAMING_EVENT_TOGGLES", "no-equals,=value,key=maybe,real.event=true")
+	t.Setenv(
+		"STREAMING_EVENT_POLICIES",
+		"transaction.created.enabled=false,transaction.created.outbox=always;transaction.created.dlq=never\naccount.updated.direct=skip,account.updated.outbox=always",
+	)
 
 	cfg, err := LoadConfig()
 	if err != nil {
 		t.Fatalf("LoadConfig() err = %v", err)
 	}
-	if got := cfg.EventToggles["real.event"]; !got {
-		t.Errorf("real.event toggle = %v; want true", got)
+
+	tx := cfg.PolicyOverrides["transaction.created"]
+	if tx.Enabled == nil || *tx.Enabled {
+		t.Fatalf("transaction.created enabled override = %v; want false", tx.Enabled)
 	}
-	// Malformed entries should not create spurious keys.
-	if _, exists := cfg.EventToggles["no-equals"]; exists {
-		t.Errorf("no-equals unexpectedly parsed into EventToggles")
+	if tx.Outbox != OutboxModeAlways {
+		t.Errorf("transaction.created outbox = %q; want %q", tx.Outbox, OutboxModeAlways)
+	}
+	if tx.DLQ != DLQModeNever {
+		t.Errorf("transaction.created dlq = %q; want %q", tx.DLQ, DLQModeNever)
+	}
+
+	account := cfg.PolicyOverrides["account.updated"]
+	if account.Direct != DirectModeSkip {
+		t.Errorf("account.updated direct = %q; want %q", account.Direct, DirectModeSkip)
+	}
+	if account.Outbox != OutboxModeAlways {
+		t.Errorf("account.updated outbox = %q; want %q", account.Outbox, OutboxModeAlways)
 	}
 }
 
-// TestLoadConfig_EventToggles parses the CSV "resource.event=bool" format.
-func TestLoadConfig_EventToggles(t *testing.T) {
+func TestLoadConfig_EventPoliciesInvalidMode(t *testing.T) {
 	clearStreamingEnv(t)
 	t.Setenv("STREAMING_ENABLED", "true")
 	t.Setenv("STREAMING_BROKERS", "broker:9092")
 	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.midaz/tx-service")
-	t.Setenv("STREAMING_EVENT_TOGGLES", "transaction.created=false,account.updated=true")
+	t.Setenv("STREAMING_EVENT_POLICIES", "transaction.created.outbox=sometimes")
+
+	_, err := LoadConfig()
+	if !errors.Is(err, ErrInvalidDeliveryPolicy) {
+		t.Fatalf("LoadConfig() err = %v; want ErrInvalidDeliveryPolicy", err)
+	}
+}
+
+func TestLoadConfig_EventPoliciesMalformedEntry(t *testing.T) {
+	clearStreamingEnv(t)
+	t.Setenv("STREAMING_ENABLED", "true")
+	t.Setenv("STREAMING_BROKERS", "broker:9092")
+	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.midaz/tx-service")
+	t.Setenv("STREAMING_EVENT_POLICIES", "transaction.created.enabled")
+
+	_, err := LoadConfig()
+	if !errors.Is(err, ErrInvalidDeliveryPolicy) {
+		t.Fatalf("LoadConfig() err = %v; want ErrInvalidDeliveryPolicy", err)
+	}
+}
+
+func TestLoadConfig_DisabledSkipsInvalidEventPolicies(t *testing.T) {
+	clearStreamingEnv(t)
+	t.Setenv("STREAMING_ENABLED", "false")
+	t.Setenv("STREAMING_EVENT_POLICIES", "transaction.created.outbox=sometimes")
 
 	cfg, err := LoadConfig()
 	if err != nil {
-		t.Fatalf("LoadConfig() err = %v", err)
+		t.Fatalf("LoadConfig() with disabled returned unexpected error: %v", err)
 	}
-	if cfg.EventToggles["transaction.created"] != false {
-		t.Errorf("EventToggles[transaction.created] = %v; want false", cfg.EventToggles["transaction.created"])
+	if cfg.Enabled {
+		t.Error("cfg.Enabled = true; want false")
 	}
-	if cfg.EventToggles["account.updated"] != true {
-		t.Errorf("EventToggles[account.updated] = %v; want true", cfg.EventToggles["account.updated"])
+	if len(cfg.PolicyOverrides) != 0 {
+		t.Errorf("len(PolicyOverrides) = %d; want 0 for invalid disabled policy env", len(cfg.PolicyOverrides))
 	}
 }
 
@@ -306,7 +341,7 @@ func clearStreamingEnv(t *testing.T) {
 		"STREAMING_CB_TIMEOUT_S",
 		"STREAMING_CLOSE_TIMEOUT_S",
 		"STREAMING_CLOUDEVENTS_SOURCE",
-		"STREAMING_EVENT_TOGGLES",
+		"STREAMING_EVENT_POLICIES",
 	}
 	for _, v := range vars {
 		t.Setenv(v, "")

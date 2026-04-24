@@ -90,7 +90,7 @@ func TestProducer_NilReceiver_Emit_ReturnsErr(t *testing.T) {
 
 	var p *Producer
 
-	err := p.Emit(context.Background(), sampleEvent())
+	err := p.Emit(context.Background(), sampleRequest())
 	if !errors.Is(err, ErrNilProducer) {
 		t.Errorf("nil.Emit err = %v; want ErrNilProducer", err)
 	}
@@ -159,8 +159,16 @@ func TestProducer_CredentialSanitization(t *testing.T) {
 // kfake cfg returns a concrete *Producer.
 func TestProducer_New_RealProducer_AsProducer(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
+	catalog, err := NewCatalog(EventDefinition{
+		Key:          "transaction.created",
+		ResourceType: "transaction",
+		EventType:    "created",
+	})
+	if err != nil {
+		t.Fatalf("NewCatalog() error = %v", err)
+	}
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()), WithCatalog(catalog))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -175,6 +183,21 @@ func TestProducer_New_RealProducer_AsProducer(t *testing.T) {
 	if p.client == nil {
 		t.Error("client is nil; want non-nil kgo client")
 	}
+	if p.catalog.Len() != 1 {
+		t.Errorf("catalog len = %d; want 1", p.catalog.Len())
+	}
+}
+
+func TestProducer_NewProducer_RejectsUnknownPolicyOverrideKey(t *testing.T) {
+	cfg, _ := kfakeConfig(t)
+	cfg.PolicyOverrides = map[string]DeliveryPolicyOverride{
+		"transaction.cretaed": {Outbox: OutboxModeAlways},
+	}
+
+	_, err := NewProducer(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	if !errors.Is(err, ErrUnknownEventDefinition) {
+		t.Fatalf("NewProducer err = %v; want ErrUnknownEventDefinition", err)
+	}
 }
 
 // TestProducer_New_WithPartitionKeyOverride: operator-supplied partition-key
@@ -184,7 +207,7 @@ func TestProducer_New_WithPartitionKeyOverride(t *testing.T) {
 
 	fixed := "FIXED-PART-KEY"
 	emitter, err := New(context.Background(), cfg,
-		WithLogger(log.NewNop()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
 		WithPartitionKey(func(_ Event) string { return fixed }),
 	)
 	if err != nil {
@@ -193,7 +216,7 @@ func TestProducer_New_WithPartitionKeyOverride(t *testing.T) {
 
 	t.Cleanup(func() { _ = emitter.Close() })
 
-	event := sampleEvent()
+	event := sampleRequest()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -202,7 +225,7 @@ func TestProducer_New_WithPartitionKeyOverride(t *testing.T) {
 		t.Fatalf("Emit err = %v", err)
 	}
 
-	consumer := newConsumer(t, cluster, event.Topic())
+	consumer := newConsumer(t, cluster, "lerian.streaming.transaction.created")
 
 	fetchCtx, fetchCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer fetchCancel()

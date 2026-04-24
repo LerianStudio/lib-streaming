@@ -231,7 +231,7 @@ func newTestProducer(t *testing.T, brokers []string) *Producer {
 		CloudEventsSource:     integrationSource,
 	}
 
-	p, err := NewProducer(context.Background(), cfg, WithLogger(log.NewNop()))
+	p, err := NewProducer(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
 	require.NoError(t, err, "NewProducer")
 
 	t.Cleanup(func() {
@@ -356,7 +356,7 @@ func TestIntegration_RoundTripHeaders(t *testing.T) {
 
 	consumer := newConsumerClient(t, brokers, topic)
 
-	require.NoError(t, p.Emit(context.Background(), event), "Emit")
+	require.NoError(t, p.Emit(context.Background(), eventToRequest(event)), "Emit")
 
 	records := pollRecords(t, consumer, 1, 30*time.Second)
 	require.Len(t, records, 1, "expected exactly 1 record on %s", topic)
@@ -442,7 +442,7 @@ func TestIntegration_PartitionFIFO(t *testing.T) {
 					Source:       integrationSource,
 					Payload:      payload,
 				}
-				if err := p.Emit(gctx, ev); err != nil {
+				if err := p.Emit(gctx, eventToRequest(ev)); err != nil {
 					return fmt.Errorf("emit tenant=%s seq=%d: %w", tenantID, seq, err)
 				}
 			}
@@ -563,7 +563,7 @@ func TestIntegration_DLQRouting(t *testing.T) {
 		CloseTimeout:          5 * time.Second,
 		CloudEventsSource:     integrationSource,
 	}
-	p, err := NewProducer(context.Background(), cfg, WithLogger(log.NewNop()))
+	p, err := NewProducer(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
 	require.NoError(t, err, "NewProducer")
 	t.Cleanup(func() { _ = p.Close() })
 
@@ -591,7 +591,7 @@ func TestIntegration_DLQRouting(t *testing.T) {
 	// Emit should surface an *EmitError carrying ClassSerialization. The DLQ
 	// write should succeed in the background — the *EmitError.Cause is the
 	// original broker error, not a DLQ-write error.
-	emitErr := p.Emit(context.Background(), event)
+	emitErr := p.Emit(context.Background(), eventToRequest(event))
 	require.Error(t, emitErr, "expected Emit to fail on oversize payload")
 
 	var emitEE *EmitError
@@ -767,7 +767,7 @@ CREATE TABLE IF NOT EXISTS outbox_events (
 	}
 
 	p, err := NewProducer(ctx, cfg,
-		WithLogger(log.NewNop()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
 		WithOutboxRepository(repo),
 	)
 	require.NoError(t, err, "NewProducer")
@@ -790,7 +790,7 @@ CREATE TABLE IF NOT EXISTS outbox_events (
 			Source:       integrationSource,
 			Payload:      json.RawMessage(fmt.Sprintf(`{"i":%d}`, i)),
 		}
-		require.NoError(t, p.Emit(tenantCtx, ev), "baseline emit %d", i)
+		require.NoError(t, p.Emit(tenantCtx, eventToRequest(ev)), "baseline emit %d", i)
 	}
 
 	// Take the broker down. Stop with a short timeout so the test doesn't
@@ -825,7 +825,7 @@ CREATE TABLE IF NOT EXISTS outbox_events (
 			Payload:      json.RawMessage(fmt.Sprintf(`{"post":%d}`, i)),
 		}
 		emitCtx, emitCancel := context.WithTimeout(tenantCtx, 5*time.Second)
-		require.NoError(t, p.Emit(emitCtx, ev), "fallback emit %d", i)
+		require.NoError(t, p.Emit(emitCtx, eventToRequest(ev)), "fallback emit %d", i)
 		emitCancel()
 	}
 
@@ -898,7 +898,7 @@ func TestIntegration_CloudEventsSDKContract(t *testing.T) {
 
 	consumer := newConsumerClient(t, brokers, topic)
 
-	require.NoError(t, p.Emit(context.Background(), event), "Emit")
+	require.NoError(t, p.Emit(context.Background(), eventToRequest(event)), "Emit")
 
 	records := pollRecords(t, consumer, 1, 30*time.Second)
 	require.Len(t, records, 1)
@@ -999,7 +999,7 @@ func TestIntegration_CircuitBreaker_TripsOrganically(t *testing.T) {
 		CloudEventsSource:     integrationSource,
 	}
 
-	p, err := NewProducer(context.Background(), cfg, WithLogger(log.NewNop()))
+	p, err := NewProducer(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
 	require.NoError(t, err, "NewProducer")
 	t.Cleanup(func() { _ = p.Close() })
 
@@ -1018,7 +1018,7 @@ func TestIntegration_CircuitBreaker_TripsOrganically(t *testing.T) {
 	// CBMinRequests=5 so the breaker has a real sample to evaluate.
 	baselineCtx, baselineCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	for i := range 10 {
-		require.NoError(t, p.Emit(baselineCtx, healthyEvent(i)), "baseline emit %d", i)
+		require.NoError(t, p.Emit(baselineCtx, eventToRequest(healthyEvent(i))), "baseline emit %d", i)
 	}
 	baselineCancel()
 
@@ -1046,7 +1046,7 @@ func TestIntegration_CircuitBreaker_TripsOrganically(t *testing.T) {
 		// underlying broker-unreachable error before the trip). We
 		// don't assert on the specific shape — the load-bearing
 		// invariant is the flag transition below.
-		_ = p.Emit(emitCtx, healthyEvent(i+100))
+		_ = p.Emit(emitCtx, eventToRequest(healthyEvent(i+100)))
 		emitCancel()
 
 		if p.cbStateFlag.Load() == flagCBOpen {
@@ -1064,7 +1064,7 @@ func TestIntegration_CircuitBreaker_TripsOrganically(t *testing.T) {
 	failFastCtx, failFastCancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer failFastCancel()
 
-	err = p.Emit(failFastCtx, healthyEvent(9999))
+	err = p.Emit(failFastCtx, eventToRequest(healthyEvent(9999)))
 	require.Error(t, err, "Emit post-trip should not return nil")
 	require.Truef(t, errors.Is(err, ErrCircuitOpen),
 		"Emit post-trip err = %v; want errors.Is(..., ErrCircuitOpen)", err)

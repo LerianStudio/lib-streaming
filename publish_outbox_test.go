@@ -156,7 +156,7 @@ func TestProducer_Emit_CircuitOpen_WithOutbox_WritesRowAndReturnsNil(t *testing.
 	emitter, err := New(
 		context.Background(),
 		cfg,
-		WithLogger(log.NewNop()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
 		WithCircuitBreakerManager(fakeMgr),
 		WithOutboxRepository(fakeRepo),
 	)
@@ -175,12 +175,12 @@ func TestProducer_Emit_CircuitOpen_WithOutbox_WritesRowAndReturnsNil(t *testing.
 		t.Fatalf("circuitState after OPEN transition = %d; want %d", got, flagCBOpen)
 	}
 
-	event := sampleEvent()
+	request := sampleRequest()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := emitter.Emit(ctx, event); err != nil {
+	if err := emitter.Emit(ctx, request); err != nil {
 		t.Fatalf("Emit (CB open, outbox wired) err = %v; want nil", err)
 	}
 
@@ -198,29 +198,35 @@ func TestProducer_Emit_CircuitOpen_WithOutbox_WritesRowAndReturnsNil(t *testing.
 		t.Fatal("outbox row is nil; Create was not called with an event")
 	}
 
-	// EventType is the full topic name.
-	wantType := "lerian.streaming.transaction.created"
+	// EventType is the stable streaming relay type; the concrete Kafka topic
+	// lives inside the versioned payload envelope.
+	wantType := StreamingOutboxEventType
 	if row.EventType != wantType {
 		t.Errorf("row.EventType = %q; want %q", row.EventType, wantType)
 	}
 
-	// Payload is the JSON marshaling of the streaming.Event. We don't pin
-	// every field here (defaults like EventID are non-deterministic) but
-	// we do verify the Payload round-trips into an Event with the right
-	// TenantID + ResourceType + EventType.
-	var roundTripped Event
-	if err := json.Unmarshal(row.Payload, &roundTripped); err != nil {
+	var envelope OutboxEnvelope
+	if err := json.Unmarshal(row.Payload, &envelope); err != nil {
 		t.Fatalf("unmarshal row.Payload err = %v", err)
 	}
+	if envelope.Topic != "lerian.streaming.transaction.created" {
+		t.Errorf("envelope.Topic = %q; want lerian.streaming.transaction.created", envelope.Topic)
+	}
+	if envelope.DefinitionKey != request.DefinitionKey {
+		t.Errorf("envelope.DefinitionKey = %q; want %q", envelope.DefinitionKey, request.DefinitionKey)
+	}
+	if envelope.Policy != DefaultDeliveryPolicy() {
+		t.Errorf("envelope.Policy = %+v; want %+v", envelope.Policy, DefaultDeliveryPolicy())
+	}
 
-	if roundTripped.TenantID != event.TenantID {
-		t.Errorf("round-tripped TenantID = %q; want %q", roundTripped.TenantID, event.TenantID)
+	if envelope.Event.TenantID != request.TenantID {
+		t.Errorf("round-tripped TenantID = %q; want %q", envelope.Event.TenantID, request.TenantID)
 	}
-	if roundTripped.ResourceType != event.ResourceType {
-		t.Errorf("round-tripped ResourceType = %q; want %q", roundTripped.ResourceType, event.ResourceType)
+	if envelope.Event.ResourceType != "transaction" {
+		t.Errorf("round-tripped ResourceType = %q; want transaction", envelope.Event.ResourceType)
 	}
-	if roundTripped.EventType != event.EventType {
-		t.Errorf("round-tripped EventType = %q; want %q", roundTripped.EventType, event.EventType)
+	if envelope.Event.EventType != "created" {
+		t.Errorf("round-tripped EventType = %q; want created", envelope.Event.EventType)
 	}
 
 	// ID is a non-nil UUID.
@@ -229,14 +235,14 @@ func TestProducer_Emit_CircuitOpen_WithOutbox_WritesRowAndReturnsNil(t *testing.
 	}
 
 	// AggregateID is deterministic from the partition key.
-	wantAgg := uuid.NewSHA1(uuid.NameSpaceDNS, []byte(event.TenantID))
+	wantAgg := uuid.NewSHA1(uuid.NameSpaceDNS, []byte(request.TenantID))
 	if row.AggregateID != wantAgg {
 		t.Errorf("row.AggregateID = %v; want %v (deterministic from tenant)", row.AggregateID, wantAgg)
 	}
 
 	// Broker must not have seen any records — the circuit-open path
 	// MUST bypass publishDirect entirely.
-	consumer := newConsumer(t, cluster, event.Topic())
+	consumer := newConsumer(t, cluster, "lerian.streaming.transaction.created")
 
 	fetchCtx, fetchCancel := context.WithTimeout(ctx, 500*time.Millisecond)
 	defer fetchCancel()
@@ -262,7 +268,7 @@ func TestProducer_Emit_CircuitOpen_NoOutbox_ReturnsErrCircuitOpen(t *testing.T) 
 	emitter, err := New(
 		context.Background(),
 		cfg,
-		WithLogger(log.NewNop()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
 		WithCircuitBreakerManager(fakeMgr),
 		// Deliberately NO WithOutboxRepository — this is the T3 fallback.
 	)
@@ -276,9 +282,136 @@ func TestProducer_Emit_CircuitOpen_NoOutbox_ReturnsErrCircuitOpen(t *testing.T) 
 
 	fakeMgr.ForceTransition(p.cbServiceName, circuitbreaker.StateOpen)
 
-	err = emitter.Emit(context.Background(), sampleEvent())
+	err = emitter.Emit(context.Background(), sampleRequest())
 	if !errors.Is(err, ErrCircuitOpen) {
 		t.Fatalf("Emit err = %v; want ErrCircuitOpen (no outbox wired)", err)
+	}
+}
+
+func TestProducer_Emit_CircuitOpen_NilOutboxRepositoryBehavesAsNoOutbox(t *testing.T) {
+	cfg, _ := kfakeConfig(t)
+	fakeMgr := newFakeCBManager()
+
+	emitter, err := New(
+		context.Background(),
+		cfg,
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
+		WithCircuitBreakerManager(fakeMgr),
+		WithOutboxRepository(nil),
+	)
+	if err != nil {
+		t.Fatalf("New err = %v", err)
+	}
+	t.Cleanup(func() { _ = emitter.Close() })
+
+	p := asProducer(t, emitter)
+	fakeMgr.ForceTransition(p.cbServiceName, circuitbreaker.StateOpen)
+
+	err = emitter.Emit(context.Background(), sampleRequest())
+	if !errors.Is(err, ErrCircuitOpen) {
+		t.Fatalf("Emit err = %v; want ErrCircuitOpen", err)
+	}
+}
+
+type typedNilOutboxWriter struct{}
+
+func (*typedNilOutboxWriter) Write(context.Context, OutboxEnvelope) error {
+	return nil
+}
+
+type recordingOutboxWriter struct {
+	envelopes []OutboxEnvelope
+}
+
+func (w *recordingOutboxWriter) Write(_ context.Context, envelope OutboxEnvelope) error {
+	w.envelopes = append(w.envelopes, envelope)
+
+	return nil
+}
+
+func TestProducer_Emit_CircuitOpen_TypedNilOutboxWriterBehavesAsNoOutbox(t *testing.T) {
+	cfg, _ := kfakeConfig(t)
+	fakeMgr := newFakeCBManager()
+
+	var writer *typedNilOutboxWriter
+	emitter, err := New(
+		context.Background(),
+		cfg,
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
+		WithCircuitBreakerManager(fakeMgr),
+		WithOutboxWriter(writer),
+	)
+	if err != nil {
+		t.Fatalf("New err = %v", err)
+	}
+	t.Cleanup(func() { _ = emitter.Close() })
+
+	p := asProducer(t, emitter)
+	fakeMgr.ForceTransition(p.cbServiceName, circuitbreaker.StateOpen)
+
+	err = emitter.Emit(context.Background(), sampleRequest())
+	if !errors.Is(err, ErrCircuitOpen) {
+		t.Fatalf("Emit err = %v; want ErrCircuitOpen", err)
+	}
+}
+
+func TestProducer_Emit_CircuitOpen_CustomOutboxWriterRoutesEnvelope(t *testing.T) {
+	cfg, _ := kfakeConfig(t)
+	fakeMgr := newFakeCBManager()
+	writer := &recordingOutboxWriter{}
+
+	emitter, err := New(
+		context.Background(),
+		cfg,
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
+		WithCircuitBreakerManager(fakeMgr),
+		WithOutboxWriter(writer),
+	)
+	if err != nil {
+		t.Fatalf("New err = %v", err)
+	}
+	t.Cleanup(func() { _ = emitter.Close() })
+
+	p := asProducer(t, emitter)
+	fakeMgr.ForceTransition(p.cbServiceName, circuitbreaker.StateOpen)
+
+	req := sampleRequest()
+	if err := emitter.Emit(context.Background(), req); err != nil {
+		t.Fatalf("Emit err = %v; want nil from custom outbox writer", err)
+	}
+
+	if got := len(writer.envelopes); got != 1 {
+		t.Fatalf("custom writer envelope count = %d; want 1", got)
+	}
+
+	envelope := writer.envelopes[0]
+	if err := envelope.Validate(); err != nil {
+		t.Fatalf("custom writer envelope Validate err = %v", err)
+	}
+	if envelope.DefinitionKey != req.DefinitionKey {
+		t.Errorf("envelope.DefinitionKey = %q; want %q", envelope.DefinitionKey, req.DefinitionKey)
+	}
+	if envelope.AggregateID == uuid.Nil {
+		t.Error("envelope.AggregateID = uuid.Nil; want deterministic aggregate id")
+	}
+	wantEvent := sampleEvent()
+	if want := wantEvent.Topic(); envelope.Topic != want {
+		t.Errorf("envelope.Topic = %q; want %q", envelope.Topic, want)
+	}
+	if envelope.Event.TenantID != req.TenantID {
+		t.Errorf("envelope.Event.TenantID = %q; want %q", envelope.Event.TenantID, req.TenantID)
+	}
+	if envelope.Event.ResourceType != wantEvent.ResourceType {
+		t.Errorf("envelope.Event.ResourceType = %q; want %q", envelope.Event.ResourceType, wantEvent.ResourceType)
+	}
+	if envelope.Event.EventType != wantEvent.EventType {
+		t.Errorf("envelope.Event.EventType = %q; want %q", envelope.Event.EventType, wantEvent.EventType)
+	}
+	if string(envelope.Event.Payload) != string(req.Payload) {
+		t.Errorf("envelope.Event.Payload = %s; want %s", envelope.Event.Payload, req.Payload)
+	}
+	if envelope.Policy != DefaultDeliveryPolicy() {
+		t.Errorf("envelope.Policy = %+v; want %+v", envelope.Policy, DefaultDeliveryPolicy())
 	}
 }
 
@@ -297,7 +430,7 @@ func TestProducer_Emit_CircuitOpen_OutboxFailure_SurfacesError(t *testing.T) {
 	emitter, err := New(
 		context.Background(),
 		cfg,
-		WithLogger(log.NewNop()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
 		WithCircuitBreakerManager(fakeMgr),
 		WithOutboxRepository(fakeRepo),
 	)
@@ -310,7 +443,7 @@ func TestProducer_Emit_CircuitOpen_OutboxFailure_SurfacesError(t *testing.T) {
 	p := asProducer(t, emitter)
 	fakeMgr.ForceTransition(p.cbServiceName, circuitbreaker.StateOpen)
 
-	err = emitter.Emit(context.Background(), sampleEvent())
+	err = emitter.Emit(context.Background(), sampleRequest())
 	if err == nil {
 		t.Fatal("Emit err = nil; want non-nil error (outbox failure must surface)")
 	}
@@ -321,17 +454,7 @@ func TestProducer_Emit_CircuitOpen_OutboxFailure_SurfacesError(t *testing.T) {
 }
 
 // TestProducer_PublishToOutbox_WithAmbientTx_CallsCreateWithTx exercises
-// the ambient-tx branch. Per T4 scope, github.com/LerianStudio/lib-commons/v5/commons/outbox does not expose a
-// public tx-context helper and streaming does not yet export one either
-// — by design, so the public API doesn't grow beyond T4's scope.
-//
-// But the internal plumbing (txContextKey + txFromContext + the
-// CreateWithTx branch in publishToOutbox) IS shipped so v1.1 can add a
-// public helper in a single PR without reshaping the function. This test
-// covers that plumbing end-to-end by using the unexported key directly
-// — something only tests in this package can do. Downstream service
-// tests will drive this same branch through the public helper once it
-// lands.
+// the ambient-tx branch through the exported WithOutboxTx helper.
 //
 // We use a non-nil &sql.Tx{} as a pointer witness — it's unusable for
 // real SQL (zero-value), but the fake repo only checks identity, so
@@ -344,7 +467,7 @@ func TestProducer_PublishToOutbox_WithAmbientTx_CallsCreateWithTx(t *testing.T) 
 	emitter, err := New(
 		context.Background(),
 		cfg,
-		WithLogger(log.NewNop()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
 		WithOutboxRepository(fakeRepo),
 	)
 	if err != nil {
@@ -355,15 +478,15 @@ func TestProducer_PublishToOutbox_WithAmbientTx_CallsCreateWithTx(t *testing.T) 
 
 	p := asProducer(t, emitter)
 
-	// Stuff a *sql.Tx witness onto the ambient context using streaming's
-	// internal key. v1.1 will add a public helper that does the same.
 	fakeTx := &sql.Tx{}
-	ctx := context.WithValue(context.Background(), txContextKey{}, fakeTx)
+	ctx := WithOutboxTx(context.Background(), fakeTx)
 
 	event := sampleEvent()
 	(&event).ApplyDefaults()
 
-	if err := p.publishToOutbox(ctx, event, event.Topic()); err != nil {
+	policy := DefaultDeliveryPolicy().Normalize()
+
+	if err := p.publishToOutbox(ctx, event, event.Topic(), policy, "transaction.created"); err != nil {
 		t.Fatalf("publishToOutbox(ctx with tx) err = %v", err)
 	}
 
@@ -391,7 +514,7 @@ func TestProducer_PublishToOutbox_WithAmbientTx_PropagatesError(t *testing.T) {
 	emitter, err := New(
 		context.Background(),
 		cfg,
-		WithLogger(log.NewNop()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
 		WithOutboxRepository(fakeRepo),
 	)
 	if err != nil {
@@ -402,18 +525,51 @@ func TestProducer_PublishToOutbox_WithAmbientTx_PropagatesError(t *testing.T) {
 
 	p := asProducer(t, emitter)
 
-	ctx := context.WithValue(context.Background(), txContextKey{}, &sql.Tx{})
+	ctx := WithOutboxTx(context.Background(), &sql.Tx{})
 
 	event := sampleEvent()
 	(&event).ApplyDefaults()
 
-	err = p.publishToOutbox(ctx, event, event.Topic())
+	policy := DefaultDeliveryPolicy().Normalize()
+
+	err = p.publishToOutbox(ctx, event, event.Topic(), policy, "transaction.created")
 	if err == nil {
 		t.Fatal("publishToOutbox err = nil; want non-nil (tx-path error must surface)")
 	}
 
 	if !strings.Contains(err.Error(), "tx rolled back") {
 		t.Errorf("err = %q; want substring %q", err.Error(), "tx rolled back")
+	}
+}
+
+type nonTransactionalOutboxWriter struct{}
+
+func (nonTransactionalOutboxWriter) Write(context.Context, OutboxEnvelope) error {
+	return nil
+}
+
+func TestProducer_PublishToOutbox_WithAmbientTx_RequiresTransactionalWriter(t *testing.T) {
+	cfg, _ := kfakeConfig(t)
+
+	emitter, err := New(
+		context.Background(),
+		cfg,
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
+		WithOutboxWriter(nonTransactionalOutboxWriter{}),
+	)
+	if err != nil {
+		t.Fatalf("New err = %v", err)
+	}
+	t.Cleanup(func() { _ = emitter.Close() })
+
+	p := asProducer(t, emitter)
+	event := sampleEvent()
+	event.ApplyDefaults()
+	policy := DefaultDeliveryPolicy().Normalize()
+
+	err = p.publishToOutbox(WithOutboxTx(context.Background(), &sql.Tx{}), event, event.Topic(), policy, "transaction.created")
+	if !errors.Is(err, ErrOutboxTxUnsupported) {
+		t.Fatalf("publishToOutbox err = %v; want ErrOutboxTxUnsupported", err)
 	}
 }
 
@@ -426,7 +582,9 @@ func TestProducer_PublishToOutbox_NilReceiver(t *testing.T) {
 
 	var p *Producer
 	ev := sampleEvent()
-	err := p.publishToOutbox(context.Background(), ev, ev.Topic())
+	policy := DefaultDeliveryPolicy().Normalize()
+
+	err := p.publishToOutbox(context.Background(), ev, ev.Topic(), policy, "")
 	if !errors.Is(err, ErrNilProducer) {
 		t.Errorf("nil.publishToOutbox err = %v; want ErrNilProducer", err)
 	}
@@ -440,7 +598,7 @@ func TestProducer_PublishToOutbox_NilReceiver(t *testing.T) {
 func TestProducer_PublishToOutbox_NoRepoConfigured(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -450,7 +608,9 @@ func TestProducer_PublishToOutbox_NoRepoConfigured(t *testing.T) {
 	p := asProducer(t, emitter)
 
 	ev := sampleEvent()
-	err = p.publishToOutbox(context.Background(), ev, ev.Topic())
+	policy := DefaultDeliveryPolicy().Normalize()
+
+	err = p.publishToOutbox(context.Background(), ev, ev.Topic(), policy, "")
 	if !errors.Is(err, ErrOutboxNotConfigured) {
 		t.Errorf("publishToOutbox without repo err = %v; want ErrOutboxNotConfigured", err)
 	}
@@ -470,7 +630,7 @@ func TestProducer_PublishToOutbox_MarshalFailure(t *testing.T) {
 	emitter, err := New(
 		context.Background(),
 		cfg,
-		WithLogger(log.NewNop()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
 		WithOutboxRepository(fakeRepo),
 	)
 	if err != nil {
@@ -488,7 +648,9 @@ func TestProducer_PublishToOutbox_MarshalFailure(t *testing.T) {
 	bad := sampleEvent()
 	bad.Payload = []byte("{bad-json")
 
-	err = p.publishToOutbox(context.Background(), bad, bad.Topic())
+	policy := DefaultDeliveryPolicy().Normalize()
+
+	err = p.publishToOutbox(context.Background(), bad, bad.Topic(), policy, "")
 	if err == nil {
 		t.Fatal("publishToOutbox(bad json) err = nil; want marshal error")
 	}

@@ -15,13 +15,11 @@ import (
 func Example_basicUsage() {
 	mock := streaming.NewMockEmitter()
 
-	if err := mock.Emit(context.Background(), streaming.Event{
-		TenantID:     "t-abc",
-		ResourceType: "transaction",
-		EventType:    "created",
-		Source:       "//lerian.midaz/transaction-service",
-		Subject:      "tx-123",
-		Payload:      []byte(`{"amount":100}`),
+	if err := mock.Emit(context.Background(), streaming.EmitRequest{
+		DefinitionKey: "transaction.created",
+		TenantID:      "t-abc",
+		Subject:       "tx-123",
+		Payload:       []byte(`{"amount":100}`),
 	}); err != nil {
 		return
 	}

@@ -32,6 +32,10 @@ func TestIsCallerError(t *testing.T) {
 		{"ErrMissingBrokers", ErrMissingBrokers},
 		{"ErrInvalidCompression", ErrInvalidCompression},
 		{"ErrInvalidAcks", ErrInvalidAcks},
+		{"ErrInvalidEventDefinition", ErrInvalidEventDefinition},
+		{"ErrDuplicateEventDefinition", ErrDuplicateEventDefinition},
+		{"ErrUnknownEventDefinition", ErrUnknownEventDefinition},
+		{"ErrInvalidDeliveryPolicy", ErrInvalidDeliveryPolicy},
 	}
 
 	infraCases := []struct {
@@ -201,6 +205,10 @@ func TestSentinelErrors_IsMatches(t *testing.T) {
 		ErrMissingBrokers,
 		ErrInvalidCompression,
 		ErrInvalidAcks,
+		ErrInvalidEventDefinition,
+		ErrDuplicateEventDefinition,
+		ErrUnknownEventDefinition,
+		ErrInvalidDeliveryPolicy,
 	}
 
 	for _, s := range sentinels {

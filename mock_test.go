@@ -13,32 +13,32 @@ import (
 )
 
 // TestMockEmitter_CaptureAndEvents verifies the simplest contract: Emit
-// records the event, and Events() returns the slice in FIFO order.
+// records the request, and Requests() returns the slice in FIFO order.
 func TestMockEmitter_CaptureAndEvents(t *testing.T) {
 	t.Parallel()
 
 	m := NewMockEmitter()
 	ctx := context.Background()
 
-	events := []Event{
-		{ResourceType: "transaction", EventType: "created", TenantID: "t-1"},
-		{ResourceType: "account", EventType: "updated", TenantID: "t-2"},
-		{ResourceType: "ledger", EventType: "closed", TenantID: "t-3"},
+	requests := []EmitRequest{
+		{DefinitionKey: "transaction.created", TenantID: "t-1"},
+		{DefinitionKey: "account.updated", TenantID: "t-2"},
+		{DefinitionKey: "ledger.closed", TenantID: "t-3"},
 	}
 
-	for _, e := range events {
-		if err := m.Emit(ctx, e); err != nil {
+	for _, request := range requests {
+		if err := m.Emit(ctx, request); err != nil {
 			t.Fatalf("Emit returned unexpected error: %v", err)
 		}
 	}
 
-	got := m.Events()
-	if len(got) != len(events) {
-		t.Fatalf("len(Events()) = %d; want %d", len(got), len(events))
+	got := m.Requests()
+	if len(got) != len(requests) {
+		t.Fatalf("len(Requests()) = %d; want %d", len(got), len(requests))
 	}
-	for i, e := range events {
-		if got[i].ResourceType != e.ResourceType || got[i].EventType != e.EventType || got[i].TenantID != e.TenantID {
-			t.Errorf("Events()[%d] = %+v; want %+v", i, got[i], e)
+	for i, request := range requests {
+		if got[i].DefinitionKey != request.DefinitionKey || got[i].TenantID != request.TenantID {
+			t.Errorf("Requests()[%d] = %+v; want %+v", i, got[i], request)
 		}
 	}
 }
@@ -53,14 +53,13 @@ func TestMockEmitter_DeepCopy(t *testing.T) {
 	ctx := context.Background()
 
 	payload := json.RawMessage(`{"amount":100}`)
-	e := Event{
-		ResourceType: "transaction",
-		EventType:    "created",
-		TenantID:     "t-1",
-		Payload:      payload,
+	request := EmitRequest{
+		DefinitionKey: "transaction.created",
+		TenantID:      "t-1",
+		Payload:       payload,
 	}
 
-	if err := m.Emit(ctx, e); err != nil {
+	if err := m.Emit(ctx, request); err != nil {
 		t.Fatalf("Emit returned unexpected error: %v", err)
 	}
 
@@ -69,7 +68,7 @@ func TestMockEmitter_DeepCopy(t *testing.T) {
 		payload[i] = 'X'
 	}
 
-	captured := m.Events()[0]
+	captured := m.Requests()[0]
 	if string(captured.Payload) != `{"amount":100}` {
 		t.Errorf("captured payload mutated by caller: got %q; want %q", string(captured.Payload), `{"amount":100}`)
 	}
@@ -84,14 +83,14 @@ func TestMockEmitter_SetError(t *testing.T) {
 
 	m.SetError(ErrPayloadTooLarge)
 
-	err := m.Emit(ctx, Event{ResourceType: "transaction", EventType: "created", TenantID: "t-1"})
+	err := m.Emit(ctx, EmitRequest{DefinitionKey: "transaction.created", TenantID: "t-1"})
 	if err != ErrPayloadTooLarge {
 		t.Errorf("Emit() err = %v; want ErrPayloadTooLarge", err)
 	}
 
 	// Clearing restores the happy path.
 	m.SetError(nil)
-	if err := m.Emit(ctx, Event{ResourceType: "transaction", EventType: "created", TenantID: "t-1"}); err != nil {
+	if err := m.Emit(ctx, EmitRequest{DefinitionKey: "transaction.created", TenantID: "t-1"}); err != nil {
 		t.Errorf("Emit after SetError(nil) returned error: %v", err)
 	}
 }
@@ -103,8 +102,8 @@ func TestMockEmitter_Reset(t *testing.T) {
 	m := NewMockEmitter()
 	ctx := context.Background()
 
-	_ = m.Emit(ctx, Event{ResourceType: "transaction", EventType: "created", TenantID: "t-1"})
-	_ = m.Emit(ctx, Event{ResourceType: "account", EventType: "updated", TenantID: "t-1"})
+	_ = m.Emit(ctx, EmitRequest{DefinitionKey: "transaction.created", TenantID: "t-1"})
+	_ = m.Emit(ctx, EmitRequest{DefinitionKey: "account.updated", TenantID: "t-1"})
 
 	if len(m.Events()) != 2 {
 		t.Fatalf("pre-reset len = %d; want 2", len(m.Events()))
@@ -133,10 +132,9 @@ func TestMockEmitter_ConcurrentEmits(t *testing.T) {
 	for i := 0; i < n; i++ {
 		go func(i int) {
 			defer wg.Done()
-			_ = m.Emit(ctx, Event{
-				ResourceType: "transaction",
-				EventType:    "created",
-				TenantID:     fmt.Sprintf("t-%d", i),
+			_ = m.Emit(ctx, EmitRequest{
+				DefinitionKey: "transaction.created",
+				TenantID:      fmt.Sprintf("t-%d", i),
 			})
 		}(i)
 	}
@@ -173,7 +171,7 @@ func TestMockEmitter_NilReceiver(t *testing.T) {
 
 	var m *MockEmitter
 
-	if err := m.Emit(context.Background(), Event{}); err != nil {
+	if err := m.Emit(context.Background(), EmitRequest{}); err != nil {
 		t.Errorf("nil.Emit = %v; want nil", err)
 	}
 	if got := m.Events(); got != nil {
@@ -196,12 +194,12 @@ func TestAssertEventEmitted_Pass(t *testing.T) {
 	t.Parallel()
 
 	m := NewMockEmitter()
-	_ = m.Emit(context.Background(), Event{ResourceType: "transaction", EventType: "created", TenantID: "t-1"})
+	_ = m.Emit(context.Background(), EmitRequest{DefinitionKey: "transaction.created", TenantID: "t-1"})
 
 	// All four exported assertion helpers must succeed silently on a
 	// matching mock. Any failure bubbles up through the real *testing.T.
-	AssertEventEmitted(t, m, "transaction", "created")
-	AssertEventCount(t, m, "transaction", "created", 1)
+	AssertEventEmitted(t, m, "transaction.created")
+	AssertEventCount(t, m, "transaction.created", 1)
 	AssertTenantID(t, m, "t-1")
 }
 
@@ -228,11 +226,11 @@ func TestWaitForEvent_DeterministicMatch(t *testing.T) {
 
 		go func() {
 			time.Sleep(10 * time.Millisecond)
-			_ = m.Emit(ctx, Event{ResourceType: "transaction", EventType: "created", TenantID: "t-1"})
+			_ = m.Emit(ctx, EmitRequest{DefinitionKey: "transaction.created", TenantID: "t-1"})
 		}()
 
-		got := WaitForEvent(t, ctx, m, func(e Event) bool {
-			return e.ResourceType == "transaction" && e.EventType == "created"
+		got := WaitForEvent(t, ctx, m, func(request EmitRequest) bool {
+			return request.DefinitionKey == "transaction.created"
 		}, 1*time.Second)
 
 		if got.TenantID != "t-1" {
@@ -252,16 +250,15 @@ func TestWaitForEvent_NilContext(t *testing.T) {
 
 		go func() {
 			time.Sleep(5 * time.Millisecond)
-			_ = m.Emit(context.Background(), Event{
-				ResourceType: "transaction",
-				EventType:    "created",
-				TenantID:     "t-1",
+			_ = m.Emit(context.Background(), EmitRequest{
+				DefinitionKey: "transaction.created",
+				TenantID:      "t-1",
 			})
 		}()
 
 		//nolint:staticcheck // intentional nil ctx to verify fallback
-		got := WaitForEvent(t, nil, m, func(e Event) bool {
-			return e.ResourceType == "transaction"
+		got := WaitForEvent(t, nil, m, func(request EmitRequest) bool {
+			return request.DefinitionKey == "transaction.created"
 		}, 1*time.Second)
 
 		if got.TenantID != "t-1" {

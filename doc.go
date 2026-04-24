@@ -20,12 +20,19 @@
 //
 //	cfg, err := streaming.LoadConfig()
 //	if err != nil { return err }
+//	catalog, err := streaming.NewCatalog(streaming.EventDefinition{
+//	    Key:          "transaction.created",
+//	    ResourceType: "transaction",
+//	    EventType:    "created",
+//	})
+//	if err != nil { return err }
 //	producer, err := streaming.NewProducer(ctx, cfg,
 //	    streaming.WithLogger(logger),
 //	    streaming.WithMetricsFactory(metricsFactory),
 //	    streaming.WithTracer(tracer),
 //	    streaming.WithCircuitBreakerManager(cbManager),
 //	    streaming.WithOutboxRepository(outboxRepo),
+//	    streaming.WithCatalog(catalog),
 //	)
 //	if err != nil { return err }
 //	launcher.Add("streaming", producer)
@@ -33,13 +40,11 @@
 //
 // Service method uses the injected Emitter:
 //
-//	err := emitter.Emit(ctx, streaming.Event{
-//	    TenantID:     "t-abc",
-//	    ResourceType: "transaction",
-//	    EventType:    "created",
-//	    Source:       "//lerian.midaz/transaction-service",
-//	    Subject:      "tx-123",
-//	    Payload:      payloadBytes,
+//	err := emitter.Emit(ctx, streaming.EmitRequest{
+//	    DefinitionKey: "transaction.created",
+//	    TenantID:      "t-abc",
+//	    Subject:       "tx-123",
+//	    Payload:       payloadBytes,
 //	})
 //
 // Unit-test with the mock emitter:
@@ -47,7 +52,7 @@
 //	mock := streaming.NewMockEmitter()
 //	svc := NewMyService(mock)
 //	svc.DoSomething(ctx)
-//	streaming.AssertEventEmitted(t, mock, "transaction", "created")
+//	streaming.AssertEventEmitted(t, mock, "transaction.created")
 //
 // # Environment variables
 //
@@ -72,7 +77,7 @@
 //	STREAMING_CB_TIMEOUT_S               | int(s)   | 30              | Open to half-open probe delay in seconds
 //	STREAMING_CLOSE_TIMEOUT_S            | int(s)   | 30              | Max drain+flush window on Close in seconds
 //	STREAMING_CLOUDEVENTS_SOURCE         | string   | ""              | Default ce-source (required when Enabled=true)
-//	STREAMING_EVENT_TOGGLES              | csv      | ""              | "resource.event=bool,..." per-event kill switches
+//	STREAMING_EVENT_POLICIES             | string   | ""              | "event.key.enabled=true,event.key.outbox=always,..." policy overrides
 //
 // # Error classes and sentinels
 //
@@ -84,7 +89,9 @@
 //     ErrMissingResourceType, ErrMissingEventType,
 //     ErrInvalid{TenantID,ResourceType,EventType,Source,Subject,EventID,
 //     SchemaVersion,DataContentType,DataSchema}, ErrPayloadTooLarge,
-//     ErrNotJSON, ErrEventDisabled.
+//     ErrNotJSON, ErrEventDisabled, ErrInvalidEventDefinition,
+//     ErrDuplicateEventDefinition, ErrUnknownEventDefinition,
+//     ErrInvalidDeliveryPolicy.
 //   - Config validation (LoadConfig): ErrMissingBrokers, ErrMissingSource,
 //     ErrInvalidCompression, ErrInvalidAcks.
 //   - Lifecycle / wiring (NOT caller errors — IsCallerError returns false):
@@ -130,6 +137,22 @@
 // After Close, subsequent Emit calls return ErrEmitterClosed synchronously
 // before any I/O.
 //
+// # Event catalog model
+//
+// New code should define an immutable Catalog of EventDefinition values and
+// treat it as the source of truth for emit-time resolution, manifest export,
+// and runtime introspection. Each EventDefinition owns the static contract for
+// one supported event, including resource type, event type, schema metadata,
+// system-event status, and its default DeliveryPolicy. Delivery policy
+// overrides are resolved deterministically in this order: definition default,
+// runtime/config override, then per-call override.
+//
+// BuildManifest renders the catalog plus app-owned PublisherDescriptor into a
+// pure DTO. NewStreamingHandler returns an optional net/http handler that
+// serves the same document, but the consuming app remains responsible for
+// mounting the route, enforcing auth, starting the server, and publishing any
+// manifest artifact in CI/S3/GitHub.
+//
 // # Consumer responsibilities
 //
 // Topics are SHARED across tenants. The topic name derives from
@@ -155,24 +178,21 @@
 //
 // # Outbox fallback
 //
-// When the circuit breaker is OPEN and WithOutboxRepository has been
-// wired, Emit writes the serialized event to the outbox and returns nil.
-// The outbox Dispatcher drains rows back through the handler registered
-// via (*Producer).RegisterOutboxHandler — which calls publishDirect, not
-// Emit, so replays bypass the breaker and cannot re-enqueue themselves on
-// a sustained outage.
+// When the resolved delivery policy selects outbox and WithOutboxRepository
+// or WithOutboxWriter has been wired, Emit writes a versioned envelope to the
+// outbox and returns nil. The outbox Dispatcher drains rows back through the
+// handler registered via (*Producer).RegisterOutboxRelay — which calls
+// publishDirect, not Emit, so replays bypass the breaker and cannot re-enqueue
+// themselves on a sustained outage.
 //
 // Without an outbox wired, circuit-open Emits return ErrCircuitOpen.
 //
 // # Outbox wire format
 //
-// The outbox row Payload is a JSON-marshaled streaming.Event using Go's
-// default field capitalization (PascalCase: TenantID, ResourceType, ...),
-// NOT the snake_case shape referenced in TRD §6.2. The round-trip is
-// self-consistent — publishToOutbox and handleOutboxRow both use the same
-// json package — but any external consumer (reconciliation tooling, audit
-// readers) must be written to the PascalCase shape documented here, not
-// to the TRD §6.2 snake_case draft.
+// Outbox rows use EventType "lerian.streaming.publish". The row Payload is a
+// versioned OutboxEnvelope containing the target Kafka topic, the resolved
+// streaming.Event, and a snapshot of the delivery policy used when the row was
+// written.
 //
 // # Minimum broker version
 //

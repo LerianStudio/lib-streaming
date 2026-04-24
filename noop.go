@@ -18,7 +18,7 @@ func NewNoopEmitter() Emitter {
 }
 
 // Emit is a no-op; always returns nil.
-func (n *NoopEmitter) Emit(_ context.Context, _ Event) error {
+func (n *NoopEmitter) Emit(_ context.Context, _ EmitRequest) error {
 	return nil
 }
 

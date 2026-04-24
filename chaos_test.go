@@ -410,7 +410,7 @@ func TestChaos_BrokerLatency_CircuitOpensAndOutboxCatches(t *testing.T) {
 	}
 
 	p, err := NewProducer(ctx, cfg,
-		WithLogger(log.NewNop()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
 		WithOutboxRepository(store),
 	)
 	require.NoError(t, err, "NewProducer")
@@ -431,7 +431,7 @@ func TestChaos_BrokerLatency_CircuitOpensAndOutboxCatches(t *testing.T) {
 
 	for i := 0; i < normalEmits; i++ {
 		emitCtx, emitCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		require.NoError(t, p.Emit(emitCtx, healthyEvent(i)), "NORMAL emit %d", i)
+		require.NoError(t, p.Emit(emitCtx, eventToRequest(healthyEvent(i))), "NORMAL emit %d", i)
 		emitCancel()
 		atomic.AddInt64(&emitted, 1)
 	}
@@ -459,7 +459,7 @@ func TestChaos_BrokerLatency_CircuitOpensAndOutboxCatches(t *testing.T) {
 
 	for i := 0; i < injectEmits; i++ {
 		emitCtx, emitCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		_ = p.Emit(emitCtx, healthyEvent(1000+i))
+		_ = p.Emit(emitCtx, eventToRequest(healthyEvent(1000+i)))
 		emitCancel()
 
 		// Early exit once CB flips to OPEN so we don't spend 5s×50 = 250s.
@@ -487,7 +487,7 @@ func TestChaos_BrokerLatency_CircuitOpensAndOutboxCatches(t *testing.T) {
 	// With outbox wired, a subsequent Emit succeeds (returns nil) because
 	// the outbox absorbs the hit.
 	outboxCtx, outboxCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	require.NoError(t, p.Emit(outboxCtx, healthyEvent(5000)), "Emit during CB OPEN must succeed via outbox")
+	require.NoError(t, p.Emit(outboxCtx, eventToRequest(healthyEvent(5000))), "Emit during CB OPEN must succeed via outbox")
 	outboxCancel()
 
 	require.Positive(t, store.pendingCount(), "outbox must contain at least one pending row")
@@ -498,10 +498,10 @@ func TestChaos_BrokerLatency_CircuitOpensAndOutboxCatches(t *testing.T) {
 
 	// --- Phase 5: RECOVER — drain outbox, CB recovers, zero event loss. ---
 
-	// Register the replay handler. RegisterOutboxHandler wires publishDirect
+	// Register the replay handler. RegisterOutboxRelay wires publishDirect
 	// (NOT Emit) so replays bypass the breaker and cannot re-enqueue.
 	registry := outbox.NewHandlerRegistry()
-	require.NoError(t, p.RegisterOutboxHandler(registry, chaosTopic), "RegisterOutboxHandler")
+	require.NoError(t, p.RegisterOutboxRelay(registry), "RegisterOutboxRelay")
 
 	// Drive the drain manually: snapshot pending rows, call the registered
 	// handler on each via registry.Handle, mark published. This mirrors

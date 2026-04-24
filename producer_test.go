@@ -98,6 +98,10 @@ func sampleEvent() Event {
 	}
 }
 
+func sampleRequest() EmitRequest {
+	return eventToRequest(sampleEvent())
+}
+
 // asProducer unwraps the Emitter interface into a *Producer or fails the
 // test. Used by tests that need to reach into concrete fields (closed flag,
 // etc.) after New returns the interface.
@@ -120,7 +124,7 @@ func asProducer(t *testing.T, e Emitter) *Producer {
 func TestProducer_EmitRoundTrip(t *testing.T) {
 	cfg, cluster := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -128,11 +132,12 @@ func TestProducer_EmitRoundTrip(t *testing.T) {
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	event := sampleEvent()
+	request := eventToRequest(event)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if err := emitter.Emit(ctx, event); err != nil {
+	if err := emitter.Emit(ctx, request); err != nil {
 		t.Fatalf("Emit err = %v", err)
 	}
 
@@ -186,8 +191,8 @@ func TestProducer_EmitRoundTrip(t *testing.T) {
 	if parsed.TenantID != event.TenantID {
 		t.Errorf("parsed TenantID = %q; want %q", parsed.TenantID, event.TenantID)
 	}
-	if parsed.Source != event.Source {
-		t.Errorf("parsed Source = %q; want %q", parsed.Source, event.Source)
+	if parsed.Source != cfg.CloudEventsSource {
+		t.Errorf("parsed Source = %q; want %q", parsed.Source, cfg.CloudEventsSource)
 	}
 }
 
@@ -197,20 +202,36 @@ func TestProducer_EmitRoundTrip(t *testing.T) {
 func TestProducer_EmitPreFlight_MissingTenant(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
 
 	t.Cleanup(func() { _ = emitter.Close() })
 
-	bad := sampleEvent()
+	bad := sampleRequest()
 	bad.TenantID = ""
-	bad.SystemEvent = false
 
 	err = emitter.Emit(context.Background(), bad)
 	if !errors.Is(err, ErrMissingTenantID) {
 		t.Fatalf("Emit err = %v; want ErrMissingTenantID", err)
+	}
+}
+
+func TestProducer_Emit_UnknownDefinitionKeyReturnsCallerError(t *testing.T) {
+	cfg, _ := kfakeConfig(t)
+
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	if err != nil {
+		t.Fatalf("New err = %v", err)
+	}
+	t.Cleanup(func() { _ = emitter.Close() })
+
+	request := sampleRequest()
+	request.DefinitionKey = "transaction.unknown"
+
+	if err := emitter.Emit(context.Background(), request); !errors.Is(err, ErrUnknownEventDefinition) {
+		t.Fatalf("Emit err = %v; want ErrUnknownEventDefinition", err)
 	}
 }
 
@@ -219,14 +240,14 @@ func TestProducer_EmitPreFlight_MissingTenant(t *testing.T) {
 func TestProducer_EmitPreFlight_PayloadTooLarge(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
 
 	t.Cleanup(func() { _ = emitter.Close() })
 
-	big := sampleEvent()
+	big := sampleRequest()
 	// Valid JSON of size 1 MiB + 1 byte: a JSON string with filler content.
 	// 1 MiB = 1_048_576; we construct `"<padding>"` where the padding is
 	// 1_048_575 characters — opening-quote + 1_048_575 + closing-quote
@@ -249,14 +270,14 @@ func TestProducer_EmitPreFlight_PayloadTooLarge(t *testing.T) {
 func TestProducer_EmitPreFlight_InvalidJSON(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
 
 	t.Cleanup(func() { _ = emitter.Close() })
 
-	bad := sampleEvent()
+	bad := sampleRequest()
 	bad.Payload = []byte("not-json-{")
 
 	err = emitter.Emit(context.Background(), bad)
@@ -271,21 +292,12 @@ func TestProducer_EmitPreFlight_InvalidJSON(t *testing.T) {
 // that a caller-blank ResourceType would produce — no consumer routes those,
 // so the emit would silently vanish at the worst possible layer.
 func TestProducer_EmitPreFlight_MissingResourceType(t *testing.T) {
-	cfg, _ := kfakeConfig(t)
-
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()))
-	if err != nil {
-		t.Fatalf("New err = %v", err)
-	}
-
-	t.Cleanup(func() { _ = emitter.Close() })
-
-	bad := sampleEvent()
-	bad.ResourceType = ""
-
-	err = emitter.Emit(context.Background(), bad)
+	_, err := NewCatalog(EventDefinition{
+		Key:       "transaction.created",
+		EventType: "created",
+	})
 	if !errors.Is(err, ErrMissingResourceType) {
-		t.Fatalf("Emit err = %v; want ErrMissingResourceType", err)
+		t.Fatalf("NewCatalog err = %v; want ErrMissingResourceType", err)
 	}
 }
 
@@ -293,21 +305,12 @@ func TestProducer_EmitPreFlight_MissingResourceType(t *testing.T) {
 // ErrMissingEventType synchronously. Same rationale as MissingResourceType:
 // empty EventType produces a degenerate topic and malformed ce-type header.
 func TestProducer_EmitPreFlight_MissingEventType(t *testing.T) {
-	cfg, _ := kfakeConfig(t)
-
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()))
-	if err != nil {
-		t.Fatalf("New err = %v", err)
-	}
-
-	t.Cleanup(func() { _ = emitter.Close() })
-
-	bad := sampleEvent()
-	bad.EventType = ""
-
-	err = emitter.Emit(context.Background(), bad)
+	_, err := NewCatalog(EventDefinition{
+		Key:          "transaction.created",
+		ResourceType: "transaction",
+	})
 	if !errors.Is(err, ErrMissingEventType) {
-		t.Fatalf("Emit err = %v; want ErrMissingEventType", err)
+		t.Fatalf("NewCatalog err = %v; want ErrMissingEventType", err)
 	}
 }
 
@@ -318,7 +321,7 @@ func TestProducer_EmitPreFlight_MissingEventType(t *testing.T) {
 func TestProducer_Emit_NilCtx_DoesNotPanic(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -331,7 +334,7 @@ func TestProducer_Emit_NilCtx_DoesNotPanic(t *testing.T) {
 		}
 	}()
 
-	event := sampleEvent()
+	event := sampleRequest()
 
 	//nolint:staticcheck // SA1012: intentional nil ctx to validate substitution
 	if err := emitter.Emit(nil, event); err != nil {
@@ -343,39 +346,31 @@ func TestProducer_Emit_NilCtx_DoesNotPanic(t *testing.T) {
 // ErrMissingSource synchronously.
 func TestProducer_EmitPreFlight_MissingSource(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
+	cfg.CloudEventsSource = ""
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()))
-	if err != nil {
-		t.Fatalf("New err = %v", err)
-	}
-
-	t.Cleanup(func() { _ = emitter.Close() })
-
-	bad := sampleEvent()
-	bad.Source = ""
-
-	err = emitter.Emit(context.Background(), bad)
+	_, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
 	if !errors.Is(err, ErrMissingSource) {
-		t.Fatalf("Emit err = %v; want ErrMissingSource", err)
+		t.Fatalf("New err = %v; want ErrMissingSource", err)
 	}
 }
 
-// TestProducer_EmitPreFlight_EventDisabled: toggled-off event returns
+// TestProducer_EmitPreFlight_EventDisabled: policy-disabled event returns
 // ErrEventDisabled without broker I/O.
 func TestProducer_EmitPreFlight_EventDisabled(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
-	cfg.EventToggles = map[string]bool{
-		"transaction.created": false,
+	enabled := false
+	cfg.PolicyOverrides = map[string]DeliveryPolicyOverride{
+		"transaction.created": {Enabled: &enabled},
 	}
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
 
 	t.Cleanup(func() { _ = emitter.Close() })
 
-	err = emitter.Emit(context.Background(), sampleEvent())
+	err = emitter.Emit(context.Background(), sampleRequest())
 	if !errors.Is(err, ErrEventDisabled) {
 		t.Fatalf("Emit err = %v; want ErrEventDisabled", err)
 	}
@@ -390,7 +385,7 @@ func TestProducer_ConcurrentEmit(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 	cfg.MaxBufferedRecords = 10_000
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -419,7 +414,7 @@ func TestProducer_ConcurrentEmit(t *testing.T) {
 			defer wg.Done()
 
 			for j := 0; j < emitsPerGoroutine; j++ {
-				if err := emitter.Emit(ctx, sampleEvent()); err == nil {
+				if err := emitter.Emit(ctx, sampleRequest()); err == nil {
 					successes.Add(1)
 				} else {
 					failures.Add(1)

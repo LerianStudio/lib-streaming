@@ -118,9 +118,9 @@ func (p *Producer) signalStop() {
 //
 // State semantics:
 //   - Healthy: broker ping succeeds.
-//   - Degraded: broker unreachable BUT an outbox is wired (via
-//     WithOutboxRepository). Emits still succeed (routed to outbox on CB
-//     open) so readiness consumers can keep serving traffic.
+//   - Degraded: broker unreachable BUT an outbox writer is wired. Events whose
+//     policy permits outbox fallback can still be captured durably, so
+//     readiness consumers can keep serving traffic.
 //   - Down: broker unreachable AND no outbox wired. Emits will return
 //     ErrCircuitOpen once the breaker trips. Readiness consumers should
 //     route away.
@@ -160,7 +160,7 @@ func (p *Producer) Healthy(ctx context.Context) error {
 		// an interface change outside this package's scope. Non-nil check
 		// is sufficient: OutboxRepository is wired at construction and
 		// cannot become nil afterward.
-		if p.outbox == nil {
+		if p.outboxWriter == nil {
 			return NewHealthError(Down, err)
 		}
 

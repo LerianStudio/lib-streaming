@@ -16,7 +16,7 @@ import (
 func TestProducer_EmitClosed(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -25,7 +25,7 @@ func TestProducer_EmitClosed(t *testing.T) {
 		t.Fatalf("Close err = %v", err)
 	}
 
-	err = emitter.Emit(context.Background(), sampleEvent())
+	err = emitter.Emit(context.Background(), sampleRequest())
 	if !errors.Is(err, ErrEmitterClosed) {
 		t.Fatalf("Emit err = %v; want ErrEmitterClosed", err)
 	}
@@ -35,7 +35,7 @@ func TestProducer_EmitClosed(t *testing.T) {
 func TestProducer_Close_Idempotent(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -51,7 +51,7 @@ func TestProducer_Close_Idempotent(t *testing.T) {
 func TestProducer_Healthy_OK(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -74,7 +74,7 @@ func TestProducer_Healthy_OK(t *testing.T) {
 func TestProducer_Healthy_Down_BrokerDown_NoOutbox(t *testing.T) {
 	cfg, cluster := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -110,7 +110,7 @@ func TestProducer_Healthy_Degraded_BrokerDown_WithOutbox(t *testing.T) {
 	cfg, cluster := kfakeConfig(t)
 
 	emitter, err := New(context.Background(), cfg,
-		WithLogger(log.NewNop()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
 		WithOutboxRepository(&fakeOutboxRepo{}),
 	)
 	if err != nil {
@@ -145,7 +145,7 @@ func TestProducer_Healthy_Degraded_BrokerDown_WithOutbox(t *testing.T) {
 func TestProducer_Healthy_Down_AfterClose(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -174,7 +174,7 @@ func TestProducer_Healthy_Down_AfterClose(t *testing.T) {
 func TestProducer_CloseContext_RespectsDeadline(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}

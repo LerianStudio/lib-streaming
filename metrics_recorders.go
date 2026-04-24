@@ -34,9 +34,10 @@ type labelSetCache struct {
 }
 
 // recordEmitted increments streaming_emitted_total by 1 with the given
-// topic/operation/outcome label set. No-op when m is nil or factory is nil
+// topic/outcome label set. The operation label is always "send". No-op when m
+// is nil or factory is nil
 // (latter also emits a WARN once).
-func (m *streamingMetrics) recordEmitted(ctx context.Context, topic, operation, outcome string) {
+func (m *streamingMetrics) recordEmitted(ctx context.Context, topic, outcome string) {
 	if m == nil {
 		return
 	}
@@ -66,6 +67,8 @@ func (m *streamingMetrics) recordEmitted(ctx context.Context, topic, operation, 
 	if m.emittedCounter == nil {
 		return
 	}
+
+	const operation = "send"
 
 	// Cache the labeled builder keyed by (topic, operation, outcome). The
 	// hot path re-uses a single *CounterBuilder per tuple instead of

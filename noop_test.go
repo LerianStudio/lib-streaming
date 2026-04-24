@@ -19,7 +19,7 @@ func TestNoopEmitter_AllNil(t *testing.T) {
 
 	ctx := context.Background()
 
-	if err := e.Emit(ctx, Event{ResourceType: "transaction", EventType: "created", TenantID: "t-1"}); err != nil {
+	if err := e.Emit(ctx, EmitRequest{DefinitionKey: "transaction.created", TenantID: "t-1", Payload: []byte(`{}`)}); err != nil {
 		t.Errorf("Emit() = %v; want nil", err)
 	}
 

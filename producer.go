@@ -3,7 +3,6 @@ package streaming
 import (
 	"context"
 	"fmt"
-	"maps"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -15,7 +14,6 @@ import (
 
 	"github.com/LerianStudio/lib-commons/v5/commons/circuitbreaker"
 	"github.com/LerianStudio/lib-commons/v5/commons/log"
-	"github.com/LerianStudio/lib-commons/v5/commons/outbox"
 )
 
 // tracerName + emitSpanName live in emit_span.go (colocated with the
@@ -111,31 +109,26 @@ type Producer struct {
 	// Default (nil) means struct-level PartitionKey().
 	partFn func(Event) string
 
-	// toggles is a point-in-time COPY of Config.EventToggles taken at
-	// construction (via maps.Clone in NewProducer). The copy protects the
-	// Producer from caller-side mutation of the source map after
-	// construction; under -race a shared reference would surface as a data
-	// race between the caller goroutine and the publishDirect read. Reads
-	// in publishDirect otherwise remain unsynchronized by design — operators
-	// are expected to redeploy to flip an event toggle, not hot-reload.
-	toggles map[string]bool
-
 	// closeTimeout caps Close's Flush deadline. Resolved in New from the
 	// option override or Config.CloseTimeout.
 	closeTimeout time.Duration
 
-	// outbox, when non-nil, enables the circuit-open fallback: Emit writes
-	// a serialized event to the OutboxRepository and returns nil instead
-	// of ErrCircuitOpen while the breaker is open. The corresponding relay
-	// is registered via RegisterOutboxHandler on the outbox Dispatcher's
-	// HandlerRegistry. Nil means fallback is disabled (T3 behavior).
-	outbox outbox.OutboxRepository
+	// outboxWriter, when non-nil, enables deferred durable delivery. Emit writes
+	// a versioned OutboxEnvelope and returns nil on policy-selected outbox
+	// paths. Nil means fallback is disabled.
+	outboxWriter OutboxWriter
 
 	// allowSystemEvents, when true, permits Event.SystemEvent=true through
 	// preflight. When false (the default), any SystemEvent emission is
 	// rejected synchronously with ErrSystemEventsNotAllowed. See
 	// WithAllowSystemEvents.
 	allowSystemEvents bool
+
+	// catalog is the immutable source of truth for the catalog-backed API.
+	catalog Catalog
+
+	// policyOverrides is a point-in-time copy of Config.PolicyOverrides.
+	policyOverrides map[string]DeliveryPolicyOverride
 }
 
 // Compile-time assertion: *Producer must satisfy Emitter. A missing method
@@ -205,6 +198,16 @@ func NewProducer(ctx context.Context, cfg Config, opts ...EmitterOption) (*Produ
 		closeTimeout = 30 * time.Second
 	}
 
+	if resolvedOpts.catalog.Len() == 0 {
+		return nil, fmt.Errorf("streaming: invalid catalog: %w", ErrUnknownEventDefinition)
+	}
+
+	for key := range cfg.PolicyOverrides {
+		if _, ok := resolvedOpts.catalog.Lookup(key); !ok {
+			return nil, fmt.Errorf("streaming: invalid policy override: %w: %q", ErrUnknownEventDefinition, key)
+		}
+	}
+
 	// Build the franz-go options slice. Every knob is pinned explicitly per
 	// TRD risk R1 — franz-go's defaults have flipped between versions in
 	// the past, and a silent latency change would be operationally
@@ -243,11 +246,12 @@ func NewProducer(ctx context.Context, cfg Config, opts ...EmitterOption) (*Produ
 		metrics:           newStreamingMetrics(resolvedOpts.metricsFactory, logger),
 		producerID:        uuid.NewString(),
 		partFn:            resolvedOpts.partitionKeyFn,
-		toggles:           maps.Clone(cfg.EventToggles),
 		closeTimeout:      closeTimeout,
-		outbox:            resolvedOpts.outbox,
+		outboxWriter:      resolvedOpts.outboxWriter,
 		stop:              make(chan struct{}),
 		allowSystemEvents: resolvedOpts.allowSystemEvents,
+		catalog:           resolvedOpts.catalog,
+		policyOverrides:   cloneDeliveryPolicyOverrides(cfg.PolicyOverrides),
 	}
 
 	// Wire the circuit breaker: resolve manager, register service-named

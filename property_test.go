@@ -108,7 +108,7 @@ func TestProperty_CloudEvents_BuildParse_Roundtrip(t *testing.T) {
 		// validation table. allowSystemEvents=false is fine because our
 		// generator never sets SystemEvent=true.
 		p := &Producer{}
-		if err := p.preFlight(event); err != nil {
+		if err := p.preFlightWithPayload(event, true); err != nil {
 			return true // filtered; property doesn't apply
 		}
 

@@ -8,32 +8,32 @@ import (
 )
 
 // MockEmitter is a concurrency-safe, zero-dependency test double for Emitter.
-// It captures every emitted Event (deep-copied) and lets tests inspect, count,
-// or wait on them via the Assert* helpers and WaitForEvent.
+// It captures every emitted EmitRequest (deep-copied) and lets tests inspect,
+// count, or wait on them via the Assert* helpers and WaitForEvent.
 //
 // Safe for concurrent use from any number of goroutines (DX-A03). All
 // internal state is guarded by an unexported mutex; captured events are
 // deep-copied on Emit so post-hoc caller mutation does not change the
 // captured slice.
 type MockEmitter struct {
-	mu     sync.Mutex
-	events []Event
-	err    error
-	closed bool
+	mu       sync.Mutex
+	requests []EmitRequest
+	err      error
+	closed   bool
 }
 
 // NewMockEmitter returns a fresh MockEmitter with an empty event buffer and
 // no injected error.
 func NewMockEmitter() *MockEmitter {
 	return &MockEmitter{
-		events: make([]Event, 0),
+		requests: make([]EmitRequest, 0),
 	}
 }
 
-// Emit captures a deep copy of the event. When SetError has set an error,
+// Emit captures a deep copy of the request. When SetError has set an error,
 // that error is returned and the event is NOT captured — simulating a
 // publish failure in the caller's code path.
-func (m *MockEmitter) Emit(_ context.Context, event Event) error {
+func (m *MockEmitter) Emit(_ context.Context, request EmitRequest) error {
 	if m == nil {
 		return nil
 	}
@@ -45,15 +45,15 @@ func (m *MockEmitter) Emit(_ context.Context, event Event) error {
 		return m.err
 	}
 
-	m.events = append(m.events, deepCopyEvent(event))
+	m.requests = append(m.requests, deepCopyEmitRequest(request))
 
 	return nil
 }
 
-// Events returns a snapshot of captured events in emission order. The
+// Requests returns a snapshot of captured requests in emission order. The
 // returned slice is a deep copy — callers may mutate it without affecting
 // the mock's internal state.
-func (m *MockEmitter) Events() []Event {
+func (m *MockEmitter) Requests() []EmitRequest {
 	if m == nil {
 		return nil
 	}
@@ -61,12 +61,18 @@ func (m *MockEmitter) Events() []Event {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	out := make([]Event, len(m.events))
-	for i, e := range m.events {
-		out[i] = deepCopyEvent(e)
+	out := make([]EmitRequest, len(m.requests))
+	for i, request := range m.requests {
+		out[i] = deepCopyEmitRequest(request)
 	}
 
 	return out
+}
+
+// Events returns request snapshots for legacy test helper naming. New code
+// should prefer Requests.
+func (m *MockEmitter) Events() []EmitRequest {
+	return m.Requests()
 }
 
 // SetError makes subsequent Emit calls return err without capturing the
@@ -92,7 +98,7 @@ func (m *MockEmitter) Reset() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.events = m.events[:0]
+	m.requests = m.requests[:0]
 	m.err = nil
 }
 
@@ -118,62 +124,57 @@ func (m *MockEmitter) Healthy(_ context.Context) error {
 	return nil
 }
 
-// deepCopyEvent returns a fully independent copy of the Event. The Payload
+// deepCopyEmitRequest returns a fully independent copy of the EmitRequest. The Payload
 // slice is copied so caller-side mutation after Emit does not change the
 // captured bytes.
-func deepCopyEvent(e Event) Event {
+func deepCopyEmitRequest(request EmitRequest) EmitRequest {
 	var payload []byte
-	if len(e.Payload) > 0 {
-		payload = make([]byte, len(e.Payload))
-		copy(payload, e.Payload)
+	if len(request.Payload) > 0 {
+		payload = make([]byte, len(request.Payload))
+		copy(payload, request.Payload)
 	}
 
-	return Event{
-		TenantID:        e.TenantID,
-		ResourceType:    e.ResourceType,
-		EventType:       e.EventType,
-		EventID:         e.EventID,
-		SchemaVersion:   e.SchemaVersion,
-		Timestamp:       e.Timestamp,
-		Source:          e.Source,
-		Subject:         e.Subject,
-		DataContentType: e.DataContentType,
-		DataSchema:      e.DataSchema,
-		SystemEvent:     e.SystemEvent,
-		Payload:         payload,
+	out := request
+	out.Payload = payload
+
+	if request.PolicyOverride.Enabled != nil {
+		enabled := *request.PolicyOverride.Enabled
+		out.PolicyOverride.Enabled = &enabled
 	}
+
+	return out
 }
 
-// AssertEventEmitted fails t when no captured event has the given resource
-// and event type pair. Uses testing.TB so helpers work in benchmarks and
+// AssertEventEmitted fails t when no captured request has the given definition
+// key. Uses testing.TB so helpers work in benchmarks and
 // fuzz tests. Calls t.Helper() for clean stack traces.
-func AssertEventEmitted(t testing.TB, m *MockEmitter, resourceType, eventType string) {
+func AssertEventEmitted(t testing.TB, m *MockEmitter, definitionKey string) {
 	t.Helper()
 
-	for _, e := range m.Events() {
-		if e.ResourceType == resourceType && e.EventType == eventType {
+	for _, request := range m.Requests() {
+		if request.DefinitionKey == definitionKey {
 			return
 		}
 	}
 
-	t.Errorf("expected event %s.%s to be emitted; none found in %d captured events", resourceType, eventType, len(m.Events()))
+	t.Errorf("expected event %s to be emitted; none found in %d captured requests", definitionKey, len(m.Requests()))
 }
 
 // AssertEventCount fails t when the count of captured events matching the
-// resource + event type pair does not equal n.
-func AssertEventCount(t testing.TB, m *MockEmitter, resourceType, eventType string, n int) {
+// definition key does not equal n.
+func AssertEventCount(t testing.TB, m *MockEmitter, definitionKey string, n int) {
 	t.Helper()
 
 	count := 0
 
-	for _, e := range m.Events() {
-		if e.ResourceType == resourceType && e.EventType == eventType {
+	for _, request := range m.Requests() {
+		if request.DefinitionKey == definitionKey {
 			count++
 		}
 	}
 
 	if count != n {
-		t.Errorf("expected %d events of %s.%s; got %d", n, resourceType, eventType, count)
+		t.Errorf("expected %d events of %s; got %d", n, definitionKey, count)
 	}
 }
 
@@ -181,27 +182,27 @@ func AssertEventCount(t testing.TB, m *MockEmitter, resourceType, eventType stri
 func AssertTenantID(t testing.TB, m *MockEmitter, tenantID string) {
 	t.Helper()
 
-	for _, e := range m.Events() {
-		if e.TenantID == tenantID {
+	for _, request := range m.Requests() {
+		if request.TenantID == tenantID {
 			return
 		}
 	}
 
-	t.Errorf("expected at least one event with TenantID=%q; none found in %d captured events", tenantID, len(m.Events()))
+	t.Errorf("expected at least one event with TenantID=%q; none found in %d captured requests", tenantID, len(m.Requests()))
 }
 
 // AssertNoEvents fails t when any event was captured.
 func AssertNoEvents(t testing.TB, m *MockEmitter) {
 	t.Helper()
 
-	if got := len(m.Events()); got != 0 {
+	if got := len(m.Requests()); got != 0 {
 		t.Errorf("expected no events to be emitted; got %d", got)
 	}
 }
 
 // WaitForEvent blocks until the matcher returns true on a newly-observed
-// event, or timeout elapses. Calls t.Fatalf on timeout. Returns the matching
-// event on success.
+// request, or timeout elapses. Calls t.Fatalf on timeout. Returns the matching
+// request on success.
 //
 // The poll interval is fixed at 1ms — intentionally small so wall-clock
 // tests see fast convergence. Under testing/synctest the polling loop is
@@ -211,12 +212,12 @@ func AssertNoEvents(t testing.TB, m *MockEmitter) {
 // Nil-ctx safe: passing a nil ctx falls back to context.Background.
 // Nil-matcher is a test programming bug — calls t.Fatalf instead of panicking
 // mid-loop with a nil-deref.
-func WaitForEvent(t testing.TB, ctx context.Context, m *MockEmitter, matcher func(Event) bool, timeout time.Duration) Event {
+func WaitForEvent(t testing.TB, ctx context.Context, m *MockEmitter, matcher func(EmitRequest) bool, timeout time.Duration) EmitRequest {
 	t.Helper()
 
 	if matcher == nil {
 		t.Fatalf("WaitForEvent: matcher must not be nil")
-		return Event{}
+		return EmitRequest{}
 	}
 
 	if ctx == nil {
@@ -228,15 +229,15 @@ func WaitForEvent(t testing.TB, ctx context.Context, m *MockEmitter, matcher fun
 	deadline := time.Now().Add(timeout)
 
 	for {
-		for _, e := range m.Events() {
-			if matcher(e) {
-				return e
+		for _, request := range m.Requests() {
+			if matcher(request) {
+				return request
 			}
 		}
 
 		if time.Now().After(deadline) {
 			t.Fatalf("WaitForEvent timed out after %v", timeout)
-			return Event{}
+			return EmitRequest{}
 		}
 
 		// Respect context cancellation; unusual in unit tests but prevents
@@ -244,7 +245,7 @@ func WaitForEvent(t testing.TB, ctx context.Context, m *MockEmitter, matcher fun
 		select {
 		case <-ctx.Done():
 			t.Fatalf("WaitForEvent canceled: %v", ctx.Err())
-			return Event{}
+			return EmitRequest{}
 		case <-time.After(pollInterval):
 		}
 	}

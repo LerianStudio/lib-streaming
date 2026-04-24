@@ -3,12 +3,9 @@ package streaming
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 
 	"github.com/google/uuid"
-
-	"github.com/LerianStudio/lib-commons/v5/commons/outbox"
 )
 
 // txContextKey is the context key that holds an ambient *sql.Tx for the
@@ -18,8 +15,18 @@ import (
 // package's context values (the standard idiom for context keys).
 type txContextKey struct{}
 
-// publishToOutbox serializes an already-pre-flighted Event to an
-// outbox.OutboxEvent and writes it via the configured OutboxRepository.
+// WithOutboxTx returns a child context that asks publishToOutbox to join tx
+// when the configured writer supports TransactionalOutboxWriter.
+func WithOutboxTx(ctx context.Context, tx *sql.Tx) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	return context.WithValue(ctx, txContextKey{}, tx)
+}
+
+// publishToOutbox serializes an already-pre-flighted Event to a versioned
+// OutboxEnvelope and writes it via the configured OutboxWriter.
 //
 // When an ambient *sql.Tx is present on ctx under txContextKey, CreateWithTx
 // is used so the write joins the caller's unit of work. Otherwise Create is
@@ -44,53 +51,39 @@ type txContextKey struct{}
 // topic is passed through from Emit so this function does not recompute
 // event.Topic() — matches the threading that publishDirect and
 // setEmitSpanAttributes already use.
-func (p *Producer) publishToOutbox(ctx context.Context, event Event, topic string) error {
+func (p *Producer) publishToOutbox(ctx context.Context, event Event, topic string, policy DeliveryPolicy, definitionKey string) error {
 	if p == nil {
 		return ErrNilProducer
 	}
 
-	if p.outbox == nil {
+	if p.outboxWriter == nil {
 		return ErrOutboxNotConfigured
 	}
 
-	// JSON-marshal the full Event including CloudEvents context attributes
-	// and the raw Payload. The handler on the read side (handleOutboxRow)
-	// unmarshals back into an Event struct and hands it to publishDirect,
-	// so round-trip fidelity matters — anything set by ApplyDefaults is
-	// preserved here so replays produce identical wire-format messages.
-	//
-	// musttag nolint: Event ships in T1 without explicit `json:` tags; the
-	// default Go-capitalized field names are what outbox consumers (same
-	// package's handleOutboxRow) unmarshal against. Adding tags would be
-	// a T1 scope change; the round-trip is exercised in tests.
-	payload, err := json.Marshal(event) //nolint:musttag // see above; T1 scope
-	if err != nil {
-		return fmt.Errorf("streaming: marshal event for outbox: %w", err)
-	}
-
-	row := &outbox.OutboxEvent{
-		ID:          uuid.New(),
-		EventType:   topic,
-		AggregateID: p.deriveOutboxAggregateID(event),
-		Payload:     payload,
-		// Status / Attempts deliberately left zero-value — the outbox
-		// repository overwrites them to PENDING/0 in normalizedCreateValues.
+	envelope := OutboxEnvelope{
+		Version:       outboxEnvelopeVersion,
+		Topic:         topic,
+		DefinitionKey: definitionKey,
+		AggregateID:   p.deriveOutboxAggregateID(event),
+		Policy:        policy.Normalize(),
+		Event:         event,
 	}
 
 	// Ambient transaction path: CreateWithTx when the caller installed a
 	// *sql.Tx on the package-local context key; otherwise fall through to Create.
 	if ctx != nil {
 		if tx, ok := ctx.Value(txContextKey{}).(*sql.Tx); ok && tx != nil {
-			if _, err := p.outbox.CreateWithTx(ctx, tx, row); err != nil {
-				return fmt.Errorf("streaming: outbox create (tx): %w", err)
+			writer, ok := p.outboxWriter.(TransactionalOutboxWriter)
+			if !ok {
+				return ErrOutboxTxUnsupported
 			}
 
-			return nil
+			return writer.WriteWithTx(ctx, tx, envelope)
 		}
 	}
 
-	if _, err := p.outbox.Create(ctx, row); err != nil {
-		return fmt.Errorf("streaming: outbox create: %w", err)
+	if err := p.outboxWriter.Write(ctx, envelope); err != nil {
+		return fmt.Errorf("streaming: outbox write: %w", err)
 	}
 
 	return nil

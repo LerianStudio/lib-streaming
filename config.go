@@ -50,9 +50,9 @@ type Config struct {
 	CloseTimeout time.Duration
 	// CloudEventsSource is the ce-source default (required when Enabled=true).
 	CloudEventsSource string
-	// EventToggles is a map of "resource.event" -> bool kill switches.
-	// Parsed from STREAMING_EVENT_TOGGLES.
-	EventToggles map[string]bool
+	// PolicyOverrides is a map of event definition key -> delivery policy
+	// override. Parsed from STREAMING_EVENT_POLICIES.
+	PolicyOverrides map[string]DeliveryPolicyOverride
 }
 
 // Default values used by LoadConfig when an environment variable is unset.
@@ -98,9 +98,19 @@ var validAcks = map[string]struct{}{
 // ErrInvalidAcks. Each wraps with fmt.Errorf so callers can errors.Is.
 func LoadConfig() (Config, error) {
 	brokers := splitCSV(commons.GetenvOrDefault("STREAMING_BROKERS", defaultBroker))
+	enabled := commons.GetenvBoolOrDefault("STREAMING_ENABLED", false)
+
+	policyOverrides, err := parseEventPolicies(commons.GetenvOrDefault("STREAMING_EVENT_POLICIES", ""))
+	if err != nil {
+		if enabled {
+			return Config{}, err
+		}
+
+		policyOverrides = map[string]DeliveryPolicyOverride{}
+	}
 
 	cfg := Config{
-		Enabled:               commons.GetenvBoolOrDefault("STREAMING_ENABLED", false),
+		Enabled:               enabled,
 		Brokers:               brokers,
 		ClientID:              commons.GetenvOrDefault("STREAMING_CLIENT_ID", ""),
 		BatchLingerMs:         int(commons.GetenvIntOrDefault("STREAMING_BATCH_LINGER_MS", int64(defaultBatchLingerMs))),
@@ -115,7 +125,7 @@ func LoadConfig() (Config, error) {
 		CBTimeout:             time.Duration(commons.GetenvIntOrDefault("STREAMING_CB_TIMEOUT_S", int64(defaultCBTimeout.Seconds()))) * time.Second,
 		CloseTimeout:          time.Duration(commons.GetenvIntOrDefault("STREAMING_CLOSE_TIMEOUT_S", int64(defaultCloseTimeout.Seconds()))) * time.Second,
 		CloudEventsSource:     commons.GetenvOrDefault("STREAMING_CLOUDEVENTS_SOURCE", ""),
-		EventToggles:          parseEventToggles(commons.GetenvOrDefault("STREAMING_EVENT_TOGGLES", "")),
+		PolicyOverrides:       policyOverrides,
 	}
 
 	if !cfg.Enabled {
@@ -171,37 +181,93 @@ func splitCSV(s string) []string {
 	return result
 }
 
-// parseEventToggles parses the CSV format "resource.event=bool,other=bool"
-// into a map. Unparseable entries are skipped silently — an operator typo
-// should not prevent the whole Producer from starting.
-func parseEventToggles(s string) map[string]bool {
-	result := map[string]bool{}
+// parseEventPolicies parses STREAMING_EVENT_POLICIES entries in the form:
+//
+//	transaction.created.enabled=true,transaction.created.outbox=always
+//
+// Entries may be separated by commas, semicolons, or newlines. Unknown
+// attributes and unsupported values return ErrInvalidDeliveryPolicy so policy
+// typos do not silently change runtime behavior.
+func parseEventPolicies(s string) (map[string]DeliveryPolicyOverride, error) {
+	result := map[string]DeliveryPolicyOverride{}
 	if strings.TrimSpace(s) == "" {
-		return result
+		return result, nil
 	}
 
-	for entry := range strings.SplitSeq(s, ",") {
-		entry = strings.TrimSpace(entry)
-
-		key, value, ok := strings.Cut(entry, "=")
+	for _, entry := range splitPolicyEntries(s) {
+		keyAttr, value, ok := strings.Cut(entry, "=")
 		if !ok {
-			continue
+			return nil, fmt.Errorf("%w: malformed policy entry %q", ErrInvalidDeliveryPolicy, entry)
 		}
 
-		key = strings.TrimSpace(key)
+		key, attr, ok := cutLastDot(strings.TrimSpace(keyAttr))
+		if !ok || key == "" || attr == "" {
+			return nil, fmt.Errorf("%w: malformed policy key %q", ErrInvalidDeliveryPolicy, keyAttr)
+		}
+
+		override := result[key]
 		value = strings.TrimSpace(value)
 
-		if key == "" {
-			continue
+		switch strings.ToLower(strings.TrimSpace(attr)) {
+		case "enabled":
+			enabled, ok := parsePolicyBool(value)
+			if !ok {
+				return nil, fmt.Errorf("%w: %s.%s=%q", ErrInvalidDeliveryPolicy, key, attr, value)
+			}
+
+			override.Enabled = &enabled
+		case "direct":
+			override.Direct = DirectMode(value)
+		case "outbox":
+			override.Outbox = OutboxMode(value)
+		case "dlq":
+			override.DLQ = DLQMode(value)
+		default:
+			return nil, fmt.Errorf("%w: unknown policy attribute %q", ErrInvalidDeliveryPolicy, attr)
 		}
 
-		switch strings.ToLower(value) {
-		case "true", "1", "yes":
-			result[key] = true
-		case "false", "0", "no":
-			result[key] = false
+		if err := override.Validate(); err != nil {
+			return nil, err
+		}
+
+		result[key] = override
+	}
+
+	return result, nil
+}
+
+func splitPolicyEntries(s string) []string {
+	s = strings.NewReplacer(";", ",", "\n", ",").Replace(s)
+
+	entries := strings.Split(s, ",")
+
+	result := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		entry = strings.TrimSpace(entry)
+		if entry != "" {
+			result = append(result, entry)
 		}
 	}
 
 	return result
+}
+
+func parsePolicyBool(value string) (bool, bool) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "true", "1", "yes":
+		return true, true
+	case "false", "0", "no":
+		return false, true
+	default:
+		return false, false
+	}
+}
+
+func cutLastDot(s string) (string, string, bool) {
+	i := strings.LastIndex(s, ".")
+	if i < 0 {
+		return "", "", false
+	}
+
+	return s[:i], s[i+1:], true
 }
