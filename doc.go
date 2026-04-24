@@ -18,8 +18,9 @@
 //
 // Bootstrap in main.go:
 //
-//	cfg, err := streaming.LoadConfig()
+//	cfg, warnings, err := streaming.LoadConfig()
 //	if err != nil { return err }
+//	for _, w := range warnings { logger.Warnf(ctx, "%s", w) }
 //	catalog, err := streaming.NewCatalog(streaming.EventDefinition{
 //	    Key:          "transaction.created",
 //	    ResourceType: "transaction",
@@ -40,6 +41,10 @@
 //	    streaming.WithCatalog(catalog),
 //	)
 //	if err != nil { return err }
+//	// Register the outbox replay handler against the app-owned outbox
+//	// registry so persisted rows drain back through publishDirect once the
+//	// broker recovers. Omitting this call leaves outbox rows unprocessed.
+//	if err := producer.RegisterOutboxRelay(outboxRegistry); err != nil { return err }
 //	launcher.Add("streaming", producer)
 //	// Inject producer (as streaming.Emitter) into service constructors.
 //
@@ -194,10 +199,14 @@
 //
 // # Outbox wire format
 //
-// Outbox rows use EventType "lerian.streaming.publish". The row Payload is a
-// versioned OutboxEnvelope containing the target Kafka topic, the resolved
-// streaming.Event, and a snapshot of the delivery policy used when the row was
-// written.
+// Outbox rows use the stable EventType "lerian.streaming.publish"
+// (StreamingOutboxEventType). The row Payload is a JSON-marshaled
+// OutboxEnvelope whose fields — in canonical order — are Version, Topic,
+// DefinitionKey, AggregateID, Policy, Event. All six fields are part of the
+// persisted contract: DefinitionKey and AggregateID are required for replay
+// and introspection flows, not merely diagnostic metadata. Readers and
+// migration tooling should treat this shape as the authoritative wire format
+// written to the outbox table.
 //
 // # Minimum broker version
 //

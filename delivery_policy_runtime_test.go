@@ -23,7 +23,7 @@ func TestProducer_Emit_OutboxAlwaysPolicySkipsDirectPublish(t *testing.T) {
 		context.Background(),
 		cfg,
 		WithLogger(log.NewNop()),
-		WithCatalog(sampleCatalog()),
+		WithCatalog(sampleCatalog(t)),
 		WithOutboxRepository(fakeRepo),
 	)
 	if err != nil {
@@ -65,7 +65,7 @@ func TestProducer_Emit_OutboxAlwaysPolicySkipsDirectPublish(t *testing.T) {
 func TestProducer_Emit_CallPolicyCanDisableEvent(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -80,7 +80,7 @@ func TestProducer_Emit_CallPolicyCanDisableEvent(t *testing.T) {
 	}
 }
 
-func TestProducer_Emit_OutboxFallbackPolicyNeverReturnsCircuitOpen(t *testing.T) {
+func TestProducer_Emit_OutboxNeverPolicyReturnsCircuitOpenWhenBreakerOpen(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 	fakeMgr := newFakeCBManager()
 	fakeRepo := &fakeOutboxRepo{}
@@ -89,7 +89,7 @@ func TestProducer_Emit_OutboxFallbackPolicyNeverReturnsCircuitOpen(t *testing.T)
 		context.Background(),
 		cfg,
 		WithLogger(log.NewNop()),
-		WithCatalog(sampleCatalog()),
+		WithCatalog(sampleCatalog(t)),
 		WithCircuitBreakerManager(fakeMgr),
 		WithOutboxRepository(fakeRepo),
 	)
@@ -120,7 +120,7 @@ func TestProducer_Emit_DLQNeverPolicySkipsDLQRoute(t *testing.T) {
 	sourceTopic := "lerian.streaming.transaction.created"
 	injectProduceError(cluster, sourceTopic, kerr.MessageTooLarge.Code)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}

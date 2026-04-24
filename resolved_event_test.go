@@ -40,7 +40,7 @@ func TestResolveEvent_NilReceiverReturnsZero(t *testing.T) {
 func TestResolveEvent_MissingSourceReturnsErrMissingSource(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -65,7 +65,7 @@ func TestResolveEvent_MissingSourceReturnsErrMissingSource(t *testing.T) {
 func TestResolveEvent_ZeroTimestampGetsFallback(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}

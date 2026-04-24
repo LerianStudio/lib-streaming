@@ -119,7 +119,7 @@ func TestEmit_Span_SingleStreamingEmitSpan(t *testing.T) {
 	tracer, getSpans := newSpanRecorder(t)
 
 	emitter, err := New(context.Background(), cfg,
-		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithTracer(tracer),
 	)
 	if err != nil {
@@ -207,7 +207,7 @@ func TestEmit_Span_OutcomeAttributeReflectsBranch(t *testing.T) {
 		tracer, getSpans := newSpanRecorder(t)
 
 		emitter, err := New(context.Background(), cfg,
-			WithLogger(log.NewNop()), WithCatalog(sampleCatalog()), WithTracer(tracer))
+			WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)), WithTracer(tracer))
 		if err != nil {
 			t.Fatalf("New err = %v", err)
 		}
@@ -229,7 +229,7 @@ func TestEmit_Span_OutcomeAttributeReflectsBranch(t *testing.T) {
 
 		repo := &fakeOutboxRepo{}
 		emitter, err := New(context.Background(), cfg,
-			WithLogger(log.NewNop()), WithCatalog(sampleCatalog()), WithTracer(tracer),
+			WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)), WithTracer(tracer),
 			WithOutboxRepository(repo))
 		if err != nil {
 			t.Fatalf("New err = %v", err)
@@ -272,7 +272,7 @@ func TestEmit_Span_OutcomeAttributeReflectsBranch(t *testing.T) {
 		tracer, getSpans := newSpanRecorder(t)
 
 		emitter, err := New(context.Background(), cfg,
-			WithLogger(log.NewNop()), WithCatalog(sampleCatalog()), WithTracer(tracer))
+			WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)), WithTracer(tracer))
 		if err != nil {
 			t.Fatalf("New err = %v", err)
 		}
@@ -298,7 +298,7 @@ func TestEmit_Span_OutcomeAttributeReflectsBranch(t *testing.T) {
 
 		tracer, getSpans := newSpanRecorder(t)
 		emitter, err := New(context.Background(), cfg,
-			WithLogger(log.NewNop()), WithCatalog(sampleCatalog()), WithTracer(tracer))
+			WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)), WithTracer(tracer))
 		if err != nil {
 			t.Fatalf("New err = %v", err)
 		}
@@ -335,7 +335,7 @@ func TestEmit_Span_PreflightFailure_NoSpan(t *testing.T) {
 	tracer, getSpans := newSpanRecorder(t)
 
 	emitter, err := New(context.Background(), cfg,
-		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()), WithTracer(tracer))
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)), WithTracer(tracer))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -370,7 +370,7 @@ func TestEmit_Span_DebugLevelEmitsMessageKey(t *testing.T) {
 		tracer, getSpans := newSpanRecorder(t)
 
 		emitter, err := New(context.Background(), cfg,
-			WithLogger(&debugLogger{}), WithCatalog(sampleCatalog()), WithTracer(tracer))
+			WithLogger(&debugLogger{}), WithCatalog(sampleCatalog(t)), WithTracer(tracer))
 		if err != nil {
 			t.Fatalf("New err = %v", err)
 		}
@@ -399,7 +399,7 @@ func TestEmit_Span_DebugLevelEmitsMessageKey(t *testing.T) {
 		tracer, getSpans := newSpanRecorder(t)
 
 		emitter, err := New(context.Background(), cfg,
-			WithLogger(&infoLogger{}), WithCatalog(sampleCatalog()), WithTracer(tracer))
+			WithLogger(&infoLogger{}), WithCatalog(sampleCatalog(t)), WithTracer(tracer))
 		if err != nil {
 			t.Fatalf("New err = %v", err)
 		}
@@ -427,7 +427,7 @@ func TestEmit_SpanError_RecordedOnFailure(t *testing.T) {
 
 	tracer, getSpans := newSpanRecorder(t)
 	emitter, err := New(context.Background(), cfg,
-		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()), WithTracer(tracer))
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)), WithTracer(tracer))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -481,7 +481,7 @@ func TestEmit_Span_NilTracerFallback(t *testing.T) {
 
 	// Deliberately omit WithTracer.
 	emitter, err := New(context.Background(), cfg,
-		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -512,7 +512,7 @@ func TestEmit_Span_IsRecordingFastPath(t *testing.T) {
 	t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
 
 	emitter, err := New(context.Background(), cfg,
-		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithTracer(provider.Tracer("no-record")))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
@@ -538,7 +538,7 @@ func TestEmit_Span_AttributeCountInvariant(t *testing.T) {
 	tracer, getSpans := newSpanRecorder(t)
 
 	emitter, err := New(context.Background(), cfg,
-		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()), WithTracer(tracer))
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)), WithTracer(tracer))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}

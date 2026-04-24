@@ -13,17 +13,30 @@ import (
 	"github.com/google/uuid"
 	"github.com/twmb/franz-go/pkg/kgo"
 
+	"github.com/LerianStudio/lib-commons/v5/commons"
 	"github.com/LerianStudio/lib-commons/v5/commons/circuitbreaker"
 	"github.com/LerianStudio/lib-commons/v5/commons/log"
 	"github.com/LerianStudio/lib-commons/v5/commons/outbox"
 )
+
+// newTestUUIDv7 returns a time-ordered UUID via commons.GenerateUUIDv7. Used
+// for persisted outbox row IDs and aggregate IDs so test rows match the
+// production ordering contract (see outbox_writer.go outboxRowFromEnvelope).
+func newTestUUIDv7(tb testing.TB) uuid.UUID {
+	tb.Helper()
+	id, err := commons.GenerateUUIDv7()
+	if err != nil {
+		tb.Fatalf("commons.GenerateUUIDv7 err = %v", err)
+	}
+	return id
+}
 
 // --- Outbox handler registration + relay tests. ---
 
 func TestProducer_RegisterOutboxRelay_RelaysStableEnvelope(t *testing.T) {
 	cfg, cluster := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -37,14 +50,14 @@ func TestProducer_RegisterOutboxRelay_RelaysStableEnvelope(t *testing.T) {
 
 	event := sampleEvent()
 	event.ApplyDefaults()
-	envelope := testOutboxEnvelope(event, event.Topic(), "transaction.created", DefaultDeliveryPolicy(), uuid.New())
+	envelope := testOutboxEnvelope(event, event.Topic(), "transaction.created", DefaultDeliveryPolicy(), newTestUUIDv7(t))
 	payload, err := json.Marshal(envelope)
 	if err != nil {
 		t.Fatalf("json.Marshal envelope err = %v", err)
 	}
 
 	row := &outbox.OutboxEvent{
-		ID:          uuid.New(),
+		ID:          newTestUUIDv7(t),
 		EventType:   StreamingOutboxEventType,
 		AggregateID: envelope.AggregateID,
 		Payload:     payload,
@@ -83,7 +96,7 @@ func TestProducer_RegisterOutboxRelay_RelaysStableEnvelope(t *testing.T) {
 func TestProducer_OutboxHandler_PublishDirectFailure_SurfacesError(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -99,7 +112,7 @@ func TestProducer_OutboxHandler_PublishDirectFailure_SurfacesError(t *testing.T)
 
 	event := sampleEvent()
 	event.ApplyDefaults()
-	envelope := testOutboxEnvelope(event, event.Topic(), "transaction.created", DefaultDeliveryPolicy(), uuid.New())
+	envelope := testOutboxEnvelope(event, event.Topic(), "transaction.created", DefaultDeliveryPolicy(), newTestUUIDv7(t))
 
 	payload, err := json.Marshal(envelope)
 	if err != nil {
@@ -107,7 +120,7 @@ func TestProducer_OutboxHandler_PublishDirectFailure_SurfacesError(t *testing.T)
 	}
 
 	row := &outbox.OutboxEvent{
-		ID:          uuid.New(),
+		ID:          newTestUUIDv7(t),
 		EventType:   StreamingOutboxEventType,
 		AggregateID: envelope.AggregateID,
 		Payload:     payload,
@@ -135,7 +148,7 @@ func TestProducer_OutboxHandler_PublishDirectFailure_SurfacesError(t *testing.T)
 func TestProducer_OutboxHandler_InvalidPayload_ReturnsError(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -145,9 +158,9 @@ func TestProducer_OutboxHandler_InvalidPayload_ReturnsError(t *testing.T) {
 	p := asProducer(t, emitter)
 
 	row := &outbox.OutboxEvent{
-		ID:          uuid.New(),
+		ID:          newTestUUIDv7(t),
 		EventType:   StreamingOutboxEventType,
-		AggregateID: uuid.New(),
+		AggregateID: newTestUUIDv7(t),
 		Payload:     []byte("{not-json"),
 	}
 
@@ -171,7 +184,7 @@ func TestProducer_OutboxHandler_InvalidPayload_ReturnsError(t *testing.T) {
 func TestProducer_OutboxHandler_NonStreamingEventType_NoOp(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -181,9 +194,9 @@ func TestProducer_OutboxHandler_NonStreamingEventType_NoOp(t *testing.T) {
 	p := asProducer(t, emitter)
 
 	row := &outbox.OutboxEvent{
-		ID:          uuid.New(),
+		ID:          newTestUUIDv7(t),
 		EventType:   "payment.created", // NOT our relay type
-		AggregateID: uuid.New(),
+		AggregateID: newTestUUIDv7(t),
 		Payload:     []byte(`{"ok":true}`),
 	}
 
@@ -196,7 +209,7 @@ func TestProducer_OutboxHandler_NonStreamingEventType_NoOp(t *testing.T) {
 func TestProducer_RegisterOutboxRelay_DuplicateSurfacesError(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -235,7 +248,7 @@ func TestProducer_RegisterOutboxRelay_NilReceiver(t *testing.T) {
 func TestProducer_RegisterOutboxRelay_NilRegistry(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -264,7 +277,7 @@ func TestHandleOutboxRow_BypassesCBWhenOpen(t *testing.T) {
 		context.Background(),
 		cfg,
 		WithLogger(log.NewNop()),
-		WithCatalog(sampleCatalog()),
+		WithCatalog(sampleCatalog(t)),
 		WithCircuitBreakerManager(fakeMgr),
 	)
 	if err != nil {
@@ -304,7 +317,7 @@ func TestHandleOutboxRow_BypassesCBWhenOpen(t *testing.T) {
 	// accept it.
 	event := sampleEvent()
 	event.ApplyDefaults()
-	envelope := testOutboxEnvelope(event, event.Topic(), "transaction.created", DefaultDeliveryPolicy(), uuid.New())
+	envelope := testOutboxEnvelope(event, event.Topic(), "transaction.created", DefaultDeliveryPolicy(), newTestUUIDv7(t))
 
 	payload, err := json.Marshal(envelope)
 	if err != nil {
@@ -312,7 +325,7 @@ func TestHandleOutboxRow_BypassesCBWhenOpen(t *testing.T) {
 	}
 
 	row := &outbox.OutboxEvent{
-		ID:          uuid.New(),
+		ID:          newTestUUIDv7(t),
 		EventType:   StreamingOutboxEventType,
 		AggregateID: envelope.AggregateID,
 		Payload:     payload,
@@ -369,7 +382,7 @@ func TestProducer_HandleOutboxRow_NilReceiver(t *testing.T) {
 func TestProducer_HandleOutboxRow_NilRow(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -396,7 +409,7 @@ func TestDecodeOutboxRow_LegacyV01Payload_SynthesizedAndReplayed(t *testing.T) {
 
 	emitter, err := New(context.Background(), cfg,
 		WithLogger(spy),
-		WithCatalog(sampleCatalog()),
+		WithCatalog(sampleCatalog(t)),
 	)
 	if err != nil {
 		t.Fatalf("New err = %v", err)
@@ -415,9 +428,9 @@ func TestDecodeOutboxRow_LegacyV01Payload_SynthesizedAndReplayed(t *testing.T) {
 	}
 
 	row := &outbox.OutboxEvent{
-		ID:          uuid.New(),
+		ID:          newTestUUIDv7(t),
 		EventType:   StreamingOutboxEventType,
-		AggregateID: uuid.New(),
+		AggregateID: newTestUUIDv7(t),
 		Payload:     legacyPayload,
 	}
 
@@ -472,7 +485,7 @@ func TestDecodeOutboxRow_LegacyEmptyPayload_StillRejects(t *testing.T) {
 
 	emitter, err := New(context.Background(), cfg,
 		WithLogger(log.NewNop()),
-		WithCatalog(sampleCatalog()),
+		WithCatalog(sampleCatalog(t)),
 	)
 	if err != nil {
 		t.Fatalf("New err = %v", err)
@@ -487,9 +500,9 @@ func TestDecodeOutboxRow_LegacyEmptyPayload_StillRejects(t *testing.T) {
 	}
 
 	row := &outbox.OutboxEvent{
-		ID:          uuid.New(),
+		ID:          newTestUUIDv7(t),
 		EventType:   StreamingOutboxEventType,
-		AggregateID: uuid.New(),
+		AggregateID: newTestUUIDv7(t),
 		Payload:     emptyPayload,
 	}
 
@@ -521,7 +534,7 @@ func TestProducer_EndToEnd_OutboxFallbackAndRelay(t *testing.T) {
 	emitter, err := New(
 		context.Background(),
 		cfg,
-		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithCircuitBreakerManager(fakeMgr),
 		WithOutboxRepository(fakeRepo),
 	)
@@ -564,8 +577,14 @@ func TestProducer_EndToEnd_OutboxFallbackAndRelay(t *testing.T) {
 		t.Fatalf("registry.Handle err = %v", err)
 	}
 
-	// Phase 3: The record is now on the broker.
-	consumer := newConsumer(t, cluster, "lerian.streaming.transaction.created")
+	// Phase 3: The record is now on the broker. Derive the topic from the
+	// persisted envelope so the assertion cannot silently drift from what
+	// publishDirect actually produced.
+	decodedEnvelope, err := p.decodeOutboxRow(ctx, row)
+	if err != nil {
+		t.Fatalf("decodeOutboxRow err = %v", err)
+	}
+	consumer := newConsumer(t, cluster, decodedEnvelope.Topic)
 
 	fetchCtx, fetchCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer fetchCancel()

@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/LerianStudio/lib-commons/v5/commons"
 	"github.com/LerianStudio/lib-commons/v5/commons/assert"
 	"github.com/LerianStudio/lib-commons/v5/commons/log"
 	"github.com/LerianStudio/lib-commons/v5/commons/outbox"
@@ -122,7 +123,7 @@ func outboxRowFromEnvelope(envelope OutboxEnvelope) (*outbox.OutboxEvent, error)
 
 	// UUIDv7 is time-ordered; outbox rows scanned by ID get natural
 	// insertion-order playback. Fall back to v4 if v7 ever fails.
-	rowID, err := uuid.NewV7()
+	rowID, err := commons.GenerateUUIDv7()
 	if err != nil {
 		rowID = uuid.New()
 	}

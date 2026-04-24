@@ -50,7 +50,7 @@ func TestProducer_EmitPreFlight_SystemEventWithOpt_Accepted(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
 	emitter, err := New(context.Background(), cfg,
-		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithAllowSystemEvents(),
 	)
 	if err != nil {
@@ -107,7 +107,7 @@ func TestIsCallerError_SystemEventsNotAllowed_ReturnsTrue(t *testing.T) {
 func TestProducer_EmitPreFlight_HeaderSanitization_RejectsInjections(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -184,7 +184,7 @@ func TestProducer_EmitPreFlight_HeaderSanitization_AcceptsAtLimits(t *testing.T)
 
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -279,7 +279,7 @@ func TestIsCallerError_HeaderSentinels(t *testing.T) {
 func TestProducer_HandleOutboxRow_RunsPreFlight_OversizePayload(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -326,7 +326,7 @@ func TestProducer_HandleOutboxRow_RunsPreFlight_OversizePayload(t *testing.T) {
 func TestProducer_HandleOutboxRow_RunsPreFlight_SystemEventWithoutOpt(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -380,7 +380,7 @@ func TestProducer_Emit_CircuitOpen_OutboxFailure_MetricsOutboxFailed(t *testing.
 	emitter, err := New(
 		context.Background(),
 		cfg,
-		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithMetricsFactory(factory),
 		WithCircuitBreakerManager(fakeMgr),
 		WithOutboxRepository(fakeRepo),

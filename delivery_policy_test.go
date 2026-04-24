@@ -106,7 +106,12 @@ func TestDeliveryPolicyResolver_InvalidOverride(t *testing.T) {
 	t.Parallel()
 
 	_, err := ResolveDeliveryPolicy(
-		EventDefinition{},
+		EventDefinition{
+			Key:           "transaction.created",
+			ResourceType:  "transaction",
+			EventType:     "created",
+			DefaultPolicy: DefaultDeliveryPolicy(),
+		},
 		DeliveryPolicyOverride{Direct: DirectMode("async")},
 		DeliveryPolicyOverride{},
 	)

@@ -374,7 +374,7 @@ func TestPublishDLQ_NilReceiver(t *testing.T) {
 func TestPublishDLQ_ClosedProducer(t *testing.T) {
 	cfg, _ := kfakeDLQConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -431,7 +431,7 @@ func TestProducer_PublishDLQ_WritesAllHeaders(t *testing.T) {
 	sourceTopic := "lerian.streaming.transaction.created"
 	injectProduceError(cluster, sourceTopic, kerr.MessageTooLarge.Code)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -522,7 +522,7 @@ func TestProducer_PublishDLQ_CePrefixHeadersPreserved(t *testing.T) {
 	sourceTopic := "lerian.streaming.transaction.created"
 	injectProduceError(cluster, sourceTopic, kerr.MessageTooLarge.Code)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -575,7 +575,7 @@ func TestProducer_PublishDLQ_BodyByteEqual(t *testing.T) {
 	sourceTopic := "lerian.streaming.transaction.created"
 	injectProduceError(cluster, sourceTopic, kerr.MessageTooLarge.Code)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -613,7 +613,7 @@ func TestProducer_PublishDLQ_AuthError_RoutesToDLQ(t *testing.T) {
 	sourceTopic := "lerian.streaming.transaction.created"
 	injectProduceError(cluster, sourceTopic, kerr.TopicAuthorizationFailed.Code)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -651,7 +651,7 @@ func TestProducer_PublishDLQ_TopicNotFound_RoutesToDLQ(t *testing.T) {
 	sourceTopic := "lerian.streaming.transaction.created"
 	injectProduceError(cluster, sourceTopic, kerr.UnknownTopicOrPartition.Code)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -684,7 +684,7 @@ func TestProducer_PublishDLQ_BrokerOverloaded_RoutesToDLQ(t *testing.T) {
 	sourceTopic := "lerian.streaming.transaction.created"
 	injectProduceError(cluster, sourceTopic, kerr.PolicyViolation.Code)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -714,7 +714,7 @@ func TestProducer_PublishDLQ_BrokerOverloaded_RoutesToDLQ(t *testing.T) {
 func TestProducer_PublishDLQ_NotRoutable_ContextCanceled(t *testing.T) {
 	cfg, cluster := kfakeDLQConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -753,7 +753,7 @@ func TestProducer_PublishDLQ_ErrorMessageSanitized(t *testing.T) {
 
 	cfg, cluster := kfakeDLQConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -864,7 +864,7 @@ func TestProducer_PublishDLQ_DLQFailure_DoesNotSurfaceToEmit(t *testing.T) {
 
 	spy := &spyLogger{}
 
-	emitter, err := New(context.Background(), cfg, WithLogger(spy), WithCatalog(sampleCatalog()))
+	emitter, err := New(context.Background(), cfg, WithLogger(spy), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -925,7 +925,7 @@ func TestProducer_PublishDLQ_ProducerIDHeader(t *testing.T) {
 	sourceTopic := "lerian.streaming.transaction.created"
 	injectProduceError(cluster, sourceTopic, kerr.MessageTooLarge.Code)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}

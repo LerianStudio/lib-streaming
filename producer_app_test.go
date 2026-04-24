@@ -38,7 +38,7 @@ func TestProducer_ImplementsCommonsApp_CompileTimeAssertion(t *testing.T) {
 	// to *Producer only if it needs lifecycle methods directly.
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -80,7 +80,7 @@ func TestProducer_RunContext_GracefulShutdown_NoGoroutineLeak(t *testing.T) {
 
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -124,7 +124,7 @@ func TestProducer_RunContext_GracefulShutdown_NoGoroutineLeak(t *testing.T) {
 func TestProducer_Run_InvokesRunContextBackground(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -161,7 +161,7 @@ func TestProducer_Run_InvokesRunContextBackground(t *testing.T) {
 func TestProducer_RunContext_ClosesProducerAfterCtxCancel(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -198,7 +198,7 @@ func TestProducer_RunContext_ClosesProducerAfterCtxCancel(t *testing.T) {
 func TestProducer_RunContext_AlreadyClosed_ReturnsImmediately(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -238,7 +238,7 @@ func TestProducer_RunContext_AlreadyClosed_ReturnsImmediately(t *testing.T) {
 func TestProducer_RunContext_WithLauncher_LogsStartAndStop(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -293,7 +293,7 @@ func TestProducer_RunContext_WithLauncher_LogsStartAndStop(t *testing.T) {
 func TestProducer_Close_IdempotentAcrossThreeCalls(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -310,7 +310,7 @@ func TestProducer_Close_IdempotentAcrossThreeCalls(t *testing.T) {
 func TestProducer_PostClose_Emit_ReturnsErrEmitterClosed(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -336,7 +336,7 @@ func TestProducer_PostClose_Emit_RecordsCallerErrorMetric(t *testing.T) {
 	factory, snapshot := newManualMeterSetup(t)
 
 	emitter, err := New(context.Background(), cfg,
-		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithMetricsFactory(factory),
 	)
 	if err != nil {
@@ -372,7 +372,7 @@ func TestProducer_PostClose_Emit_RecordsCallerErrorMetric(t *testing.T) {
 func TestProducer_PostClose_Emit_NoBrokerIO(t *testing.T) {
 	cfg, cluster := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -415,7 +415,7 @@ func TestProducer_PostClose_Emit_NoSpan(t *testing.T) {
 	tracer, getSpans := newSpanRecorder(t)
 
 	emitter, err := New(context.Background(), cfg,
-		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithTracer(tracer),
 	)
 	if err != nil {
@@ -442,7 +442,7 @@ func TestProducer_WithCloseTimeout_Threads(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
 	emitter, err := New(context.Background(), cfg,
-		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithCloseTimeout(3*time.Second),
 	)
 	if err != nil {
@@ -465,7 +465,7 @@ func TestProducer_WithCloseTimeout_ZeroUsesConfigDefault(t *testing.T) {
 	cfg.CloseTimeout = 5 * time.Second
 
 	emitter, err := New(context.Background(), cfg,
-		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithCloseTimeout(0),
 	)
 	if err != nil {
@@ -570,7 +570,7 @@ func TestProducer_NilReceiver_AllMethods(t *testing.T) {
 func TestProducer_Healthy_PlugsIntoHealthWithDependencies(t *testing.T) {
 	cfg, cluster := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -622,7 +622,7 @@ func TestProducer_Healthy_PlugsIntoHealthWithDependencies(t *testing.T) {
 func TestProducer_LauncherIntegration_EndToEnd(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -665,7 +665,7 @@ func TestProducer_LauncherIntegration_EndToEnd(t *testing.T) {
 func TestProducer_RunContext_NilCtx_DoesNotPanic(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -701,7 +701,7 @@ func TestProducer_RunContext_NilCtx_DoesNotPanic(t *testing.T) {
 func TestProducer_CloseContext_ConcurrentCallers(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}

@@ -5,15 +5,26 @@ CloudEvents-framed domain event publisher to Redpanda/Kafka, with circuit-breake
 Producer-only. Orthogonal to `github.com/LerianStudio/lib-commons/v5/commons/rabbitmq` (internal command queues) — neither deprecates the other.
 
 - Module: `github.com/LerianStudio/lib-streaming`
-- Version: `v0.1.0`
+- Version: `v0.2.0`
 - Go: `1.25.9`
 - License: Elastic License 2.0 (see [LICENSE](./LICENSE))
 
 ## Install
 
 ```
-go get github.com/LerianStudio/lib-streaming@v0.1.0
+go get github.com/LerianStudio/lib-streaming@v0.2.0
 ```
+
+## Upgrading from v0.1.0
+
+v0.2.0 is a breaking change. Highlights:
+
+- `NewProducer` now requires `WithCatalog(catalog)`; build a `Catalog` of `EventDefinition` records at bootstrap.
+- `Emit` takes `EmitRequest{DefinitionKey, TenantID, Payload, ...}` — the catalog owns `ResourceType`/`EventType`/`SchemaVersion`.
+- `Config.EventToggles` / `STREAMING_EVENT_TOGGLES` replaced by `Config.PolicyOverrides` / `STREAMING_EVENT_POLICIES`.
+- `RegisterOutboxHandler(registry, eventTypes...)` collapsed to `RegisterOutboxRelay(registry)` — one stable relay event type.
+
+See [`CHANGELOG.md`](./CHANGELOG.md) for the full list and the outbox-row compatibility notes.
 
 ## Quick start
 

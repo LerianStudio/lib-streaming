@@ -137,8 +137,12 @@ func WithCloseTimeout(d time.Duration) EmitterOption {
 // drained back through publishDirect once the broker recovers.
 //
 // The Producer NEVER constructs an OutboxRepository itself; ownership and
-// lifecycle stay with the consuming service. Passing nil is equivalent to
-// not calling this option.
+// lifecycle stay with the consuming service.
+//
+// Passing nil is NOT a harmless no-op: under the last-call-wins semantics a nil
+// argument acts as an explicit reset and clears any previously selected outbox
+// writer (including a transactional one installed via a prior WithOutboxWriter
+// call). Only pass nil when you intend to disable outbox plumbing.
 //
 // Mutually exclusive with WithOutboxWriter — last call wins. Mixing them
 // silently loses transactional capability if the custom writer does not
@@ -155,8 +159,13 @@ func WithOutboxRepository(repo outbox.OutboxRepository) EmitterOption {
 	}
 }
 
-// WithOutboxWriter wires a custom outbox writer boundary. Passing nil is
-// equivalent to omitting the option.
+// WithOutboxWriter wires a custom outbox writer boundary.
+//
+// Passing nil is NOT a harmless no-op: under the last-call-wins semantics a nil
+// argument acts as an explicit reset and clears any previously selected outbox
+// writer (including a repository-adapted one installed via a prior
+// WithOutboxRepository call). Only pass nil when you intend to disable outbox
+// plumbing.
 //
 // Mutually exclusive with WithOutboxRepository — last call wins. Mixing them
 // silently loses transactional capability if the custom writer does not

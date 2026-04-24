@@ -249,7 +249,7 @@ func TestMetrics_Emit_RecordsEmittedCounterWithOutcomeProduced(t *testing.T) {
 	factory, snapshot := newManualMeterSetup(t)
 
 	emitter, err := New(context.Background(), cfg,
-		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithMetricsFactory(factory),
 	)
 	if err != nil {
@@ -299,7 +299,7 @@ func TestMetrics_Emit_RecordsDurationHistogram(t *testing.T) {
 	factory, snapshot := newManualMeterSetup(t)
 
 	emitter, err := New(context.Background(), cfg,
-		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithMetricsFactory(factory),
 	)
 	if err != nil {
@@ -336,7 +336,7 @@ func TestMetrics_Emit_PreflightFailure_RecordsCallerErrorOutcome(t *testing.T) {
 	factory, snapshot := newManualMeterSetup(t)
 
 	emitter, err := New(context.Background(), cfg,
-		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithMetricsFactory(factory),
 	)
 	if err != nil {
@@ -383,7 +383,7 @@ func TestMetrics_Emit_UnknownDefinitionUsesBoundedMetricTopic(t *testing.T) {
 	factory, snapshot := newManualMeterSetup(t)
 
 	emitter, err := New(context.Background(), cfg,
-		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithMetricsFactory(factory),
 	)
 	if err != nil {
@@ -423,7 +423,7 @@ func TestMetrics_DLQ_RecordsDlqCounter(t *testing.T) {
 	factory, snapshot := newManualMeterSetup(t)
 
 	emitter, err := New(context.Background(), cfg,
-		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithMetricsFactory(factory),
 	)
 	if err != nil {
@@ -500,7 +500,7 @@ func TestMetrics_DLQFailed_RecordsCounter(t *testing.T) {
 	factory, snapshot := newManualMeterSetup(t)
 
 	emitter, err := New(context.Background(), cfg,
-		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithMetricsFactory(factory),
 	)
 	if err != nil {
@@ -551,7 +551,7 @@ func TestMetrics_OutboxRouted_RecordsCounter(t *testing.T) {
 	repo := &fakeOutboxRepo{}
 
 	emitter, err := New(context.Background(), cfg,
-		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithMetricsFactory(factory),
 		WithOutboxRepository(repo),
 	)
@@ -626,7 +626,7 @@ func TestMetrics_CircuitOpen_NoOutbox_RecordsCircuitOpenOutcome(t *testing.T) {
 	factory, snapshot := newManualMeterSetup(t)
 
 	emitter, err := New(context.Background(), cfg,
-		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithMetricsFactory(factory),
 	)
 	if err != nil {
@@ -667,7 +667,7 @@ func TestMetrics_CircuitState_UpdatedByListener(t *testing.T) {
 	factory, snapshot := newManualMeterSetup(t)
 
 	emitter, err := New(context.Background(), cfg,
-		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithMetricsFactory(factory),
 	)
 	if err != nil {
@@ -722,7 +722,7 @@ func TestMetrics_CircuitState_UnknownStateDoesNotRecord(t *testing.T) {
 	factory, snapshot := newManualMeterSetup(t)
 
 	emitter, err := New(context.Background(), cfg,
-		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithMetricsFactory(factory),
 	)
 	if err != nil {
@@ -773,7 +773,7 @@ func TestMetrics_NoTenantIDLabel_10kEmits(t *testing.T) {
 	factory, snapshot := newManualMeterSetup(t)
 
 	emitter, err := New(context.Background(), cfg,
-		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithMetricsFactory(factory),
 	)
 	if err != nil {

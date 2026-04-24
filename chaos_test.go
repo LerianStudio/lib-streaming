@@ -410,7 +410,7 @@ func TestChaos_BrokerLatency_CircuitOpensAndOutboxCatches(t *testing.T) {
 	}
 
 	p, err := NewProducer(ctx, cfg,
-		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithOutboxRepository(store),
 	)
 	require.NoError(t, err, "NewProducer")

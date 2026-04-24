@@ -112,7 +112,7 @@ func BenchmarkEmit_HappyPath(b *testing.B) {
 
 	cfg, _ := kfakeBenchConfig(b)
 
-	p, err := NewProducer(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	p, err := NewProducer(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(b)))
 	if err != nil {
 		b.Fatalf("NewProducer err = %v", err)
 	}
@@ -138,7 +138,7 @@ func BenchmarkEmit_CircuitOpenOutbox(b *testing.B) {
 	repo := &fakeOutboxRepo{}
 
 	p, err := NewProducer(context.Background(), cfg,
-		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(b)),
 		WithOutboxRepository(repo),
 	)
 	if err != nil {
@@ -171,7 +171,7 @@ func BenchmarkEmit_DLQRoute(b *testing.B) {
 	injectProduceError(cluster, "lerian.streaming.transaction.created",
 		kerr.MessageTooLarge.Code)
 
-	p, err := NewProducer(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	p, err := NewProducer(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(b)))
 	if err != nil {
 		b.Fatalf("NewProducer err = %v", err)
 	}

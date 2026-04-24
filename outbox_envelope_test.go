@@ -93,8 +93,8 @@ func TestOutboxEnvelopeValidateRejectsTopicMismatch(t *testing.T) {
 		uuid.New(),
 	)
 
-	if err := envelope.Validate(); !errors.Is(err, ErrInvalidEventDefinition) {
-		t.Fatalf("Validate err = %v; want ErrInvalidEventDefinition", err)
+	if err := envelope.Validate(); !errors.Is(err, ErrInvalidOutboxEnvelope) {
+		t.Fatalf("Validate err = %v; want ErrInvalidOutboxEnvelope", err)
 	}
 }
 

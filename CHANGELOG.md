@@ -8,6 +8,25 @@ Pre-v1, breaking changes are allowed but ALWAYS land here with a migration note.
 
 ## [Unreleased]
 
+### Changed (BREAKING)
+
+- **`LoadConfig` signature** — now returns `(Config, []string, error)` instead
+  of `(Config, error)`. The new `[]string` return value is a slice of
+  human-readable migration warnings (e.g. the legacy `STREAMING_EVENT_TOGGLES`
+  rename). LoadConfig no longer writes to `os.Stderr` — callers decide how to
+  surface these messages (typically by logging each entry through the
+  application's structured logger). The slice is never nil.
+- **`ErrInvalidOutboxEnvelope`** — new caller-correctable sentinel returned by
+  `OutboxEnvelope.Validate()` for envelope-shape faults (empty `Topic`, topic
+  mismatch with the embedded event). Previously these faults wrapped
+  `ErrInvalidEventDefinition`, which was semantically wrong (envelopes are not
+  catalog entries).
+- **`STREAMING_EVENT_POLICIES` parser** — per-key overrides are now validated
+  after all attribute tokens for that key are assembled. Previously each token
+  was validated independently, which rejected valid order-dependent inputs
+  such as `key.direct=skip,key.outbox=always` (the cross-field rule requires
+  `Outbox=always` to be present when `Direct=skip`).
+
 ## [0.2.0] — 2026-04-23
 
 This release introduces a catalog-driven Emit pipeline with per-event delivery

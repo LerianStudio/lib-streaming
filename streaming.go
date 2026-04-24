@@ -165,6 +165,13 @@ var (
 	// metadata, or an invalid default delivery policy.
 	ErrInvalidEventDefinition = errors.New("streaming: invalid event definition")
 
+	// ErrInvalidOutboxEnvelope is returned by OutboxEnvelope.Validate when
+	// the envelope's own shape is malformed independently of the embedded
+	// Event — typically an empty Topic or a Topic that does not match the
+	// Event's derived topic. Distinct from ErrInvalidEventDefinition, which
+	// concerns catalog entries, not persisted envelopes.
+	ErrInvalidOutboxEnvelope = errors.New("streaming: invalid outbox envelope")
+
 	// ErrDuplicateEventDefinition is returned by NewCatalog when two event
 	// definitions use the same key or resolve to the same resource/event
 	// contract. Catalogs are immutable and must be unambiguous.
@@ -338,6 +345,7 @@ var callerErrorSentinels = []error{
 	ErrInvalidDataContentType,
 	ErrInvalidDataSchema,
 	ErrInvalidEventDefinition,
+	ErrInvalidOutboxEnvelope,
 	ErrDuplicateEventDefinition,
 	ErrUnknownEventDefinition,
 	ErrInvalidDeliveryPolicy,
@@ -356,8 +364,9 @@ var callerErrorSentinels = []error{
 //     ErrInvalidEventType, ErrInvalidSource, ErrInvalidSubject,
 //     ErrInvalidEventID, ErrInvalidSchemaVersion, ErrInvalidDataContentType,
 //     ErrInvalidDataSchema, ErrInvalidEventDefinition,
-//     ErrDuplicateEventDefinition, ErrUnknownEventDefinition,
-//     ErrInvalidDeliveryPolicy, ErrInvalidPublisherDescriptor
+//     ErrInvalidOutboxEnvelope, ErrDuplicateEventDefinition,
+//     ErrUnknownEventDefinition, ErrInvalidDeliveryPolicy,
+//     ErrInvalidPublisherDescriptor
 //   - An *EmitError whose Class is ClassSerialization, ClassValidation, or
 //     ClassAuth.
 //

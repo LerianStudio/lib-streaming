@@ -231,7 +231,7 @@ func newTestProducer(t *testing.T, brokers []string) *Producer {
 		CloudEventsSource:     integrationSource,
 	}
 
-	p, err := NewProducer(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	p, err := NewProducer(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	require.NoError(t, err, "NewProducer")
 
 	t.Cleanup(func() {
@@ -373,8 +373,8 @@ func TestIntegration_RoundTripHeaders(t *testing.T) {
 	// rather than silently passing on coincidental equality. eventToRequest
 	// drops DataContentType/DataSchema/SchemaVersion; resolveEvent fills them
 	// from the catalog.
-	definition, err := sampleCatalog().Require("transaction.created")
-	require.NoError(t, err, "sampleCatalog().Require(transaction.created)")
+	definition, err := sampleCatalog(t).Require("transaction.created")
+	require.NoError(t, err, "sampleCatalog(t).Require(transaction.created)")
 
 	assert.Equal(t, event.EventID, parsed.EventID, "ce-id")
 	assert.Equal(t, event.Source, parsed.Source, "ce-source")
@@ -571,7 +571,7 @@ func TestIntegration_DLQRouting(t *testing.T) {
 		CloseTimeout:          5 * time.Second,
 		CloudEventsSource:     integrationSource,
 	}
-	p, err := NewProducer(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	p, err := NewProducer(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	require.NoError(t, err, "NewProducer")
 	t.Cleanup(func() { _ = p.Close() })
 
@@ -649,8 +649,8 @@ func TestIntegration_DLQRouting(t *testing.T) {
 	// Catalog-sourced fields — assert against the catalog definition so that
 	// drift between the inline Event and the catalog surfaces as a failure
 	// rather than passing on coincidental equality with ApplyDefaults.
-	dlqDefinition, err := sampleCatalog().Require(resourceType + "." + eventType)
-	require.NoError(t, err, "sampleCatalog().Require("+resourceType+"."+eventType+")")
+	dlqDefinition, err := sampleCatalog(t).Require(resourceType + "." + eventType)
+	require.NoError(t, err, "sampleCatalog(t).Require("+resourceType+"."+eventType+")")
 	assert.Equal(t, dlqDefinition.DataContentType, hdrs["ce-datacontenttype"])
 	assert.Equal(t, dlqDefinition.SchemaVersion, hdrs["ce-schemaversion"])
 
@@ -779,7 +779,7 @@ CREATE TABLE IF NOT EXISTS outbox_events (
 	}
 
 	p, err := NewProducer(ctx, cfg,
-		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithOutboxRepository(repo),
 	)
 	require.NoError(t, err, "NewProducer")
@@ -1019,7 +1019,7 @@ func TestIntegration_CircuitBreaker_TripsOrganically(t *testing.T) {
 		CloudEventsSource:     integrationSource,
 	}
 
-	p, err := NewProducer(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	p, err := NewProducer(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	require.NoError(t, err, "NewProducer")
 	t.Cleanup(func() { _ = p.Close() })
 

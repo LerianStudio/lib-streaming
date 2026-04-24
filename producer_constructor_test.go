@@ -168,7 +168,7 @@ func TestProducer_New_RealProducer_AsProducer(t *testing.T) {
 		t.Fatalf("NewCatalog() error = %v", err)
 	}
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()), WithCatalog(catalog))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(catalog))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -252,7 +252,7 @@ func TestProducer_NewProducer_RejectsUnknownPolicyOverrideKey(t *testing.T) {
 		"transaction.cretaed": {Outbox: OutboxModeAlways},
 	}
 
-	_, err := NewProducer(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	_, err := NewProducer(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if !errors.Is(err, ErrUnknownEventDefinition) {
 		t.Fatalf("NewProducer err = %v; want ErrUnknownEventDefinition", err)
 	}
@@ -265,7 +265,7 @@ func TestProducer_New_WithPartitionKeyOverride(t *testing.T) {
 
 	fixed := "FIXED-PART-KEY"
 	emitter, err := New(context.Background(), cfg,
-		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithPartitionKey(func(_ Event) string { return fixed }),
 	)
 	if err != nil {

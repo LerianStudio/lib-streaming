@@ -1,11 +1,15 @@
-// This file is intentionally tagless: sampleCatalog() and eventToRequest()
+// This file is intentionally tagless: sampleCatalog(tb) and eventToRequest()
 // are shared fixtures used by unit, integration, and chaos test suites.
 // Adding a build tag here would leave the other suites unable to build. Any
 // tag-unused static-analysis findings on these helpers are expected.
 
 package streaming
 
-func sampleCatalog() Catalog {
+import "testing"
+
+func sampleCatalog(tb testing.TB) Catalog {
+	tb.Helper()
+
 	catalog, err := NewCatalog(
 		EventDefinition{
 			Key:             "transaction.created",
@@ -52,7 +56,7 @@ func sampleCatalog() Catalog {
 		},
 	)
 	if err != nil {
-		panic(err)
+		tb.Fatalf("sampleCatalog: NewCatalog err = %v", err)
 	}
 
 	return catalog

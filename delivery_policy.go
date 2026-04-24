@@ -46,6 +46,13 @@ const (
 // Normalize. That lets callers define EventDefinition values without copying
 // boilerplate policy fields, while still allowing disabled defaults by setting
 // at least one mode explicitly.
+//
+// Normalize semantics: Normalize only backfills the Direct/Outbox/DLQ mode
+// fields from DefaultDeliveryPolicy. It does NOT set Enabled. A partial policy
+// like DeliveryPolicy{Outbox: OutboxModeAlways} remains disabled (Enabled=false)
+// after Normalize — to opt into the policy, callers MUST set Enabled=true
+// explicitly. The only exception is the full zero value, which normalizes to
+// DefaultDeliveryPolicy (Enabled=true).
 type DeliveryPolicy struct {
 	Enabled bool       `json:"enabled"`
 	Direct  DirectMode `json:"direct"`
@@ -64,8 +71,11 @@ func DefaultDeliveryPolicy() DeliveryPolicy {
 	}
 }
 
-// Normalize fills omitted modes with package defaults. A full zero-value policy
-// normalizes to DefaultDeliveryPolicy.
+// Normalize fills omitted Direct/Outbox/DLQ modes with package defaults. A full
+// zero-value policy normalizes to DefaultDeliveryPolicy (which is Enabled=true).
+// For any other partial policy, Normalize does NOT set Enabled — callers MUST
+// set Enabled=true explicitly to opt into delivery. See the DeliveryPolicy
+// godoc for the full semantics.
 func (p DeliveryPolicy) Normalize() DeliveryPolicy {
 	defaults := DefaultDeliveryPolicy()
 	if p == (DeliveryPolicy{}) {

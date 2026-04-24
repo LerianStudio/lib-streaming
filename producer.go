@@ -235,9 +235,11 @@ func NewProducer(ctx context.Context, cfg Config, opts ...EmitterOption) (*Produ
 	// UUIDv7 is time-ordered; producerID shows up in CB service names, span
 	// attributes, and DLQ headers — sortable IDs make operator triage easier.
 	// Fall back to v4 if v7 generation ever fails (vanishingly unlikely).
-	producerID := uuid.NewString()
+	var producerID string
 	if id, err := commons.GenerateUUIDv7(); err == nil {
 		producerID = id.String()
+	} else {
+		producerID = uuid.NewString()
 	}
 
 	p := &Producer{
@@ -279,7 +281,8 @@ func NewProducer(ctx context.Context, cfg Config, opts ...EmitterOption) (*Produ
 // (service name, source base, versions, route path) and receive back the
 // normalized descriptor with the runtime-generated ProducerID attached.
 //
-// The ProducerID is the UUIDv7 chosen at construction; it is NOT stable across
+// The ProducerID is an opaque identifier chosen at construction (currently a
+// UUIDv7, but callers must treat it as opaque); it is NOT stable across
 // process restarts. Intended use: feeding BuildManifest so the exported
 // manifest identifies which replica served it.
 //

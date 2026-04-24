@@ -2,7 +2,6 @@ package streaming
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -97,10 +96,16 @@ var validAcks = map[string]struct{}{
 // When Enabled=false, validation is skipped so a disabled config always
 // loads clean (the Producer will return a NoopEmitter).
 //
+// The second return value is a slice of human-readable migration warnings
+// (e.g. the legacy STREAMING_EVENT_TOGGLES rename). LoadConfig does NOT write
+// to stderr or use a logger — callers decide how to surface these (log at
+// startup, skip on test paths, etc.). The slice is never nil (empty when
+// there are no warnings) so callers can range-for without a nil check.
+//
 // Errors: ErrMissingBrokers, ErrMissingSource, ErrInvalidCompression,
 // ErrInvalidAcks. Each wraps with fmt.Errorf so callers can errors.Is.
-func LoadConfig() (Config, error) {
-	warnLegacyEventTogglesEnv(os.Stderr)
+func LoadConfig() (Config, []string, error) {
+	warnings := legacyEventTogglesEnvWarnings()
 
 	brokers := splitCSV(commons.GetenvOrDefault("STREAMING_BROKERS", defaultBroker))
 	enabled := commons.GetenvBoolOrDefault("STREAMING_ENABLED", false)
@@ -108,7 +113,7 @@ func LoadConfig() (Config, error) {
 	policyOverrides, err := parseEventPolicies(commons.GetenvOrDefault("STREAMING_EVENT_POLICIES", ""))
 	if err != nil {
 		if enabled {
-			return Config{}, err
+			return Config{}, warnings, err
 		}
 
 		policyOverrides = map[string]DeliveryPolicyOverride{}
@@ -134,14 +139,14 @@ func LoadConfig() (Config, error) {
 	}
 
 	if !cfg.Enabled {
-		return cfg, nil
+		return cfg, warnings, nil
 	}
 
 	if err := cfg.validate(); err != nil {
-		return cfg, err
+		return cfg, warnings, err
 	}
 
-	return cfg, nil
+	return cfg, warnings, nil
 }
 
 // validate enforces the fields that must be present when Enabled=true.
@@ -184,30 +189,34 @@ func getenvFloat64OrDefault(key string, defaultValue float64) float64 {
 	return v
 }
 
-// warnLegacyEventTogglesEnv emits a one-line stderr WARN when the legacy
-// STREAMING_EVENT_TOGGLES env var is set but its v0.2.0 replacement
-// STREAMING_EVENT_POLICIES is not. Operators who upgraded from v0.1.0
-// without renaming the var would otherwise silently get default delivery
-// policies — this warning surfaces that mismatch without failing the load.
+// legacyEventTogglesEnvWarnings returns a one-entry slice of migration
+// warnings when the legacy STREAMING_EVENT_TOGGLES env var is set but its
+// v0.2.0 replacement STREAMING_EVENT_POLICIES is not. Operators who upgraded
+// from v0.1.0 without renaming the var would otherwise silently get default
+// delivery policies — surfacing the mismatch via the LoadConfig return value
+// lets callers log it through their own logger.
 //
-// Writes go to the provided writer (os.Stderr in production) so tests can
-// capture the output without interfering with the real stderr stream. The
-// destination is intentionally NOT a structured logger: LoadConfig has no
-// logger dependency and adding one would force every caller to wire one up
-// before reading env vars.
-func warnLegacyEventTogglesEnv(w io.Writer) {
+// Returns an empty slice (never nil) when no migration warning applies, so
+// callers can range-for without a nil check. The library does NOT write to
+// os.Stderr or accept a logger parameter: LoadConfig has no logger dependency
+// and the caller decides how to surface these messages.
+func legacyEventTogglesEnvWarnings() []string {
+	warnings := make([]string, 0, 1)
+
 	legacy := os.Getenv("STREAMING_EVENT_TOGGLES")
 	if legacy == "" {
-		return
+		return warnings
 	}
 
 	if os.Getenv("STREAMING_EVENT_POLICIES") != "" {
-		return
+		return warnings
 	}
 
-	fmt.Fprintln(w, "WARN streaming: STREAMING_EVENT_TOGGLES is set but STREAMING_EVENT_POLICIES is not. "+
+	warnings = append(warnings, "streaming: STREAMING_EVENT_TOGGLES is set but STREAMING_EVENT_POLICIES is not. "+
 		"STREAMING_EVENT_TOGGLES was renamed to STREAMING_EVENT_POLICIES in v0.2.0 and is no longer read. "+
 		"See CHANGELOG.md (v0.2.0) for the migration note.")
+
+	return warnings
 }
 
 // splitCSV splits a comma-separated broker list and trims whitespace. Empty
@@ -300,11 +309,17 @@ func parseEventPolicies(s string) (map[string]DeliveryPolicyOverride, error) {
 			return nil, fmt.Errorf("%w: unknown policy attribute %q", ErrInvalidDeliveryPolicy, attr)
 		}
 
-		if err := override.Validate(); err != nil {
-			return nil, err
-		}
-
 		result[key] = override
+	}
+
+	// Validate each fully-assembled override AFTER all tokens for that key are
+	// parsed. Validating per-token rejects order-dependent valid combinations
+	// (e.g. direct=skip,outbox=always fails if direct is seen first because
+	// the cross-field rule requires outbox=always).
+	for key, override := range result {
+		if err := override.Validate(); err != nil {
+			return nil, fmt.Errorf("key %q: %w", key, err)
+		}
 	}
 
 	return result, nil

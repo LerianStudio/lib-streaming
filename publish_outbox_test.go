@@ -156,7 +156,7 @@ func TestProducer_Emit_CircuitOpen_WithOutbox_WritesRowAndReturnsNil(t *testing.
 	emitter, err := New(
 		context.Background(),
 		cfg,
-		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithCircuitBreakerManager(fakeMgr),
 		WithOutboxRepository(fakeRepo),
 	)
@@ -268,7 +268,7 @@ func TestProducer_Emit_CircuitOpen_NoOutbox_ReturnsErrCircuitOpen(t *testing.T) 
 	emitter, err := New(
 		context.Background(),
 		cfg,
-		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithCircuitBreakerManager(fakeMgr),
 		// Deliberately NO WithOutboxRepository — this is the T3 fallback.
 	)
@@ -295,7 +295,7 @@ func TestProducer_Emit_CircuitOpen_NilOutboxRepositoryBehavesAsNoOutbox(t *testi
 	emitter, err := New(
 		context.Background(),
 		cfg,
-		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithCircuitBreakerManager(fakeMgr),
 		WithOutboxRepository(nil),
 	)
@@ -337,7 +337,7 @@ func TestProducer_Emit_CircuitOpen_TypedNilOutboxWriterBehavesAsNoOutbox(t *test
 	emitter, err := New(
 		context.Background(),
 		cfg,
-		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithCircuitBreakerManager(fakeMgr),
 		WithOutboxWriter(writer),
 	)
@@ -363,7 +363,7 @@ func TestProducer_Emit_CircuitOpen_CustomOutboxWriterRoutesEnvelope(t *testing.T
 	emitter, err := New(
 		context.Background(),
 		cfg,
-		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithCircuitBreakerManager(fakeMgr),
 		WithOutboxWriter(writer),
 	)
@@ -430,7 +430,7 @@ func TestProducer_Emit_CircuitOpen_OutboxFailure_SurfacesError(t *testing.T) {
 	emitter, err := New(
 		context.Background(),
 		cfg,
-		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithCircuitBreakerManager(fakeMgr),
 		WithOutboxRepository(fakeRepo),
 	)
@@ -467,7 +467,7 @@ func TestProducer_PublishToOutbox_WithAmbientTx_CallsCreateWithTx(t *testing.T) 
 	emitter, err := New(
 		context.Background(),
 		cfg,
-		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithOutboxRepository(fakeRepo),
 	)
 	if err != nil {
@@ -514,7 +514,7 @@ func TestProducer_PublishToOutbox_WithAmbientTx_PropagatesError(t *testing.T) {
 	emitter, err := New(
 		context.Background(),
 		cfg,
-		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithOutboxRepository(fakeRepo),
 	)
 	if err != nil {
@@ -554,7 +554,7 @@ func TestProducer_PublishToOutbox_WithAmbientTx_RequiresTransactionalWriter(t *t
 	emitter, err := New(
 		context.Background(),
 		cfg,
-		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithOutboxWriter(nonTransactionalOutboxWriter{}),
 	)
 	if err != nil {
@@ -598,7 +598,7 @@ func TestProducer_PublishToOutbox_NilReceiver(t *testing.T) {
 func TestProducer_PublishToOutbox_NoRepoConfigured(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -630,7 +630,7 @@ func TestProducer_PublishToOutbox_MarshalFailure(t *testing.T) {
 	emitter, err := New(
 		context.Background(),
 		cfg,
-		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithOutboxRepository(fakeRepo),
 	)
 	if err != nil {

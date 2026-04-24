@@ -44,11 +44,11 @@ func (e OutboxEnvelope) Validate() error {
 	}
 
 	if e.Topic == "" {
-		return fmt.Errorf("%w: outbox envelope topic required", ErrInvalidEventDefinition)
+		return fmt.Errorf("%w: topic required", ErrInvalidOutboxEnvelope)
 	}
 
 	if eventTopic := e.Event.Topic(); eventTopic == "" || e.Topic != eventTopic {
-		return fmt.Errorf("%w: outbox envelope topic %q does not match event topic %q", ErrInvalidEventDefinition, e.Topic, eventTopic)
+		return fmt.Errorf("%w: topic %q does not match event topic %q", ErrInvalidOutboxEnvelope, e.Topic, eventTopic)
 	}
 
 	if e.AggregateID == uuid.Nil {

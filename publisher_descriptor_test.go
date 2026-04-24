@@ -71,7 +71,7 @@ func TestPublisherDescriptor_RejectsInvalidShape(t *testing.T) {
 func TestProducer_Descriptor_PopulatesProducerID(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}

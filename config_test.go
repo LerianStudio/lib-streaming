@@ -3,10 +3,7 @@
 package streaming
 
 import (
-	"bytes"
 	"errors"
-	"io"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -20,7 +17,7 @@ func TestLoadConfig_Defaults(t *testing.T) {
 	// but os.Getenv reads are cross-test so we keep this sequential for clarity.
 	clearStreamingEnv(t)
 
-	cfg, err := LoadConfig()
+	cfg, _, err := LoadConfig()
 	if err != nil {
 		t.Fatalf("LoadConfig() returned unexpected error: %v", err)
 	}
@@ -77,7 +74,7 @@ func TestLoadConfig_EnabledWithoutBrokers(t *testing.T) {
 	t.Setenv("STREAMING_BROKERS", " , , ")
 	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.midaz/tx-service")
 
-	_, err := LoadConfig()
+	_, _, err := LoadConfig()
 	if !errors.Is(err, ErrMissingBrokers) {
 		t.Fatalf("LoadConfig() err = %v; want ErrMissingBrokers", err)
 	}
@@ -91,7 +88,7 @@ func TestLoadConfig_EnabledWithoutSource(t *testing.T) {
 	t.Setenv("STREAMING_BROKERS", "broker:9092")
 	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "")
 
-	_, err := LoadConfig()
+	_, _, err := LoadConfig()
 	if !errors.Is(err, ErrMissingSource) {
 		t.Fatalf("LoadConfig() err = %v; want ErrMissingSource", err)
 	}
@@ -106,7 +103,7 @@ func TestLoadConfig_InvalidCompression(t *testing.T) {
 	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.midaz/tx-service")
 	t.Setenv("STREAMING_COMPRESSION", "brotli")
 
-	_, err := LoadConfig()
+	_, _, err := LoadConfig()
 	if !errors.Is(err, ErrInvalidCompression) {
 		t.Fatalf("LoadConfig() err = %v; want ErrInvalidCompression", err)
 	}
@@ -120,7 +117,7 @@ func TestLoadConfig_InvalidAcks(t *testing.T) {
 	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.midaz/tx-service")
 	t.Setenv("STREAMING_REQUIRED_ACKS", "maybe")
 
-	_, err := LoadConfig()
+	_, _, err := LoadConfig()
 	if !errors.Is(err, ErrInvalidAcks) {
 		t.Fatalf("LoadConfig() err = %v; want ErrInvalidAcks", err)
 	}
@@ -135,7 +132,7 @@ func TestLoadConfig_DisabledSkipsValidation(t *testing.T) {
 	t.Setenv("STREAMING_BROKERS", "")
 	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "")
 
-	cfg, err := LoadConfig()
+	cfg, _, err := LoadConfig()
 	if err != nil {
 		t.Fatalf("LoadConfig() with disabled returned unexpected error: %v", err)
 	}
@@ -152,7 +149,7 @@ func TestLoadConfig_ValidCSVBrokers(t *testing.T) {
 	t.Setenv("STREAMING_BROKERS", "broker1:9092, broker2:9092 ,broker3:9092")
 	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.midaz/tx-service")
 
-	cfg, err := LoadConfig()
+	cfg, _, err := LoadConfig()
 	if err != nil {
 		t.Fatalf("LoadConfig() err = %v", err)
 	}
@@ -177,7 +174,7 @@ func TestLoadConfig_AllValidCompressionCodecs(t *testing.T) {
 			t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.midaz/tx-service")
 			t.Setenv("STREAMING_COMPRESSION", codec)
 
-			cfg, err := LoadConfig()
+			cfg, _, err := LoadConfig()
 			if err != nil {
 				t.Fatalf("LoadConfig(%s) err = %v", codec, err)
 			}
@@ -198,7 +195,7 @@ func TestLoadConfig_AllValidAcks(t *testing.T) {
 			t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.midaz/tx-service")
 			t.Setenv("STREAMING_REQUIRED_ACKS", acks)
 
-			cfg, err := LoadConfig()
+			cfg, _, err := LoadConfig()
 			if err != nil {
 				t.Fatalf("LoadConfig(%s) err = %v", acks, err)
 			}
@@ -218,7 +215,7 @@ func TestLoadConfig_CBFailureRatioOverride(t *testing.T) {
 	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.midaz/tx-service")
 	t.Setenv("STREAMING_CB_FAILURE_RATIO", "0.25")
 
-	cfg, err := LoadConfig()
+	cfg, _, err := LoadConfig()
 	if err != nil {
 		t.Fatalf("LoadConfig() err = %v", err)
 	}
@@ -236,7 +233,7 @@ func TestLoadConfig_CBFailureRatioBadValueUsesDefault(t *testing.T) {
 	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.midaz/tx-service")
 	t.Setenv("STREAMING_CB_FAILURE_RATIO", "not-a-float")
 
-	cfg, err := LoadConfig()
+	cfg, _, err := LoadConfig()
 	if err != nil {
 		t.Fatalf("LoadConfig() err = %v", err)
 	}
@@ -255,7 +252,7 @@ func TestLoadConfig_EventPolicies(t *testing.T) {
 		"transaction.created.enabled=false,transaction.created.outbox=always;transaction.created.dlq=never\naccount.updated.direct=skip,account.updated.outbox=always",
 	)
 
-	cfg, err := LoadConfig()
+	cfg, _, err := LoadConfig()
 	if err != nil {
 		t.Fatalf("LoadConfig() err = %v", err)
 	}
@@ -287,7 +284,7 @@ func TestLoadConfig_EventPoliciesInvalidMode(t *testing.T) {
 	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.midaz/tx-service")
 	t.Setenv("STREAMING_EVENT_POLICIES", "transaction.created.outbox=sometimes")
 
-	_, err := LoadConfig()
+	_, _, err := LoadConfig()
 	if !errors.Is(err, ErrInvalidDeliveryPolicy) {
 		t.Fatalf("LoadConfig() err = %v; want ErrInvalidDeliveryPolicy", err)
 	}
@@ -300,7 +297,7 @@ func TestLoadConfig_EventPoliciesMalformedEntry(t *testing.T) {
 	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.midaz/tx-service")
 	t.Setenv("STREAMING_EVENT_POLICIES", "transaction.created.enabled")
 
-	_, err := LoadConfig()
+	_, _, err := LoadConfig()
 	if !errors.Is(err, ErrInvalidDeliveryPolicy) {
 		t.Fatalf("LoadConfig() err = %v; want ErrInvalidDeliveryPolicy", err)
 	}
@@ -353,7 +350,7 @@ func TestLoadConfig_DisabledSkipsInvalidEventPolicies(t *testing.T) {
 	t.Setenv("STREAMING_ENABLED", "false")
 	t.Setenv("STREAMING_EVENT_POLICIES", "transaction.created.outbox=sometimes")
 
-	cfg, err := LoadConfig()
+	cfg, _, err := LoadConfig()
 	if err != nil {
 		t.Fatalf("LoadConfig() with disabled returned unexpected error: %v", err)
 	}
@@ -395,88 +392,79 @@ func clearStreamingEnv(t *testing.T) {
 	}
 }
 
-// TestWarnLegacyEventTogglesEnv_WritesWarnWhenOnlyLegacySet is the direct
-// helper-level check: the warning lands on the passed writer and names both
+// TestLegacyEventTogglesEnvWarnings_EmitsWhenOnlyLegacySet is the direct
+// helper-level check: the returned slice carries a single warning naming both
 // the old and new var names so operators can grep either one.
-func TestWarnLegacyEventTogglesEnv_WritesWarnWhenOnlyLegacySet(t *testing.T) {
+func TestLegacyEventTogglesEnvWarnings_EmitsWhenOnlyLegacySet(t *testing.T) {
 	clearStreamingEnv(t)
 	t.Setenv("STREAMING_EVENT_TOGGLES", "foo.bar=true")
 
-	var buf bytes.Buffer
+	warnings := legacyEventTogglesEnvWarnings()
 
-	warnLegacyEventTogglesEnv(&buf)
-
-	got := buf.String()
+	if len(warnings) != 1 {
+		t.Fatalf("len(warnings) = %d; want 1", len(warnings))
+	}
+	got := warnings[0]
 	if !strings.Contains(got, "STREAMING_EVENT_TOGGLES") {
 		t.Errorf("warning missing legacy var name: %q", got)
 	}
 	if !strings.Contains(got, "STREAMING_EVENT_POLICIES") {
 		t.Errorf("warning missing replacement var name: %q", got)
 	}
-	if !strings.Contains(got, "WARN") {
-		t.Errorf("warning missing WARN prefix: %q", got)
-	}
 }
 
-// TestWarnLegacyEventTogglesEnv_SilentWhenBothSet exercises the dual-set
+// TestLegacyEventTogglesEnvWarnings_SilentWhenBothSet exercises the dual-set
 // branch: operator is already on the new var and happens to still have the
 // legacy var defined — no warning should fire.
-func TestWarnLegacyEventTogglesEnv_SilentWhenBothSet(t *testing.T) {
+func TestLegacyEventTogglesEnvWarnings_SilentWhenBothSet(t *testing.T) {
 	clearStreamingEnv(t)
 	t.Setenv("STREAMING_EVENT_TOGGLES", "foo.bar=true")
 	t.Setenv("STREAMING_EVENT_POLICIES", "foo.bar.enabled=true")
 
-	var buf bytes.Buffer
+	warnings := legacyEventTogglesEnvWarnings()
 
-	warnLegacyEventTogglesEnv(&buf)
-
-	if got := buf.String(); got != "" {
-		t.Errorf("expected no warning when both env vars are set; got %q", got)
+	if len(warnings) != 0 {
+		t.Errorf("expected no warnings when both env vars are set; got %v", warnings)
 	}
 }
 
-// TestLoadConfig_WarnsOnLegacyEventTogglesEnv is the end-to-end check: a
-// LoadConfig call with only the legacy var set captures a WARN on stderr.
-// os.Pipe is used to redirect os.Stderr for the duration of the call; the
-// cleanup restores the original descriptor. See the helper godoc for why we
-// route via io.Writer in the first place.
-func TestLoadConfig_WarnsOnLegacyEventTogglesEnv(t *testing.T) {
+// TestLegacyEventTogglesEnvWarnings_EmptyWhenNeitherSet asserts the helper
+// returns an empty (non-nil) slice when no migration warning applies, so
+// callers can range-for without a nil check.
+func TestLegacyEventTogglesEnvWarnings_EmptyWhenNeitherSet(t *testing.T) {
+	clearStreamingEnv(t)
+
+	warnings := legacyEventTogglesEnvWarnings()
+
+	if warnings == nil {
+		t.Error("warnings = nil; want empty (non-nil) slice")
+	}
+	if len(warnings) != 0 {
+		t.Errorf("len(warnings) = %d; want 0", len(warnings))
+	}
+}
+
+// TestLoadConfig_ReturnsLegacyEventTogglesWarning is the end-to-end check: a
+// LoadConfig call with only the legacy var set surfaces the migration warning
+// through the returned []string rather than writing to stderr or a logger.
+func TestLoadConfig_ReturnsLegacyEventTogglesWarning(t *testing.T) {
 	clearStreamingEnv(t)
 	t.Setenv("STREAMING_EVENT_TOGGLES", "foo.bar=true")
 
-	// Redirect os.Stderr for the duration of the LoadConfig call.
-	originalStderr := os.Stderr
-
-	r, w, err := os.Pipe()
+	_, warnings, err := LoadConfig()
 	if err != nil {
-		t.Fatalf("os.Pipe err = %v", err)
-	}
-
-	os.Stderr = w
-
-	t.Cleanup(func() {
-		os.Stderr = originalStderr
-	})
-
-	if _, err := LoadConfig(); err != nil {
 		t.Fatalf("LoadConfig() err = %v", err)
 	}
 
-	// Close the writer so the read side sees EOF and io.ReadAll can return.
-	if err := w.Close(); err != nil {
-		t.Fatalf("pipe writer close err = %v", err)
+	if len(warnings) != 1 {
+		t.Fatalf("len(warnings) = %d; want 1", len(warnings))
 	}
 
-	captured, err := io.ReadAll(r)
-	if err != nil {
-		t.Fatalf("read from pipe err = %v", err)
-	}
-
-	got := string(captured)
+	got := warnings[0]
 	if !strings.Contains(got, "STREAMING_EVENT_TOGGLES") {
-		t.Errorf("stderr missing legacy var name: %q", got)
+		t.Errorf("warning missing legacy var name: %q", got)
 	}
 	if !strings.Contains(got, "STREAMING_EVENT_POLICIES") {
-		t.Errorf("stderr missing replacement var name: %q", got)
+		t.Errorf("warning missing replacement var name: %q", got)
 	}
 }

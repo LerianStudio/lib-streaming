@@ -177,7 +177,7 @@ func (f *fakeCBManager) listenerCount() int {
 func TestProducer_Emit_CircuitClosed_PublishesToBroker(t *testing.T) {
 	cfg, cluster := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -233,7 +233,7 @@ func TestProducer_Emit_CircuitOpen_ReturnsErrCircuitOpen(t *testing.T) {
 	emitter, err := New(
 		context.Background(),
 		cfg,
-		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithCircuitBreakerManager(fakeMgr),
 	)
 	if err != nil {
@@ -286,7 +286,7 @@ func TestProducer_CBStateListener_UpdatesFlag(t *testing.T) {
 	emitter, err := New(
 		context.Background(),
 		cfg,
-		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithCircuitBreakerManager(fakeMgr),
 	)
 	if err != nil {
@@ -334,7 +334,7 @@ func TestProducer_CBStateListener_IgnoresOtherServices(t *testing.T) {
 	emitter, err := New(
 		context.Background(),
 		cfg,
-		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithCircuitBreakerManager(fakeMgr),
 	)
 	if err != nil {
@@ -406,7 +406,7 @@ func TestProducer_CBListener_PanicSafe(t *testing.T) {
 		context.Background(),
 		cfg,
 		WithLogger(logger),
-		WithCatalog(sampleCatalog()),
+		WithCatalog(sampleCatalog(t)),
 		WithCircuitBreakerManager(fakeMgr),
 	)
 	if err != nil {
@@ -461,7 +461,7 @@ func TestProducer_CBListener_SubMillisecond(t *testing.T) {
 	emitter, err := New(
 		context.Background(),
 		cfg,
-		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithCircuitBreakerManager(fakeMgr),
 	)
 	if err != nil {
@@ -511,7 +511,7 @@ func TestProducer_CBListener_SubMillisecond(t *testing.T) {
 func TestProducer_PreFlight_DoesNotFeedCB(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -554,7 +554,7 @@ func TestProducer_WithCircuitBreakerManager_ReusesCallerManager(t *testing.T) {
 	emitter, err := New(
 		context.Background(),
 		cfg,
-		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithCircuitBreakerManager(callerMgr),
 	)
 	if err != nil {
@@ -580,7 +580,7 @@ func TestProducer_WithCircuitBreakerManager_ReusesCallerManager(t *testing.T) {
 func TestProducer_WithoutCallerManager_BuildsOwnManager(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog()))
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
@@ -615,7 +615,7 @@ func TestProducer_Emit_CB_RaceWithListener(t *testing.T) {
 	emitter, err := New(
 		context.Background(),
 		cfg,
-		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithCircuitBreakerManager(fakeMgr),
 	)
 	if err != nil {
@@ -758,7 +758,7 @@ func TestProducer_CBStateListener_UnknownStateLogsWarning(t *testing.T) {
 	emitter, err := New(
 		context.Background(),
 		cfg,
-		WithLogger(log.NewNop()), WithCatalog(sampleCatalog()),
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithCircuitBreakerManager(fakeMgr),
 	)
 	if err != nil {
