@@ -744,3 +744,28 @@ func TestIsCallerError_OutboxSentinels_ReturnFalse(t *testing.T) {
 		})
 	}
 }
+
+// TestWithOutboxTx_NilTxStoresNothing locks the documented contract: calling
+// WithOutboxTx with a nil *sql.Tx still attaches a value to the context (for
+// type consistency), but the retrieval path in publishToOutbox guards on
+// `tx != nil` so a nil-tx context is indistinguishable from a context without
+// any WithOutboxTx call. This prevents a nil pointer deref in CreateWithTx.
+func TestWithOutboxTx_NilTxStoresNothing(t *testing.T) {
+	t.Parallel()
+
+	ctx := WithOutboxTx(context.Background(), nil)
+
+	// Retrieval with the (unexported) key mirrors what publishToOutbox does
+	// internally. The type-asserted value is a typed-nil *sql.Tx — the
+	// publishToOutbox guard `ok && tx != nil` is what ensures the
+	// transactional branch is NOT taken.
+	raw := ctx.Value(txContextKey{})
+	tx, ok := raw.(*sql.Tx)
+
+	if !ok {
+		t.Fatalf("ctx.Value(txContextKey) type assertion = !ok; stored value = %v", raw)
+	}
+	if tx != nil {
+		t.Errorf("ctx.Value(txContextKey) *sql.Tx = %v; want nil (the nil-tx guard path)", tx)
+	}
+}

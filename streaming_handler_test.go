@@ -118,4 +118,9 @@ func TestStreamingHandler_MethodNotAllowed(t *testing.T) {
 	if recorder.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status = %d; want %d", recorder.Code, http.StatusMethodNotAllowed)
 	}
+	// RFC 7231 §7.4.1: the Allow header is REQUIRED on 405 responses so
+	// clients know which methods are acceptable.
+	if got, want := recorder.Header().Get("Allow"), "GET, HEAD"; got != want {
+		t.Errorf("Allow header = %q; want %q", got, want)
+	}
 }

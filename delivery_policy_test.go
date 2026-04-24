@@ -114,3 +114,46 @@ func TestDeliveryPolicyResolver_InvalidOverride(t *testing.T) {
 		t.Fatalf("ResolveDeliveryPolicy() error = %v; want ErrInvalidDeliveryPolicy", err)
 	}
 }
+
+// TestCloneDeliveryPolicyOverrides_DeepCopiesEnabledPointer asserts the
+// Enabled *bool field is deep-copied so mutating the source pointee does NOT
+// leak into the clone. Without the deep copy, a cached Config (e.g. from
+// LoadConfig) would propagate mutations back into the Producer's snapshot.
+func TestCloneDeliveryPolicyOverrides_DeepCopiesEnabledPointer(t *testing.T) {
+	t.Parallel()
+
+	enabled := true
+	src := map[string]DeliveryPolicyOverride{
+		"foo": {Enabled: &enabled},
+	}
+
+	dst := cloneDeliveryPolicyOverrides(src)
+	if dst["foo"].Enabled == nil {
+		t.Fatal("cloneDeliveryPolicyOverrides() Enabled = nil; want non-nil")
+	}
+	if !*dst["foo"].Enabled {
+		t.Fatal("cloneDeliveryPolicyOverrides() *Enabled = false; want true before mutation")
+	}
+
+	// Mutate the source pointee. The clone MUST remain unchanged.
+	*src["foo"].Enabled = false
+
+	if !*dst["foo"].Enabled {
+		t.Error("cloneDeliveryPolicyOverrides() did not deep-copy Enabled pointer: clone reflects source mutation")
+	}
+}
+
+// TestCloneDeliveryPolicyOverrides_NilAndEmpty asserts the nil/empty input
+// contract: both nil and an empty map normalize to a nil return. Callers MUST
+// not rely on a non-nil empty-map return — the clone short-circuits on
+// len(src)==0.
+func TestCloneDeliveryPolicyOverrides_NilAndEmpty(t *testing.T) {
+	t.Parallel()
+
+	if got := cloneDeliveryPolicyOverrides(nil); got != nil {
+		t.Errorf("cloneDeliveryPolicyOverrides(nil) = %v; want nil", got)
+	}
+	if got := cloneDeliveryPolicyOverrides(map[string]DeliveryPolicyOverride{}); got != nil {
+		t.Errorf("cloneDeliveryPolicyOverrides(empty map) = %v; want nil (normalized)", got)
+	}
+}
