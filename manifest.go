@@ -36,15 +36,13 @@ func BuildManifest(descriptor PublisherDescriptor, catalog Catalog) (ManifestDoc
 		return ManifestDocument{}, err
 	}
 
+	// catalog.Definitions() already returns validated EventDefinition values
+	// (NewCatalog ran each through NewEventDefinition at construction).
+	// Re-validating here was a redundant allocation on every manifest build.
 	definitions := catalog.Definitions()
 
 	events := make([]ManifestEvent, 0, len(definitions))
 	for _, definition := range definitions {
-		definition, err = NewEventDefinition(definition)
-		if err != nil {
-			return ManifestDocument{}, err
-		}
-
 		events = append(events, ManifestEvent{
 			Key:             definition.Key,
 			ResourceType:    definition.ResourceType,

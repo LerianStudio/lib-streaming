@@ -1,10 +1,5 @@
 package streaming
 
-import (
-	"fmt"
-	"time"
-)
-
 // resolvedEvent is the internal output of resolving an EmitRequest against the
 // producer catalog and policy overrides.
 //
@@ -61,10 +56,8 @@ func (p *Producer) resolveEvent(request EmitRequest) (resolvedEvent, error) {
 		SystemEvent:     definition.SystemEvent,
 		Payload:         request.Payload,
 	}
-	if event.Timestamp.IsZero() {
-		event.Timestamp = time.Now().UTC()
-	}
-
+	// ApplyDefaults fills Timestamp from time.Now().UTC() when zero, along
+	// with EventID / SchemaVersion / DataContentType. No pre-fill needed.
 	(&event).ApplyDefaults()
 
 	if !event.SystemEvent && event.TenantID == "" {
@@ -75,10 +68,11 @@ func (p *Producer) resolveEvent(request EmitRequest) (resolvedEvent, error) {
 		return resolvedEvent{}, ErrMissingSource
 	}
 
+	// Event.Topic() returns "" only on a nil receiver; here we operate on
+	// a value-type Event that already passed tenant/source validation, so
+	// the empty-topic case is unreachable. (Previously a defensive guard
+	// lived here — Wave 2 confirmed it was dead code.)
 	topic := event.Topic()
-	if topic == "" {
-		return resolvedEvent{}, fmt.Errorf("%w: empty topic", ErrInvalidEventDefinition)
-	}
 
 	return resolvedEvent{
 		DefinitionKey: request.DefinitionKey,

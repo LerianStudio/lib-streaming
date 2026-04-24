@@ -162,8 +162,8 @@ func TestProducer_OutboxHandler_InvalidPayload_ReturnsError(t *testing.T) {
 }
 
 // TestProducer_OutboxHandler_NonStreamingEventType_NoOp: the handler's
-// prefix guard returns nil (not an error) for rows whose EventType is
-// NOT a streaming event. This is the defensive branch that protects
+// equality guard returns nil (not an error) for rows whose EventType is
+// NOT the streaming relay type. This is the defensive branch that protects
 // against bootstrap misconfiguration: if someone registers our handler
 // for "payment.created" by mistake, we must NOT publish that payload to
 // a streaming topic and we must NOT mark the row FAILED (which would
@@ -182,7 +182,7 @@ func TestProducer_OutboxHandler_NonStreamingEventType_NoOp(t *testing.T) {
 
 	row := &outbox.OutboxEvent{
 		ID:          uuid.New(),
-		EventType:   "payment.created", // NOT our prefix
+		EventType:   "payment.created", // NOT our relay type
 		AggregateID: uuid.New(),
 		Payload:     []byte(`{"ok":true}`),
 	}

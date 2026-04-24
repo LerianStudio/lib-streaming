@@ -38,12 +38,12 @@ func (p *Producer) RegisterOutboxRelay(registry *outbox.HandlerRegistry) error {
 // publishDirect has no such fallback; it returns the error and the
 // Dispatcher honors its normal retry/backoff policy.
 //
-// The EventType prefix check is defensive: the HandlerRegistry is exact-
-// match, so handleOutboxRow should only ever be invoked for event types
-// the caller registered. But if a bootstrap misconfiguration registers it
-// for a non-streaming event, surfacing a silent publish of garbage
-// through publishDirect would be worse than a no-op with a warning log
-// would have been. The prefix check short-circuits that.
+// The EventType exact-match check is defensive: the HandlerRegistry is
+// exact-match, so handleOutboxRow should only ever be invoked for event
+// types the caller registered. But if a bootstrap misconfiguration
+// registers it for a non-streaming event, surfacing a silent publish of
+// garbage through publishDirect would be worse than a no-op with a
+// warning log would have been. The equality guard short-circuits that.
 func (p *Producer) handleOutboxRow(ctx context.Context, row *outbox.OutboxEvent) error {
 	if p == nil {
 		return ErrNilProducer
