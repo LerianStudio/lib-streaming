@@ -14,5 +14,6 @@ coverage.html
 gosec-report.sarif
 
 docs/codereview/
+docs/dev-simplify/
 .codegraph/
 vendor/
