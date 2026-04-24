@@ -66,9 +66,12 @@ func (c Catalog) Lookup(key string) (EventDefinition, bool) {
 	return definition, ok
 }
 
-// MustLookup returns the definition registered under key or an
-// ErrUnknownEventDefinition-wrapped error.
-func (c Catalog) MustLookup(key string) (EventDefinition, error) {
+// Require returns the definition registered under key or an
+// ErrUnknownEventDefinition-wrapped error. Unlike the Go stdlib's Must* family
+// (regexp.MustCompile, template.Must), Require does NOT panic — it returns an
+// error. The name Require makes the intent explicit: "require this key, error
+// if missing" without the misleading Must convention.
+func (c Catalog) Require(key string) (EventDefinition, error) {
 	definition, ok := c.Lookup(key)
 	if !ok {
 		return EventDefinition{}, fmt.Errorf("%w: %q", ErrUnknownEventDefinition, key)

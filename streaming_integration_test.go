@@ -373,8 +373,8 @@ func TestIntegration_RoundTripHeaders(t *testing.T) {
 	// rather than silently passing on coincidental equality. eventToRequest
 	// drops DataContentType/DataSchema/SchemaVersion; resolveEvent fills them
 	// from the catalog.
-	definition, err := sampleCatalog().MustLookup("transaction.created")
-	require.NoError(t, err, "sampleCatalog().MustLookup(transaction.created)")
+	definition, err := sampleCatalog().Require("transaction.created")
+	require.NoError(t, err, "sampleCatalog().Require(transaction.created)")
 
 	assert.Equal(t, event.EventID, parsed.EventID, "ce-id")
 	assert.Equal(t, event.Source, parsed.Source, "ce-source")
@@ -649,8 +649,8 @@ func TestIntegration_DLQRouting(t *testing.T) {
 	// Catalog-sourced fields — assert against the catalog definition so that
 	// drift between the inline Event and the catalog surfaces as a failure
 	// rather than passing on coincidental equality with ApplyDefaults.
-	dlqDefinition, err := sampleCatalog().MustLookup(resourceType + "." + eventType)
-	require.NoError(t, err, "sampleCatalog().MustLookup("+resourceType+"."+eventType+")")
+	dlqDefinition, err := sampleCatalog().Require(resourceType + "." + eventType)
+	require.NoError(t, err, "sampleCatalog().Require("+resourceType+"."+eventType+")")
 	assert.Equal(t, dlqDefinition.DataContentType, hdrs["ce-datacontenttype"])
 	assert.Equal(t, dlqDefinition.SchemaVersion, hdrs["ce-schemaversion"])
 

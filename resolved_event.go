@@ -24,7 +24,7 @@ func (p *Producer) resolveEvent(request EmitRequest) (resolvedEvent, error) {
 		return resolvedEvent{}, err
 	}
 
-	definition, err := p.catalog.MustLookup(request.DefinitionKey)
+	definition, err := p.catalog.Require(request.DefinitionKey)
 	if err != nil {
 		return resolvedEvent{}, err
 	}

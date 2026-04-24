@@ -52,9 +52,9 @@ func TestCatalog_Lookup(t *testing.T) {
 		t.Errorf("Lookup().ResourceType = %q; want transaction", definition.ResourceType)
 	}
 
-	_, err = catalog.MustLookup("missing.created")
+	_, err = catalog.Require("missing.created")
 	if !errors.Is(err, ErrUnknownEventDefinition) {
-		t.Fatalf("MustLookup() error = %v; want ErrUnknownEventDefinition", err)
+		t.Fatalf("Require() error = %v; want ErrUnknownEventDefinition", err)
 	}
 }
 
@@ -82,7 +82,7 @@ func TestCatalog_DefinitionsReturnsCopy(t *testing.T) {
 // TestCatalog_ZeroValueBehavesAsEmpty locks the contract that a bare
 // Catalog{} (never constructed via NewCatalog) behaves as a read-only empty
 // catalog: Len is zero, Definitions returns a non-nil empty slice, lookups
-// fail cleanly, and MustLookup returns the documented sentinel. Nil-map /
+// fail cleanly, and Require returns the documented sentinel. Nil-map /
 // nil-slice access must not panic.
 func TestCatalog_ZeroValueBehavesAsEmpty(t *testing.T) {
 	t.Parallel()
@@ -106,8 +106,8 @@ func TestCatalog_ZeroValueBehavesAsEmpty(t *testing.T) {
 		t.Error("zero-value Catalog.Lookup(anything) ok = true; want false")
 	}
 
-	if _, err := c.MustLookup("anything"); !errors.Is(err, ErrUnknownEventDefinition) {
-		t.Errorf("zero-value Catalog.MustLookup(anything) err = %v; want ErrUnknownEventDefinition", err)
+	if _, err := c.Require("anything"); !errors.Is(err, ErrUnknownEventDefinition) {
+		t.Errorf("zero-value Catalog.Require(anything) err = %v; want ErrUnknownEventDefinition", err)
 	}
 }
 
