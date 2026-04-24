@@ -1,6 +1,8 @@
 package streaming
 
 import (
+	"fmt"
+
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
@@ -43,6 +45,12 @@ func (p *Producer) setEmitSpanAttributes(span trace.Span, event Event, topic, de
 		return
 	}
 
+	// event.policy encodes the three delivery modes into one attribute so
+	// span cardinality stays bounded at 10 keys (down from 12 in v0.2.0 and
+	// one fewer than v0.1.0). event.delivery_enabled was dropped entirely
+	// because it is always true by the time we set span attributes — the
+	// !hasDeliveryPath gate in emit.go short-circuits before the span is
+	// ever created.
 	span.SetAttributes(
 		attribute.String("messaging.system", "kafka"),
 		attribute.String("messaging.destination.name", topic),
@@ -56,10 +64,7 @@ func (p *Producer) setEmitSpanAttributes(span trace.Span, event Event, topic, de
 		attribute.String("event.definition_key", definitionKey),
 		attribute.String("tenant.id", event.TenantID),
 		attribute.String("streaming.producer_id", p.producerID),
-		attribute.Bool("event.delivery_enabled", policy.Enabled),
-		attribute.String("event.direct_mode", string(policy.Direct)),
-		attribute.String("event.outbox_mode", string(policy.Outbox)),
-		attribute.String("event.dlq_mode", string(policy.DLQ)),
+		attribute.String("event.policy", formatPolicyAttr(policy)),
 	)
 
 	if p.logger.Enabled(log.LevelDebug) {
@@ -70,4 +75,12 @@ func (p *Producer) setEmitSpanAttributes(span trace.Span, event Event, topic, de
 
 		span.SetAttributes(attribute.String("messaging.kafka.message.key", partKey))
 	}
+}
+
+// formatPolicyAttr renders the three delivery modes into a single
+// "direct:<mode>,outbox:<mode>,dlq:<mode>" string so the span carries one
+// attribute instead of three. Operators grep this string instead of joining
+// three keys; trace backend cardinality is lower.
+func formatPolicyAttr(policy DeliveryPolicy) string {
+	return fmt.Sprintf("direct:%s,outbox:%s,dlq:%s", policy.Direct, policy.Outbox, policy.DLQ)
 }

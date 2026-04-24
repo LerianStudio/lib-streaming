@@ -145,7 +145,9 @@ func TestEmit_Span_SingleStreamingEmitSpan(t *testing.T) {
 
 	attrs := spanAttrs(span)
 
-	// TRD §7.2 required attributes.
+	// TRD §7.2 required attributes. event.policy combines direct/outbox/dlq
+	// modes into a single key (v0.2.0 post-review fix #23) to keep span
+	// cardinality at 10 keys.
 	wantAttrs := map[string]string{
 		"messaging.system":           "kafka",
 		"messaging.destination.name": event.Topic(),
@@ -154,9 +156,7 @@ func TestEmit_Span_SingleStreamingEmitSpan(t *testing.T) {
 		"event.resource_type":        event.ResourceType,
 		"event.event_type":           event.EventType,
 		"event.definition_key":       "transaction.created",
-		"event.direct_mode":          string(DirectModeDirect),
-		"event.outbox_mode":          string(OutboxModeFallbackOnCircuitOpen),
-		"event.dlq_mode":             string(DLQModeOnRoutableFailure),
+		"event.policy":               "direct:direct,outbox:fallback_on_circuit_open,dlq:on_routable_failure",
 		"tenant.id":                  event.TenantID,
 		"event.outcome":              outcomeProduced,
 	}
@@ -562,9 +562,7 @@ func TestEmit_Span_AttributeCountInvariant(t *testing.T) {
 		"event.resource_type",
 		"event.event_type",
 		"event.definition_key",
-		"event.direct_mode",
-		"event.outbox_mode",
-		"event.dlq_mode",
+		"event.policy",
 		"tenant.id",
 		"streaming.producer_id",
 		"event.outcome",
