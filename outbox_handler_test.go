@@ -250,6 +250,108 @@ func TestProducer_RegisterOutboxRelay_NilRegistry(t *testing.T) {
 	}
 }
 
+// TestHandleOutboxRow_BypassesCBWhenOpen locks TRD §C7: the outbox relay
+// handler MUST use publishDirect — not Emit — so that an in-flight replay
+// during a sustained broker outage cannot re-enqueue itself when the
+// breaker is OPEN. The fake CB manager is forced OPEN; handleOutboxRow
+// must still reach the broker AND must never invoke cb.Execute.
+func TestHandleOutboxRow_BypassesCBWhenOpen(t *testing.T) {
+	cfg, cluster := kfakeConfig(t)
+
+	fakeMgr := newFakeCBManager()
+
+	emitter, err := New(
+		context.Background(),
+		cfg,
+		WithLogger(log.NewNop()),
+		WithCatalog(sampleCatalog()),
+		WithCircuitBreakerManager(fakeMgr),
+	)
+	if err != nil {
+		t.Fatalf("New err = %v", err)
+	}
+
+	t.Cleanup(func() { _ = emitter.Close() })
+
+	p := asProducer(t, emitter)
+
+	// Force the breaker OPEN. A synchronous Emit would now short-circuit with
+	// ErrCircuitOpen (or route to outbox if one were wired). handleOutboxRow
+	// must bypass that logic entirely.
+	fakeMgr.ForceTransition(p.cbServiceName, circuitbreaker.StateOpen)
+
+	if got := p.cbStateFlag.Load(); got != flagCBOpen {
+		t.Fatalf("cbStateFlag after OPEN = %d; want %d", got, flagCBOpen)
+	}
+
+	// Retrieve the fake breaker instance so we can assert Execute call count
+	// at the end. GetOrCreate returns the same instance already registered
+	// for this producer's cbServiceName.
+	cbIface, err := fakeMgr.GetOrCreate(p.cbServiceName, circuitbreaker.HTTPServiceConfig())
+	if err != nil {
+		t.Fatalf("GetOrCreate err = %v", err)
+	}
+
+	fake, ok := cbIface.(*fakeCB)
+	if !ok {
+		t.Fatalf("GetOrCreate returned %T; want *fakeCB", cbIface)
+	}
+
+	baseline := fake.executeCalls()
+
+	// Build a valid v0.2.0 envelope around sampleEvent and feed it to the
+	// handler. sampleEvent()'s topic matches the catalog, so preflight will
+	// accept it.
+	event := sampleEvent()
+	event.ApplyDefaults()
+	envelope := testOutboxEnvelope(event, event.Topic(), "transaction.created", DefaultDeliveryPolicy(), uuid.New())
+
+	payload, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatalf("json.Marshal envelope err = %v", err)
+	}
+
+	row := &outbox.OutboxEvent{
+		ID:          uuid.New(),
+		EventType:   StreamingOutboxEventType,
+		AggregateID: envelope.AggregateID,
+		Payload:     payload,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := p.handleOutboxRow(ctx, row); err != nil {
+		t.Fatalf("handleOutboxRow err = %v; want nil (replay must succeed even with CB OPEN)", err)
+	}
+
+	// Assertion 1: broker received the record. publishDirect did run.
+	consumer := newConsumer(t, cluster, event.Topic())
+
+	fetchCtx, fetchCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer fetchCancel()
+
+	fetches := consumer.PollFetches(fetchCtx)
+
+	var gotRec *kgo.Record
+	fetches.EachRecord(func(r *kgo.Record) {
+		if gotRec == nil {
+			gotRec = r
+		}
+	})
+
+	if gotRec == nil {
+		t.Fatalf("no record on broker after replay with CB OPEN; publishDirect was not invoked")
+	}
+
+	// Assertion 2: cb.Execute was NEVER called. If this grew, it would mean
+	// handleOutboxRow drifted from publishDirect to the Emit → cb.Execute
+	// path and the loop-prevention property is broken.
+	if got := fake.executeCalls(); got != baseline {
+		t.Errorf("cb.Execute call count = %d; want %d (replay must bypass CB entirely per TRD §C7)", got, baseline)
+	}
+}
+
 // TestProducer_HandleOutboxRow_NilReceiver: defensive guard. Unreachable
 // in practice but promised in the godoc contract.
 func TestProducer_HandleOutboxRow_NilReceiver(t *testing.T) {

@@ -25,11 +25,14 @@ import (
 // calls directly to the closure. It intentionally does NOT track failures —
 // tests drive state via fakeCBManager.ForceTransition.
 type fakeCB struct {
-	state circuitbreaker.State
-	mu    sync.Mutex
+	state     circuitbreaker.State
+	executeN  atomic.Int64
+	mu        sync.Mutex
 }
 
 func (f *fakeCB) Execute(fn func() (any, error)) (any, error) {
+	f.executeN.Add(1)
+
 	if fn == nil {
 		return nil, circuitbreaker.ErrNilCallback
 	}
@@ -39,6 +42,13 @@ func (f *fakeCB) Execute(fn func() (any, error)) (any, error) {
 	// path is about the flag mirror, not about what gobreaker does
 	// pre-trip.
 	return fn()
+}
+
+// executeCalls returns the number of Execute invocations on this fake. Used
+// by tests that need to prove a code path either went through or bypassed
+// the breaker.
+func (f *fakeCB) executeCalls() int64 {
+	return f.executeN.Load()
 }
 
 func (f *fakeCB) State() circuitbreaker.State {
