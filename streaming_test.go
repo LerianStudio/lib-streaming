@@ -48,6 +48,11 @@ func TestIsCallerError(t *testing.T) {
 		{"ClassContextCanceled", &EmitError{Class: ClassContextCanceled}},
 		{"ClassBrokerOverloaded", &EmitError{Class: ClassBrokerOverloaded}},
 		{"ErrEmitterClosed", ErrEmitterClosed},
+		{"ErrCircuitOpen", ErrCircuitOpen},
+		{"ErrOutboxNotConfigured", ErrOutboxNotConfigured},
+		{"ErrOutboxTxUnsupported", ErrOutboxTxUnsupported},
+		{"ErrNilProducer", ErrNilProducer},
+		{"ErrNilOutboxRegistry", ErrNilOutboxRegistry},
 		{"unrelated error", errors.New("some unrelated error")},
 		{"nil", nil},
 	}

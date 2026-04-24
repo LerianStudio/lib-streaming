@@ -96,7 +96,7 @@
 //     ErrInvalidCompression, ErrInvalidAcks.
 //   - Lifecycle / wiring (NOT caller errors — IsCallerError returns false):
 //     ErrEmitterClosed, ErrNilProducer, ErrCircuitOpen,
-//     ErrOutboxNotConfigured, ErrNilOutboxRegistry.
+//     ErrOutboxNotConfigured, ErrOutboxTxUnsupported, ErrNilOutboxRegistry.
 //
 // Use IsCallerError(err) to distinguish caller-correctable faults from
 // infrastructure faults without matching each sentinel individually.

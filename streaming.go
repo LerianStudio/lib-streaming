@@ -239,6 +239,11 @@ var (
 
 	// ErrOutboxTxUnsupported is returned when an ambient transaction is present
 	// but the configured OutboxWriter does not implement TransactionalOutboxWriter.
+	//
+	// NOT a caller error — it signals a wiring/setup gap (the operator
+	// installed a non-transactional writer but callers expect transactional
+	// outbox semantics). IsCallerError returns false for it. Parallels
+	// ErrCircuitOpen and ErrOutboxNotConfigured.
 	ErrOutboxTxUnsupported = errors.New("streaming: outbox writer does not support ambient transactions")
 
 	// ErrNilOutboxRegistry is returned from RegisterOutboxRelay when the

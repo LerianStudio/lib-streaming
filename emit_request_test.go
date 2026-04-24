@@ -64,7 +64,7 @@ func TestEmitRequest_New_RejectsInvalidShape(t *testing.T) {
 				DefinitionKey: "transaction\ncreated",
 				Payload:       json.RawMessage(`{}`),
 			},
-			want: ErrUnknownEventDefinition,
+			want: ErrInvalidEventDefinition,
 		},
 		{
 			name: "invalid subject",

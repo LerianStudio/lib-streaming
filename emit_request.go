@@ -55,8 +55,12 @@ func newEmitRequest(request EmitRequest, copyPayload bool) (EmitRequest, error) 
 }
 
 func validateEmitRequestHeaderFields(request EmitRequest) error {
+	// DefinitionKey malformed-shape faults map to ErrInvalidEventDefinition,
+	// NOT ErrUnknownEventDefinition — "unknown" is a catalog-lookup miss
+	// (empty key, key not registered), while "invalid" is a structural fault
+	// (control chars, too long). Conflating the two used to mislead callers.
 	checks := [...]headerFieldCheck{
-		{request.DefinitionKey, maxEventIDBytes, ErrUnknownEventDefinition},
+		{request.DefinitionKey, maxEventIDBytes, ErrInvalidEventDefinition},
 		{request.TenantID, maxTenantIDBytes, ErrInvalidTenantID},
 		{request.Subject, maxSubjectBytes, ErrInvalidSubject},
 		{request.EventID, maxEventIDBytes, ErrInvalidEventID},
