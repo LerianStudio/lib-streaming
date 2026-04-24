@@ -1,6 +1,11 @@
 package streaming
 
-// ManifestVersion is the current exported manifest schema version.
+// ManifestVersion is the wire-version of the JSON document returned by
+// BuildManifest / NewStreamingHandler. Follows semver:
+//   - Minor bumps (1.x.0) are additive — new fields, no removals or type
+//     changes. Existing consumers parse the new manifest unchanged.
+//   - Major bumps (X.0.0) remove or change a field. Coordinate with all
+//     downstream contract-diffing tools before bumping.
 const ManifestVersion = "1.0.0"
 
 // ManifestDocument is the JSON-serializable description of a producer's event

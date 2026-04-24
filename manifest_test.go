@@ -3,6 +3,7 @@
 package streaming
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -161,5 +162,90 @@ func TestManifest_ProducerIDRoundTrips(t *testing.T) {
 
 	if decoded.Publisher.ProducerID != producerID {
 		t.Errorf("decoded.Publisher.ProducerID = %q; want %q", decoded.Publisher.ProducerID, producerID)
+	}
+}
+
+// TestManifest_DeterministicJSON asserts that BuildManifest + json.Marshal
+// produce byte-identical output for the same (descriptor, catalog) inputs,
+// and that the output is independent of the insertion order into NewCatalog
+// (Catalog sorts internally by Key). Downstream contract-diffing tools depend
+// on this determinism to detect real schema drift vs. cosmetic reordering.
+func TestManifest_DeterministicJSON(t *testing.T) {
+	t.Parallel()
+
+	defA := EventDefinition{
+		Key:           "account.closed",
+		ResourceType:  "account",
+		EventType:     "closed",
+		DefaultPolicy: DeliveryPolicy{Enabled: true, DLQ: DLQModeNever},
+	}
+	defB := EventDefinition{
+		Key:           "transaction.created",
+		ResourceType:  "transaction",
+		EventType:     "created",
+		DefaultPolicy: DeliveryPolicy{Enabled: true, Outbox: OutboxModeAlways},
+	}
+	descriptor := PublisherDescriptor{
+		ServiceName: "svc",
+		SourceBase:  "//s",
+	}
+
+	catalog1, err := NewCatalog(defA, defB)
+	if err != nil {
+		t.Fatalf("NewCatalog(defA, defB) error = %v", err)
+	}
+	catalog2, err := NewCatalog(defA, defB)
+	if err != nil {
+		t.Fatalf("NewCatalog(defA, defB) error = %v", err)
+	}
+	// Different insertion order — output must still be byte-identical because
+	// Catalog sorts by Key internally.
+	catalog3, err := NewCatalog(defB, defA)
+	if err != nil {
+		t.Fatalf("NewCatalog(defB, defA) error = %v", err)
+	}
+
+	manifest1, err := BuildManifest(descriptor, catalog1)
+	if err != nil {
+		t.Fatalf("BuildManifest(1) error = %v", err)
+	}
+	manifest2, err := BuildManifest(descriptor, catalog2)
+	if err != nil {
+		t.Fatalf("BuildManifest(2) error = %v", err)
+	}
+	manifest3, err := BuildManifest(descriptor, catalog3)
+	if err != nil {
+		t.Fatalf("BuildManifest(3) error = %v", err)
+	}
+
+	out1, err := json.Marshal(manifest1)
+	if err != nil {
+		t.Fatalf("json.Marshal(1) error = %v", err)
+	}
+	out2, err := json.Marshal(manifest2)
+	if err != nil {
+		t.Fatalf("json.Marshal(2) error = %v", err)
+	}
+	out3, err := json.Marshal(manifest3)
+	if err != nil {
+		t.Fatalf("json.Marshal(3) error = %v", err)
+	}
+
+	if !bytes.Equal(out1, out2) {
+		t.Errorf("manifest JSON not deterministic across repeated builds:\nout1 = %s\nout2 = %s", out1, out2)
+	}
+	if !bytes.Equal(out1, out3) {
+		t.Errorf("manifest JSON not independent of catalog insertion order:\nout1 = %s\nout3 = %s", out1, out3)
+	}
+}
+
+// TestManifestVersion_IsStable pins the manifest wire-version as a literal.
+// Tautological-looking but load-bearing: the next minor bump MUST be a
+// deliberate decision, not a silent change.
+func TestManifestVersion_IsStable(t *testing.T) {
+	t.Parallel()
+
+	if ManifestVersion != "1.0.0" {
+		t.Errorf("ManifestVersion = %q; want %q (bumping this constant is an operational decision — coordinate with downstream consumers)", ManifestVersion, "1.0.0")
 	}
 }
