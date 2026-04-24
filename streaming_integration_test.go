@@ -368,12 +368,20 @@ func TestIntegration_RoundTripHeaders(t *testing.T) {
 	parsed, err := ParseCloudEventsHeaders(r.Headers)
 	require.NoError(t, err, "ParseCloudEventsHeaders")
 
+	// Fields supplied by the catalog — assert against the catalog definition,
+	// NOT the inline Event, so drift between the two shows as a real failure
+	// rather than silently passing on coincidental equality. eventToRequest
+	// drops DataContentType/DataSchema/SchemaVersion; resolveEvent fills them
+	// from the catalog.
+	definition, err := sampleCatalog().MustLookup("transaction.created")
+	require.NoError(t, err, "sampleCatalog().MustLookup(transaction.created)")
+
 	assert.Equal(t, event.EventID, parsed.EventID, "ce-id")
 	assert.Equal(t, event.Source, parsed.Source, "ce-source")
 	assert.Equal(t, event.Subject, parsed.Subject, "ce-subject")
-	assert.Equal(t, event.DataContentType, parsed.DataContentType, "ce-datacontenttype")
-	assert.Equal(t, event.DataSchema, parsed.DataSchema, "ce-dataschema")
-	assert.Equal(t, event.SchemaVersion, parsed.SchemaVersion, "ce-schemaversion")
+	assert.Equal(t, definition.DataContentType, parsed.DataContentType, "ce-datacontenttype")
+	assert.Equal(t, definition.DataSchema, parsed.DataSchema, "ce-dataschema")
+	assert.Equal(t, definition.SchemaVersion, parsed.SchemaVersion, "ce-schemaversion")
 	assert.Equal(t, event.ResourceType, parsed.ResourceType, "ce-resourcetype")
 	assert.Equal(t, event.EventType, parsed.EventType, "ce-eventtype")
 	assert.Equal(t, event.TenantID, parsed.TenantID, "ce-tenantid")
@@ -638,9 +646,13 @@ func TestIntegration_DLQRouting(t *testing.T) {
 	assert.Equal(t, eventType, hdrs["ce-eventtype"])
 	assert.NotEmpty(t, hdrs["ce-id"])   // ApplyDefaults generates this
 	assert.NotEmpty(t, hdrs["ce-time"]) // ApplyDefaults generates this
-	// ApplyDefaults fills datacontenttype and schemaversion.
-	assert.Equal(t, defaultDataContentType, hdrs["ce-datacontenttype"])
-	assert.Equal(t, defaultSchemaVersion, hdrs["ce-schemaversion"])
+	// Catalog-sourced fields — assert against the catalog definition so that
+	// drift between the inline Event and the catalog surfaces as a failure
+	// rather than passing on coincidental equality with ApplyDefaults.
+	dlqDefinition, err := sampleCatalog().MustLookup(resourceType + "." + eventType)
+	require.NoError(t, err, "sampleCatalog().MustLookup("+resourceType+"."+eventType+")")
+	assert.Equal(t, dlqDefinition.DataContentType, hdrs["ce-datacontenttype"])
+	assert.Equal(t, dlqDefinition.SchemaVersion, hdrs["ce-schemaversion"])
 
 	// Byte-equal body preservation on the DLQ side.
 	assert.Equal(t, []byte(payload), dlqRecord.Value, "DLQ body byte-equal")
