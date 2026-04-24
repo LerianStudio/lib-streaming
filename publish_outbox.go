@@ -57,6 +57,19 @@ func (p *Producer) publishToOutbox(ctx context.Context, event Event, topic strin
 	}
 
 	if p.outboxWriter == nil {
+		// Invariant violation: every call site of publishToOutbox has
+		// already gated on outbox availability (emit.go's circuit-open
+		// branch checks p.outboxWriter != nil; the outbox-always branch
+		// only runs when ResolveDeliveryPolicy permits direct=skip +
+		// outbox=always). Reaching here with nil outboxWriter means a
+		// caller-side invariant broke. Fire the trident so the contract
+		// break is visible; still return ErrOutboxNotConfigured so upstream
+		// outcome classification is unchanged.
+		a := p.newAsserter("publish_outbox.publish_to_outbox")
+		_ = a.NotNil(ctx, p.outboxWriter, "publishToOutbox must not be reached with nil outboxWriter",
+			"producer_id", p.producerID,
+			"topic", topic,
+		)
 		return ErrOutboxNotConfigured
 	}
 
