@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/LerianStudio/lib-commons/v5/commons"
 	"github.com/LerianStudio/lib-commons/v5/commons/circuitbreaker"
 	"github.com/LerianStudio/lib-commons/v5/commons/log"
 )
@@ -248,6 +249,14 @@ func NewProducer(ctx context.Context, cfg Config, opts ...EmitterOption) (*Produ
 		tracer = otel.Tracer(tracerName)
 	}
 
+	// UUIDv7 is time-ordered; producerID shows up in CB service names, span
+	// attributes, and DLQ headers — sortable IDs make operator triage easier.
+	// Fall back to v4 if v7 generation ever fails (vanishingly unlikely).
+	producerID := uuid.NewString()
+	if id, err := commons.GenerateUUIDv7(); err == nil {
+		producerID = id.String()
+	}
+
 	p := &Producer{
 		client:            client,
 		cfg:               cfg,
@@ -255,7 +264,7 @@ func NewProducer(ctx context.Context, cfg Config, opts ...EmitterOption) (*Produ
 		tracer:            tracer,
 		logger:            logger,
 		metrics:           newStreamingMetrics(resolvedOpts.metricsFactory, logger),
-		producerID:        uuid.NewString(),
+		producerID:        producerID,
 		partFn:            resolvedOpts.partitionKeyFn,
 		closeTimeout:      closeTimeout,
 		outboxWriter:      resolvedOpts.outboxWriter,

@@ -84,8 +84,15 @@ func outboxRowFromEnvelope(envelope OutboxEnvelope) (*outbox.OutboxEvent, error)
 		return nil, ErrPayloadTooLarge
 	}
 
+	// UUIDv7 is time-ordered; outbox rows scanned by ID get natural
+	// insertion-order playback. Fall back to v4 if v7 ever fails.
+	rowID, err := uuid.NewV7()
+	if err != nil {
+		rowID = uuid.New()
+	}
+
 	return &outbox.OutboxEvent{
-		ID:          uuid.New(),
+		ID:          rowID,
 		EventType:   StreamingOutboxEventType,
 		AggregateID: envelope.AggregateID,
 		Payload:     payload,
