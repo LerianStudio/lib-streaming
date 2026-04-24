@@ -3,6 +3,7 @@ package streaming
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/sony/gobreaker"
@@ -241,10 +242,12 @@ func (p *Producer) emitAttempt(ctx context.Context, span trace.Span, event Event
 				*outcome = outcomeFailed
 			}
 		} else {
-			// Non-EmitError errors from publishDirect are unexpected
-			// (publishDirect's contract is to always wrap). Treat as
-			// caller_error to keep the label bounded.
-			*outcome = outcomeCallerError
+			// Non-EmitError errors from publishDirect are an invariant
+			// violation — publishDirect's contract is to always wrap. Fire
+			// the observability trident so the contract break is visible,
+			// then fall back to the bounded caller_error label so metric
+			// cardinality stays intact.
+			p.classifyNonEmitErrorFallback(ctx, topic, err, outcome)
 		}
 
 		return nil, err
@@ -296,4 +299,27 @@ func (p *Producer) emitCircuitOpenBranch(ctx context.Context, span trace.Span, e
 	*outcome = outcomeCircuitOpen
 
 	return nil, ErrCircuitOpen
+}
+
+// classifyNonEmitErrorFallback handles the invariant violation where
+// publishDirect returned a non-*EmitError. publishDirect's documented
+// contract is to always wrap errors in *EmitError, so reaching this branch
+// means the contract broke — typically a bug in lib-streaming itself, not
+// a caller fault.
+//
+// Before T-003 the branch silently relabeled the outcome as caller_error,
+// which polluted the caller_error dashboard with lib-streaming bugs
+// disguised as caller mistakes. Now we fire the observability trident via
+// asserter.NoError so operators see the contract break directly, then set
+// the outcome to caller_error so metric cardinality stays bounded — the
+// closed outcome enum (TRD §7.1) does not include an "invariant_violated"
+// slot, and adding one without a TRD amendment is out of scope here.
+func (p *Producer) classifyNonEmitErrorFallback(ctx context.Context, topic string, err error, outcome *string) {
+	a := p.newAsserter("emit.classify_non_emit_error")
+	_ = a.NoError(ctx, err, "publishDirect must wrap all errors in *EmitError",
+		"topic", topic,
+		"error_type", fmt.Sprintf("%T", err),
+	)
+
+	*outcome = outcomeCallerError
 }
