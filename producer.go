@@ -199,25 +199,8 @@ func NewProducer(ctx context.Context, cfg Config, opts ...EmitterOption) (*Produ
 		closeTimeout = 30 * time.Second
 	}
 
-	if resolvedOpts.catalog.Len() == 0 {
-		return nil, fmt.Errorf("%w: catalog is empty (WithCatalog requires at least one EventDefinition)", ErrInvalidEventDefinition)
-	}
-
-	for key := range cfg.PolicyOverrides {
-		if _, ok := resolvedOpts.catalog.Lookup(key); !ok {
-			return nil, fmt.Errorf("streaming: invalid policy override: %w: %q", ErrUnknownEventDefinition, key)
-		}
-	}
-
-	// Catalog-level SystemEvent capability gate. Rejecting at construction —
-	// not at Emit — means a misconfigured bootstrap fails fast at startup
-	// instead of silently failing every system-event emission in production.
-	if !resolvedOpts.allowSystemEvents {
-		for _, def := range resolvedOpts.catalog.Definitions() {
-			if def.SystemEvent {
-				return nil, fmt.Errorf("%w: catalog contains system event %q but Producer was not constructed with WithAllowSystemEvents()", ErrSystemEventsNotAllowed, def.Key)
-			}
-		}
+	if err := validateCatalogAtBootstrap(resolvedOpts.catalog, cfg.PolicyOverrides, resolvedOpts.allowSystemEvents); err != nil {
+		return nil, err
 	}
 
 	// Build the franz-go options slice. Every knob is pinned explicitly per
@@ -310,4 +293,35 @@ func (p *Producer) Descriptor(base PublisherDescriptor) (PublisherDescriptor, er
 	base.ProducerID = p.producerID
 
 	return NewPublisherDescriptor(base)
+}
+
+// validateCatalogAtBootstrap enforces the three catalog invariants required at
+// NewProducer time: non-empty catalog, every PolicyOverride key matches a
+// definition, and SystemEvent definitions require explicit caller opt-in.
+//
+// Failing fast at construction (rather than at first Emit) means a misconfigured
+// service crashes at startup with a precise message, instead of silently
+// dropping every system-event emission in production.
+func validateCatalogAtBootstrap(catalog Catalog, policyOverrides map[string]DeliveryPolicyOverride, allowSystemEvents bool) error {
+	if catalog.Len() == 0 {
+		return fmt.Errorf("%w: catalog is empty (WithCatalog requires at least one EventDefinition)", ErrInvalidEventDefinition)
+	}
+
+	for key := range policyOverrides {
+		if _, ok := catalog.Lookup(key); !ok {
+			return fmt.Errorf("streaming: invalid policy override: %w: %q", ErrUnknownEventDefinition, key)
+		}
+	}
+
+	if allowSystemEvents {
+		return nil
+	}
+
+	for _, def := range catalog.Definitions() {
+		if def.SystemEvent {
+			return fmt.Errorf("%w: catalog contains system event %q but Producer was not constructed with WithAllowSystemEvents()", ErrSystemEventsNotAllowed, def.Key)
+		}
+	}
+
+	return nil
 }

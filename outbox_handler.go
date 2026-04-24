@@ -136,6 +136,11 @@ func (p *Producer) decodeOutboxRow(ctx context.Context, row *outbox.OutboxEvent)
 	// visible.
 	if envelope.Version == 0 {
 		var legacyEvent Event
+		// Event has no `json:` tags — encoding uses Go field names verbatim.
+		// The musttag linter flags this; suppress with the same justification
+		// as outbox_writer.go's marshal site (single source of truth on the
+		// CloudEvents wire shape).
+		//nolint:musttag
 		if err := json.Unmarshal(row.Payload, &legacyEvent); err == nil &&
 			(legacyEvent.TenantID != "" || legacyEvent.ResourceType != "" || legacyEvent.EventType != "") {
 			synthesized := OutboxEnvelope{
