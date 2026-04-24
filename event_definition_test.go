@@ -160,4 +160,3 @@ func TestEventDefinition_Topic_AppendsVersionSuffixForMajorV2Plus(t *testing.T) 
 		})
 	}
 }
-

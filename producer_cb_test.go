@@ -25,9 +25,9 @@ import (
 // calls directly to the closure. It intentionally does NOT track failures —
 // tests drive state via fakeCBManager.ForceTransition.
 type fakeCB struct {
-	state     circuitbreaker.State
-	executeN  atomic.Int64
-	mu        sync.Mutex
+	state    circuitbreaker.State
+	executeN atomic.Int64
+	mu       sync.Mutex
 }
 
 func (f *fakeCB) Execute(fn func() (any, error)) (any, error) {
