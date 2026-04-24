@@ -139,6 +139,10 @@ func WithCloseTimeout(d time.Duration) EmitterOption {
 // The Producer NEVER constructs an OutboxRepository itself; ownership and
 // lifecycle stay with the consuming service. Passing nil is equivalent to
 // not calling this option.
+//
+// Mutually exclusive with WithOutboxWriter — last call wins. Mixing them
+// silently loses transactional capability if the custom writer does not
+// implement TransactionalOutboxWriter.
 func WithOutboxRepository(repo outbox.OutboxRepository) EmitterOption {
 	return func(o *emitterOptions) {
 		if isNilInterface(repo) {
@@ -153,6 +157,10 @@ func WithOutboxRepository(repo outbox.OutboxRepository) EmitterOption {
 
 // WithOutboxWriter wires a custom outbox writer boundary. Passing nil is
 // equivalent to omitting the option.
+//
+// Mutually exclusive with WithOutboxRepository — last call wins. Mixing them
+// silently loses transactional capability if the custom writer does not
+// implement TransactionalOutboxWriter.
 func WithOutboxWriter(writer OutboxWriter) EmitterOption {
 	return func(o *emitterOptions) {
 		if isNilInterface(writer) {
