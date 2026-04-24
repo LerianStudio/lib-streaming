@@ -8,6 +8,16 @@ import (
 // NewStreamingHandler returns an optional stdlib HTTP handler for an
 // app-mounted /streaming route. The library does not mount routes, enforce
 // auth, start servers, or adapt framework-specific contexts.
+//
+// SECURITY: This handler returns internal event-taxonomy metadata (event
+// types, schema versions, service name/version, producer ID). Callers MUST
+// wrap it in their app's auth middleware before mounting publicly. The
+// library does not enforce auth.
+//
+// SNAPSHOT SEMANTICS: NewStreamingHandler serializes the manifest payload
+// ONCE at construction. Subsequent requests serve the cached bytes. If the
+// catalog or descriptor changes after construction, callers must rebuild
+// the handler; this handler will not reflect runtime mutations.
 func NewStreamingHandler(descriptor PublisherDescriptor, catalog Catalog) (http.Handler, error) {
 	manifest, err := BuildManifest(descriptor, catalog)
 	if err != nil {

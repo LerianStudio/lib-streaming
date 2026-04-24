@@ -13,16 +13,19 @@ type ManifestDocument struct {
 
 // ManifestEvent is one catalog entry rendered for export and introspection.
 type ManifestEvent struct {
-	Key             string         `json:"key"`
-	ResourceType    string         `json:"resourceType"`
-	EventType       string         `json:"eventType"`
-	Topic           string         `json:"topic"`
-	SchemaVersion   string         `json:"schemaVersion"`
-	DataContentType string         `json:"dataContentType"`
-	DataSchema      string         `json:"dataSchema,omitempty"`
-	SystemEvent     bool           `json:"systemEvent"`
-	Description     string         `json:"description,omitempty"`
-	DefaultPolicy   DeliveryPolicy `json:"defaultPolicy"`
+	Key             string `json:"key"`
+	ResourceType    string `json:"resourceType"`
+	EventType       string `json:"eventType"`
+	Topic           string `json:"topic"`
+	SchemaVersion   string `json:"schemaVersion"`
+	DataContentType string `json:"dataContentType"`
+	DataSchema      string `json:"dataSchema,omitempty"`
+	SystemEvent     bool   `json:"systemEvent"`
+	Description     string `json:"description,omitempty"`
+	// DefaultPolicy is the EventDefinition default policy as registered in
+	// the catalog. Runtime per-event overrides from Config.PolicyOverrides
+	// are NOT reflected here.
+	DefaultPolicy DeliveryPolicy `json:"defaultPolicy"`
 }
 
 // BuildManifest renders a catalog and publisher descriptor into an exportable
