@@ -24,6 +24,6 @@ func Example_basicUsage() {
 		return
 	}
 
-	fmt.Println(len(mock.Events()))
+	fmt.Println(len(mock.Requests()))
 	// Output: 1
 }

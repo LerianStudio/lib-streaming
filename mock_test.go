@@ -105,14 +105,14 @@ func TestMockEmitter_Reset(t *testing.T) {
 	_ = m.Emit(ctx, EmitRequest{DefinitionKey: "transaction.created", TenantID: "t-1"})
 	_ = m.Emit(ctx, EmitRequest{DefinitionKey: "account.updated", TenantID: "t-1"})
 
-	if len(m.Events()) != 2 {
-		t.Fatalf("pre-reset len = %d; want 2", len(m.Events()))
+	if len(m.Requests()) != 2 {
+		t.Fatalf("pre-reset len = %d; want 2", len(m.Requests()))
 	}
 
 	m.Reset()
 
-	if len(m.Events()) != 0 {
-		t.Errorf("post-reset len = %d; want 0", len(m.Events()))
+	if len(m.Requests()) != 0 {
+		t.Errorf("post-reset len = %d; want 0", len(m.Requests()))
 	}
 }
 
@@ -140,7 +140,7 @@ func TestMockEmitter_ConcurrentEmits(t *testing.T) {
 	}
 	wg.Wait()
 
-	if got := len(m.Events()); got != n {
+	if got := len(m.Requests()); got != n {
 		t.Errorf("captured %d events; want %d", got, n)
 	}
 }
@@ -174,8 +174,8 @@ func TestMockEmitter_NilReceiver(t *testing.T) {
 	if err := m.Emit(context.Background(), EmitRequest{}); err != nil {
 		t.Errorf("nil.Emit = %v; want nil", err)
 	}
-	if got := m.Events(); got != nil {
-		t.Errorf("nil.Events = %v; want nil", got)
+	if got := m.Requests(); got != nil {
+		t.Errorf("nil.Requests = %v; want nil", got)
 	}
 	// SetError and Reset should be no-ops (no panic).
 	m.SetError(ErrNotJSON)

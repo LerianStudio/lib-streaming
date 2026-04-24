@@ -69,12 +69,6 @@ func (m *MockEmitter) Requests() []EmitRequest {
 	return out
 }
 
-// Events returns request snapshots for legacy test helper naming. New code
-// should prefer Requests.
-func (m *MockEmitter) Events() []EmitRequest {
-	return m.Requests()
-}
-
 // SetError makes subsequent Emit calls return err without capturing the
 // event. Pass nil to restore the happy path.
 func (m *MockEmitter) SetError(err error) {
