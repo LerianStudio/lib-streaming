@@ -1,3 +1,8 @@
+// This file is intentionally tagless: sampleCatalog() and eventToRequest()
+// are shared fixtures used by unit, integration, and chaos test suites.
+// Adding a build tag here would leave the other suites unable to build. Any
+// tag-unused static-analysis findings on these helpers are expected.
+
 package streaming
 
 func sampleCatalog() Catalog {
