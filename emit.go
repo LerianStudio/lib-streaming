@@ -60,12 +60,10 @@ func (p *Producer) Emit(ctx context.Context, request EmitRequest) error {
 	event := resolved.Event
 	topic := resolved.Topic
 
-	policy := resolved.Policy.Normalize()
-	if err := policy.Validate(); err != nil {
-		p.metrics.recordEmitted(ctx, topic, outcomeCallerError)
-
-		return err
-	}
+	// resolveEvent → ResolveDeliveryPolicy guarantees a normalized + validated
+	// policy. Re-running Normalize/Validate here used to add 2 allocs per
+	// Emit on the hot path for zero benefit.
+	policy := resolved.Policy
 
 	if !policy.hasDeliveryPath() {
 		p.metrics.recordEmitted(ctx, topic, outcomeCallerError)

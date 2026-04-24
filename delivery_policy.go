@@ -88,9 +88,13 @@ func (p DeliveryPolicy) Normalize() DeliveryPolicy {
 }
 
 // Validate reports unsupported delivery mode values.
+//
+// Contract: Validate ASSUMES a normalized input. Callers must call Normalize()
+// before Validate(); the zero-value policy is NOT auto-normalized here.
+// ResolveDeliveryPolicy + applyDeliveryPolicyOverride guarantee this contract
+// for the emit hot path — re-normalizing inside Validate used to add ~3 allocs
+// per Emit on the hot path for zero benefit.
 func (p DeliveryPolicy) Validate() error {
-	p = p.Normalize()
-
 	if !isValidDirectMode(p.Direct) {
 		return fmt.Errorf("%w: direct=%q", ErrInvalidDeliveryPolicy, p.Direct)
 	}

@@ -60,12 +60,15 @@ func (p *Producer) publishToOutbox(ctx context.Context, event Event, topic strin
 		return ErrOutboxNotConfigured
 	}
 
+	// policy is already normalized — emit.go and outbox_handler.go both pass
+	// policies returned from ResolveDeliveryPolicy / envelope.Policy.Normalize.
+	// Re-normalizing here was a redundant hot-path allocation.
 	envelope := OutboxEnvelope{
 		Version:       outboxEnvelopeVersion,
 		Topic:         topic,
 		DefinitionKey: definitionKey,
 		AggregateID:   p.deriveOutboxAggregateID(event),
-		Policy:        policy.Normalize(),
+		Policy:        policy,
 		Event:         event,
 	}
 
