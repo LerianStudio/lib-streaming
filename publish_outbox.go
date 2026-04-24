@@ -70,6 +70,7 @@ func (p *Producer) publishToOutbox(ctx context.Context, event Event, topic strin
 			"producer_id", p.producerID,
 			"topic", topic,
 		)
+
 		return ErrOutboxNotConfigured
 	}
 

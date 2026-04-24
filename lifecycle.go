@@ -82,6 +82,7 @@ func (p *Producer) CloseContext(ctx context.Context) error {
 		_ = a.NotNil(ctx, p.client, "producer client must be initialized at Close time",
 			"producer_id", p.producerID,
 		)
+
 		return nil
 	}
 
@@ -126,8 +127,10 @@ func (p *Producer) signalStop() {
 			_ = a.NotNil(context.Background(), p.stop, "producer stop channel must be initialized post-construction",
 				"producer_id", p.producerID,
 			)
+
 			return
 		}
+
 		close(p.stop)
 	})
 }
@@ -174,6 +177,7 @@ func (p *Producer) Healthy(ctx context.Context) error {
 		clientNilErr := a.NotNil(ctx, p.client, "producer client must be initialized post-construction",
 			"producer_id", p.producerID,
 		)
+
 		return NewHealthError(Down, clientNilErr)
 	}
 

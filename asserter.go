@@ -33,7 +33,7 @@ const asserterComponent = "streaming"
 // log.NewNop() so assertion calls at nil-guarded boundaries still return a
 // usable asserter rather than panicking.
 func (p *Producer) newAsserter(operation string) *assert.Asserter {
-	var logger log.Logger = log.NewNop()
+	var logger = log.NewNop()
 	if p != nil && p.logger != nil {
 		logger = p.logger
 	}

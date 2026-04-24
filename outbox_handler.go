@@ -58,6 +58,7 @@ func (p *Producer) handleOutboxRow(ctx context.Context, row *outbox.OutboxEvent)
 		// public sentinel so Dispatcher retry/fail semantics are unchanged.
 		a := p.newAsserter("outbox_handler.handle_outbox_row")
 		_ = a.NotNil(ctx, row, "outbox Dispatcher must not invoke handler with nil row")
+
 		return outbox.ErrOutboxEventRequired
 	}
 
