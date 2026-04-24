@@ -84,3 +84,53 @@ func TestManifest_InvalidDescriptor(t *testing.T) {
 		t.Fatalf("BuildManifest() error = %v; want ErrInvalidPublisherDescriptor", err)
 	}
 }
+
+// TestManifest_ProducerIDRoundTrips asserts that a descriptor populated with
+// ProducerID survives the BuildManifest pipeline and round-trips correctly
+// through JSON — both on the document's publisher metadata and on the
+// decoded struct.
+func TestManifest_ProducerIDRoundTrips(t *testing.T) {
+	t.Parallel()
+
+	const producerID = "01939c11-1d49-7abc-bd3f-1fa8cafe1234"
+
+	catalog, err := NewCatalog(EventDefinition{
+		Key:          "transaction.created",
+		ResourceType: "transaction",
+		EventType:    "created",
+	})
+	if err != nil {
+		t.Fatalf("NewCatalog() error = %v", err)
+	}
+
+	manifest, err := BuildManifest(PublisherDescriptor{
+		ServiceName: "svc",
+		SourceBase:  "//s",
+		ProducerID:  producerID,
+	}, catalog)
+	if err != nil {
+		t.Fatalf("BuildManifest() error = %v", err)
+	}
+
+	if manifest.Publisher.ProducerID != producerID {
+		t.Errorf("manifest.Publisher.ProducerID = %q; want %q", manifest.Publisher.ProducerID, producerID)
+	}
+
+	encoded, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	if !strings.Contains(string(encoded), `"producerId":"`+producerID+`"`) {
+		t.Errorf("manifest JSON = %s; want producerId to round-trip", string(encoded))
+	}
+
+	var decoded ManifestDocument
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+
+	if decoded.Publisher.ProducerID != producerID {
+		t.Errorf("decoded.Publisher.ProducerID = %q; want %q", decoded.Publisher.ProducerID, producerID)
+	}
+}

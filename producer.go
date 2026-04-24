@@ -290,3 +290,24 @@ func NewProducer(ctx context.Context, cfg Config, opts ...EmitterOption) (*Produ
 // Emit and its helpers live in emit.go (plus setEmitSpanAttributes in
 // emit_span.go). Keeping producer.go focused on construction/lifecycle
 // makes it easier to audit the hot path in isolation.
+
+// Descriptor returns a validated PublisherDescriptor with ProducerID populated
+// from this Producer instance. Callers pass their app-owned base descriptor
+// (service name, source base, versions, route path) and receive back the
+// normalized descriptor with the runtime-generated ProducerID attached.
+//
+// The ProducerID is the UUIDv7 chosen at construction; it is NOT stable across
+// process restarts. Intended use: feeding BuildManifest so the exported
+// manifest identifies which replica served it.
+//
+// Nil-receiver safe: returns a zero descriptor and ErrNilProducer rather than
+// panicking, matching the contract of Emit/Healthy/Close.
+func (p *Producer) Descriptor(base PublisherDescriptor) (PublisherDescriptor, error) {
+	if p == nil {
+		return PublisherDescriptor{}, ErrNilProducer
+	}
+
+	base.ProducerID = p.producerID
+
+	return NewPublisherDescriptor(base)
+}
