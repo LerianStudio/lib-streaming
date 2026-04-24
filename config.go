@@ -230,6 +230,16 @@ func splitCSV(s string) []string {
 	return result
 }
 
+// maxEventPolicyEntries caps the number of entries parseEventPolicies will
+// accept from a single STREAMING_EVENT_POLICIES string. A hostile env var
+// (e.g. 10 MB of "a.b=c,...") would otherwise build an unbounded map.
+const maxEventPolicyEntries = 1024
+
+// maxEventPolicyKeyBytes caps the length of each policy key (the left side
+// of "=", minus the trailing ".attr"). 256 matches maxEventIDBytes used
+// elsewhere for header-bound identifiers.
+const maxEventPolicyKeyBytes = 256
+
 // parseEventPolicies parses STREAMING_EVENT_POLICIES entries in the form:
 //
 //	transaction.created.enabled=true,transaction.created.outbox=always
@@ -237,13 +247,23 @@ func splitCSV(s string) []string {
 // Entries may be separated by commas, semicolons, or newlines. Unknown
 // attributes and unsupported values return ErrInvalidDeliveryPolicy so policy
 // typos do not silently change runtime behavior.
+//
+// Hostile-env-var guards: entries are capped at maxEventPolicyEntries
+// (1024) and keys at maxEventPolicyKeyBytes (256) to bound memory for a
+// malicious or accidentally-huge env var.
 func parseEventPolicies(s string) (map[string]DeliveryPolicyOverride, error) {
 	result := map[string]DeliveryPolicyOverride{}
 	if strings.TrimSpace(s) == "" {
 		return result, nil
 	}
 
-	for _, entry := range splitPolicyEntries(s) {
+	entries := splitPolicyEntries(s)
+	if len(entries) > maxEventPolicyEntries {
+		return nil, fmt.Errorf("%w: STREAMING_EVENT_POLICIES has %d entries (max %d)",
+			ErrInvalidDeliveryPolicy, len(entries), maxEventPolicyEntries)
+	}
+
+	for _, entry := range entries {
 		keyAttr, value, ok := strings.Cut(entry, "=")
 		if !ok {
 			return nil, fmt.Errorf("%w: malformed policy entry %q", ErrInvalidDeliveryPolicy, entry)
@@ -252,6 +272,11 @@ func parseEventPolicies(s string) (map[string]DeliveryPolicyOverride, error) {
 		key, attr, ok := cutLastDot(strings.TrimSpace(keyAttr))
 		if !ok || key == "" || attr == "" {
 			return nil, fmt.Errorf("%w: malformed policy key %q", ErrInvalidDeliveryPolicy, keyAttr)
+		}
+
+		if len(key) > maxEventPolicyKeyBytes {
+			return nil, fmt.Errorf("%w: STREAMING_EVENT_POLICIES key exceeds %d bytes: %d",
+				ErrInvalidDeliveryPolicy, maxEventPolicyKeyBytes, len(key))
 		}
 
 		override := result[key]

@@ -306,6 +306,48 @@ func TestLoadConfig_EventPoliciesMalformedEntry(t *testing.T) {
 	}
 }
 
+func TestParseEventPolicies_RejectsExcessiveEntries(t *testing.T) {
+	t.Parallel()
+
+	// Build a policy string with (cap+1) valid entries; each entry is the
+	// minimal-legal shape ("a.enabled=true"). The value side doesn't matter
+	// for the entry-count guard — the parser must reject before touching
+	// per-entry attributes.
+	var b strings.Builder
+	for i := 0; i <= maxEventPolicyEntries; i++ {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString("a.enabled=true")
+	}
+
+	_, err := parseEventPolicies(b.String())
+	if !errors.Is(err, ErrInvalidDeliveryPolicy) {
+		t.Fatalf("parseEventPolicies() err = %v; want ErrInvalidDeliveryPolicy", err)
+	}
+	if !strings.Contains(err.Error(), "entries") {
+		t.Errorf("err message missing 'entries' hint: %v", err)
+	}
+}
+
+func TestParseEventPolicies_RejectsLongKey(t *testing.T) {
+	t.Parallel()
+
+	// Construct a key longer than maxEventPolicyKeyBytes. The key is the
+	// left side minus the trailing ".attr", so we need len(key)>256 before
+	// adding ".enabled".
+	longKey := strings.Repeat("a", maxEventPolicyKeyBytes+1)
+	entry := longKey + ".enabled=true"
+
+	_, err := parseEventPolicies(entry)
+	if !errors.Is(err, ErrInvalidDeliveryPolicy) {
+		t.Fatalf("parseEventPolicies() err = %v; want ErrInvalidDeliveryPolicy", err)
+	}
+	if !strings.Contains(err.Error(), "bytes") {
+		t.Errorf("err message missing 'bytes' hint: %v", err)
+	}
+}
+
 func TestLoadConfig_DisabledSkipsInvalidEventPolicies(t *testing.T) {
 	clearStreamingEnv(t)
 	t.Setenv("STREAMING_ENABLED", "false")
