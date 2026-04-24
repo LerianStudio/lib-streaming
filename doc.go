@@ -26,6 +26,11 @@
 //	    EventType:    "created",
 //	})
 //	if err != nil { return err }
+//	// The consuming service wires assertion metrics once after telemetry is
+//	// initialized. lib-streaming uses commons/assert internally for
+//	// post-construction invariant checks; without this bootstrap call the
+//	// assertion_failed_total counter stays at zero.
+//	assert.InitAssertionMetrics(metricsFactory)
 //	producer, err := streaming.NewProducer(ctx, cfg,
 //	    streaming.WithLogger(logger),
 //	    streaming.WithMetricsFactory(metricsFactory),

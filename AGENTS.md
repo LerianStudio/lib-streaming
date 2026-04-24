@@ -72,6 +72,12 @@ Support:
 - Concurrency: `*Producer`, `MockEmitter`, and `NoopEmitter` are all safe for concurrent use from any number of goroutines.
 - Metrics: `streaming_emitted_total`, `streaming_emit_duration_ms`, `streaming_dlq_total`, `streaming_dlq_publish_failed_total`, `streaming_outbox_routed_total`, `streaming_circuit_state`. All registered via the `MetricsFactory` passed through `WithMetricsFactory`; nil factory degrades to a no-op recorder after a single WARN log at first Emit. **No `tenant_id` label on any metric** (cardinality discipline). Tenant identity lives on spans only.
 
+### Runtime assertions (commons/assert)
+
+- The library enforces post-construction invariants via `github.com/LerianStudio/lib-commons/v5/commons/assert`. Internal invariant sites (e.g. nil client at `Close` time, nil outbox writer at a path that already gated on outbox availability) fire the observability trident (log + span event + `assertion_failed_total` metric) and still return the documented sentinel/error to the caller — public API contract is unchanged on the assertion-fires path.
+- Assertions use `component="streaming"` and a per-call-site `operation` label. **No `tenant_id` label on any assertion metric** (same cardinality discipline as the `streaming_*` metrics). Tenant identity, when relevant, lives on span attributes only.
+- lib-streaming is producer-only and does NOT own service bootstrap. Consuming services MUST call `assert.InitAssertionMetrics(metricsFactory)` once at bootstrap, after telemetry is initialized and alongside `runtime.InitPanicMetrics`. Without this call, the log and span-event layers still fire but the `assertion_failed_total` counter stays at zero, so dashboards will not alert on invariant spikes.
+
 ## Coding rules
 
 - Do not add `panic(...)` in production paths.
