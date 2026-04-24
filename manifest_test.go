@@ -85,6 +85,35 @@ func TestManifest_InvalidDescriptor(t *testing.T) {
 	}
 }
 
+// TestBuildManifest_EmptyCatalogYieldsEmptyArray asserts that an empty
+// catalog serializes as "events":[] rather than "events":null. Downstream
+// manifest consumers relying on an array shape must not break when a
+// producer is constructed before any event definition is registered.
+func TestBuildManifest_EmptyCatalogYieldsEmptyArray(t *testing.T) {
+	t.Parallel()
+
+	manifest, err := BuildManifest(PublisherDescriptor{
+		ServiceName: "svc",
+		SourceBase:  "//s",
+	}, Catalog{})
+	if err != nil {
+		t.Fatalf("BuildManifest() error = %v", err)
+	}
+
+	encoded, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	if !strings.Contains(string(encoded), `"events":[]`) {
+		t.Errorf("manifest JSON = %s; want literal \"events\":[]", string(encoded))
+	}
+
+	if strings.Contains(string(encoded), `"events":null`) {
+		t.Errorf("manifest JSON = %s; must NOT contain \"events\":null", string(encoded))
+	}
+}
+
 // TestManifest_ProducerIDRoundTrips asserts that a descriptor populated with
 // ProducerID survives the BuildManifest pipeline and round-trips correctly
 // through JSON — both on the document's publisher metadata and on the

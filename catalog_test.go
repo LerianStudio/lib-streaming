@@ -79,6 +79,54 @@ func TestCatalog_DefinitionsReturnsCopy(t *testing.T) {
 	}
 }
 
+// TestCatalog_ZeroValueBehavesAsEmpty locks the contract that a bare
+// Catalog{} (never constructed via NewCatalog) behaves as a read-only empty
+// catalog: Len is zero, Definitions returns a non-nil empty slice, lookups
+// fail cleanly, and MustLookup returns the documented sentinel. Nil-map /
+// nil-slice access must not panic.
+func TestCatalog_ZeroValueBehavesAsEmpty(t *testing.T) {
+	t.Parallel()
+
+	var c Catalog
+
+	if c.Len() != 0 {
+		t.Errorf("zero-value Catalog.Len() = %d; want 0", c.Len())
+	}
+
+	defs := c.Definitions()
+	if defs == nil {
+		t.Error("zero-value Catalog.Definitions() = nil; want non-nil empty slice")
+	}
+
+	if len(defs) != 0 {
+		t.Errorf("zero-value Catalog.Definitions() len = %d; want 0", len(defs))
+	}
+
+	if _, ok := c.Lookup("anything"); ok {
+		t.Error("zero-value Catalog.Lookup(anything) ok = true; want false")
+	}
+
+	if _, err := c.MustLookup("anything"); !errors.Is(err, ErrUnknownEventDefinition) {
+		t.Errorf("zero-value Catalog.MustLookup(anything) err = %v; want ErrUnknownEventDefinition", err)
+	}
+}
+
+// TestNewCatalog_EmptyDefinitionsList asserts NewCatalog() with no args
+// returns an empty-but-valid catalog. The empty-catalog sentinel belongs to
+// NewProducer wiring — not to Catalog construction itself.
+func TestNewCatalog_EmptyDefinitionsList(t *testing.T) {
+	t.Parallel()
+
+	c, err := NewCatalog()
+	if err != nil {
+		t.Fatalf("NewCatalog() err = %v; want nil", err)
+	}
+
+	if c.Len() != 0 {
+		t.Errorf("NewCatalog().Len() = %d; want 0", c.Len())
+	}
+}
+
 func TestCatalog_RejectsDuplicates(t *testing.T) {
 	t.Parallel()
 
