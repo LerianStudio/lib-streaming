@@ -199,7 +199,7 @@ func NewProducer(ctx context.Context, cfg Config, opts ...EmitterOption) (*Produ
 	}
 
 	if resolvedOpts.catalog.Len() == 0 {
-		return nil, fmt.Errorf("streaming: invalid catalog: %w", ErrUnknownEventDefinition)
+		return nil, fmt.Errorf("%w: catalog is empty (WithCatalog requires at least one EventDefinition)", ErrInvalidEventDefinition)
 	}
 
 	for key := range cfg.PolicyOverrides {
