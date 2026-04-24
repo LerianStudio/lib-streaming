@@ -50,6 +50,14 @@ func (p *Producer) handleOutboxRow(ctx context.Context, row *outbox.OutboxEvent)
 	}
 
 	if row == nil {
+		// Invariant violation: the lib-commons outbox Dispatcher contract
+		// guarantees row is non-nil when invoking a registered handler.
+		// Reaching here means the Dispatcher itself broke its contract —
+		// distinct from 'handler rejected a valid row'. Fire the trident
+		// so ops dashboards can tell the two apart, then preserve the
+		// public sentinel so Dispatcher retry/fail semantics are unchanged.
+		a := p.newAsserter("outbox_handler.handle_outbox_row")
+		_ = a.NotNil(ctx, row, "outbox Dispatcher must not invoke handler with nil row")
 		return outbox.ErrOutboxEventRequired
 	}
 
