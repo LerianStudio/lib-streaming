@@ -2,12 +2,11 @@
 
 // Package streaming integration tests (T9).
 //
-// These tests spin up a real Redpanda broker (and, for the outbox fallback
-// test, a real Postgres database) via testcontainers-go. They exercise the
-// public Producer API end-to-end: CloudEvents round-trip, partition-key
-// FIFO, DLQ routing under oversize payloads, outbox fallback during broker
-// partition, and a contract check against the canonical cloudevents/sdk-go
-// parser.
+// These tests spin up real Redpanda, Postgres, and MongoDB dependencies via
+// testcontainers-go. They exercise the public Producer API end-to-end:
+// CloudEvents round-trip, partition-key FIFO, DLQ routing under oversize
+// payloads, SQL and Mongo-backed outbox behavior, broker partition fallback,
+// and a contract check against the canonical cloudevents/sdk-go parser.
 //
 // Build tag: integration. Run with:
 //

@@ -244,12 +244,15 @@ var (
 	// returns false.
 	ErrOutboxNotConfigured = errors.New("streaming: outbox writer not configured for fallback")
 
-	// ErrOutboxTxUnsupported is returned when an ambient transaction is present
-	// but the configured OutboxWriter does not implement TransactionalOutboxWriter.
+	// ErrOutboxTxUnsupported is returned when an ambient SQL transaction is
+	// present but the configured OutboxWriter does not implement
+	// TransactionalOutboxWriter.
 	//
 	// NOT a caller error — it signals a wiring/setup gap (the operator
-	// installed a non-transactional writer but callers expect transactional
-	// outbox semantics). IsCallerError returns false for it. Parallels
+	// installed a non-transactional SQL writer but callers expect transactional
+	// outbox semantics). MongoDB transactions backed by the v1
+	// go.mongodb.org/mongo-driver/mongo.SessionContext flow through context and do
+	// not use this sentinel. IsCallerError returns false for it. Parallels
 	// ErrCircuitOpen and ErrOutboxNotConfigured.
 	ErrOutboxTxUnsupported = errors.New("streaming: outbox writer does not support ambient transactions")
 

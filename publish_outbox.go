@@ -9,7 +9,7 @@ import (
 )
 
 // txContextKey is the context key that holds an ambient *sql.Tx for the
-// outbox fallback to join via CreateWithTx.
+// outbox fallback to join via WriteWithTx.
 //
 // A package-local unexported type avoids collisions with any other
 // package's context values (the standard idiom for context keys).
@@ -28,9 +28,17 @@ func WithOutboxTx(ctx context.Context, tx *sql.Tx) context.Context {
 // publishToOutbox serializes an already-pre-flighted Event to a versioned
 // OutboxEnvelope and writes it via the configured OutboxWriter.
 //
-// When an ambient *sql.Tx is present on ctx under txContextKey, CreateWithTx
-// is used so the write joins the caller's unit of work. Otherwise Create is
-// called and the outbox repo opens its own transaction.
+// When an ambient *sql.Tx is present on ctx under txContextKey, WriteWithTx is
+// used so the write joins the caller's SQL unit of work. The lib-commons
+// adapter delegates that call to repository CreateWithTx. Otherwise Write is
+// called with the original ctx.
+//
+// MongoDB transaction atomicity flows through that original ctx: if the caller
+// invoked Emit from inside a go.mongodb.org/mongo-driver/mongo.Session
+// WithTransaction callback, ctx is a v1 mongo.SessionContext and the
+// lib-commons/outbox/mongo repository joins the same transaction via its normal
+// Write/Create path. Driver v2 session contexts are distinct types and do not
+// join the v1 repository transaction path.
 //
 // Contract:
 //   - On success, the caller path (Emit → cb.Execute closure) MUST return
@@ -86,8 +94,10 @@ func (p *Producer) publishToOutbox(ctx context.Context, event Event, topic strin
 		Event:         event,
 	}
 
-	// Ambient transaction path: CreateWithTx when the caller installed a
-	// *sql.Tx on the package-local context key; otherwise fall through to Create.
+	// Ambient SQL transaction path: WriteWithTx when the caller installed a
+	// *sql.Tx on the package-local context key; otherwise fall through to Write.
+	// MongoDB transactions ride on the original ctx when it is a v1
+	// go.mongodb.org/mongo-driver/mongo.SessionContext.
 	if ctx != nil {
 		if tx, ok := ctx.Value(txContextKey{}).(*sql.Tx); ok && tx != nil {
 			writer, ok := p.outboxWriter.(TransactionalOutboxWriter)
