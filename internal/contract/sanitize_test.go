@@ -61,6 +61,78 @@ func TestSanitizeBrokerURL(t *testing.T) {
 			mustNotContain: []string{"****", "[REDACTED]"},
 			mustContainAny: []string{"email@domain.com"},
 		},
+		{
+			name:           "secret kv pair",
+			in:             "config secret=topSecret123 reason=auth_failed",
+			mustNotContain: []string{"topSecret123"},
+			mustContainAny: []string{"secret=" + redactedMarker},
+		},
+		{
+			name:           "client_secret kv pair",
+			in:             "oauth handshake failed client_secret=oauth_xxxxxx scope=read",
+			mustNotContain: []string{"oauth_xxxxxx"},
+			mustContainAny: []string{"client_secret=" + redactedMarker},
+		},
+		{
+			name:           "client-secret kv pair (hyphen variant)",
+			in:             "auth client-secret=hyphensecret scope=read",
+			mustNotContain: []string{"hyphensecret"},
+			mustContainAny: []string{"client-secret=" + redactedMarker},
+		},
+		{
+			name:           "token kv pair",
+			in:             "auth handshake failed: token=eyJhbGciOiJIUzI1NiJ9.foo.bar reason=expired",
+			mustNotContain: []string{"eyJhbGciOiJIUzI1NiJ9.foo.bar"},
+			mustContainAny: []string{"token=" + redactedMarker},
+		},
+		{
+			name:           "bearer kv pair",
+			in:             "header bearer=eyJhbGciOiJIUzI1NiJ9 path=/v1",
+			mustNotContain: []string{"eyJhbGciOiJIUzI1NiJ9"},
+			mustContainAny: []string{"bearer=" + redactedMarker},
+		},
+		{
+			name:           "apikey kv pair",
+			in:             "config apikey=ak_live_abcdef host=api.example.com",
+			mustNotContain: []string{"ak_live_abcdef"},
+			mustContainAny: []string{"apikey=" + redactedMarker},
+		},
+		{
+			name:           "api_key kv pair (underscore variant)",
+			in:             "config api_key=ak_live_xyz123 host=api.example.com",
+			mustNotContain: []string{"ak_live_xyz123"},
+			mustContainAny: []string{"api_key=" + redactedMarker},
+		},
+		{
+			name:           "api-key kv pair (hyphen variant)",
+			in:             "config api-key=ak_live_hyphen host=api.example.com",
+			mustNotContain: []string{"ak_live_hyphen"},
+			mustContainAny: []string{"api-key=" + redactedMarker},
+		},
+		{
+			name:           "auth kv pair",
+			in:             "request auth=Basic_xyz status=401",
+			mustNotContain: []string{"Basic_xyz"},
+			mustContainAny: []string{"auth=" + redactedMarker},
+		},
+		{
+			name:           "authorization kv pair",
+			in:             "header authorization=Bearer_token123 status=401",
+			mustNotContain: []string{"Bearer_token123"},
+			mustContainAny: []string{"authorization=" + redactedMarker},
+		},
+		{
+			name:           "case insensitive: PASSWORD",
+			in:             "config PASSWORD=loudCase host=broker",
+			mustNotContain: []string{"loudCase"},
+			mustContainAny: []string{"PASSWORD=" + redactedMarker},
+		},
+		{
+			name:           "case insensitive: Token",
+			in:             "header Token=mixedCase status=200",
+			mustNotContain: []string{"mixedCase"},
+			mustContainAny: []string{"Token=" + redactedMarker},
+		},
 	}
 
 	for _, tt := range tests {

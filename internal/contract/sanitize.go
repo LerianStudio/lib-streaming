@@ -13,9 +13,14 @@ import (
 // rules) may grep for this exact literal. Do not shorten or extend without a
 // CHANGELOG entry; the marker is an implicit operator contract.
 //
-// lib-commons v5.0.0-beta.8 exposed this as `sanitize.SecretRedactionMarker`
-// for cross-package uniformity, but the `commons/security/sanitize` package
-// was removed in v5.0.2. lib-streaming inlines the same literal value.
+// lib-commons v5.1.0 exposes the same literal as
+// `commons/security/sanitize.SecretRedactionMarker` for cross-package
+// uniformity. lib-streaming intentionally inlines the literal here so the
+// contract package stays free of lib-commons imports — only the
+// broker-URL redaction *logic* (urlPattern, kvCredentialPattern,
+// redactURLCandidate, fallbackRedact) is library-specific; the marker
+// itself is shared by convention. If lib-commons changes the marker,
+// update this constant in lockstep with a CHANGELOG entry.
 const redactedMarker = "****"
 
 // urlPattern matches scheme://rest-of-URL sequences. Kept intentionally simple
@@ -23,10 +28,23 @@ const redactedMarker = "****"
 // per-match via url.Parse and a fallback regex.
 var urlPattern = regexp.MustCompile(`[a-zA-Z][a-zA-Z0-9+.-]*://[^\s]+`)
 
-// kvCredentialPattern targets raw "password=..." and "pass=..." key/value
-// pairs that may appear in config dumps or error messages outside of URLs.
-// Case-insensitive; value stops at whitespace or common separators.
-var kvCredentialPattern = regexp.MustCompile(`(?i)\b(password|pass)=[^\s,;&]+`)
+// kvCredentialPattern targets credential-shaped key/value pairs that may
+// appear in config dumps or error messages outside of URLs. Case-insensitive;
+// value stops at whitespace or common separators.
+//
+// The covered key set is the canonical Lerian secret-redaction list:
+//   - password / passwd / pass — broker auth, DB connection strings
+//   - secret / client_secret  — OAuth client secrets, app secrets
+//   - token / bearer          — JWTs, OAuth bearer tokens
+//   - apikey / api_key / api-key — API keys (multiple separator forms)
+//   - auth / authorization    — generic auth headers
+//
+// New keys MAY be added without breaking the operator contract (the marker
+// stays "****"). REMOVING a key requires a CHANGELOG entry — log streams
+// downstream may depend on these patterns being redacted.
+var kvCredentialPattern = regexp.MustCompile(
+	`(?i)\b(password|passwd|pass|secret|client[_-]?secret|token|bearer|apikey|api[_-]?key|auth|authorization)=[^\s,;&]+`,
+)
 
 // sanitizeBrokerURL strips credentials from broker URLs and "password=" /
 // "pass=" key-value pairs. Returns the sanitized message.
