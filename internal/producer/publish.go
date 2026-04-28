@@ -98,33 +98,30 @@ func (p *Producer) preFlightWithPayload(event Event, validatePayload bool) error
 	return nil
 }
 
-// headerFieldCheck pairs a field value with its size ceiling and sentinel.
-type headerFieldCheck struct {
-	value    string
-	maxBytes int
-	sentinel error
-}
-
 // validateHeaderSafeFields checks every CloudEvents attribute that travels
 // as a Kafka header for control characters and length overruns. Returns
 // the first offending sentinel. Empty values are NOT checked here —
 // required-vs-optional semantics live in preFlight (tenant, source).
+//
+// Uses the canonical contract.HeaderFieldCheck shape (re-exported via
+// aliases.go as headerFieldCheck) so the producer-side check table cannot
+// drift from the contract-side equivalent.
 func (*Producer) validateHeaderSafeFields(event Event) error {
 	checks := [...]headerFieldCheck{
-		{event.TenantID, maxTenantIDBytes, ErrInvalidTenantID},
-		{event.ResourceType, maxResourceTypeBytes, ErrInvalidResourceType},
-		{event.EventType, maxEventTypeBytes, ErrInvalidEventType},
-		{event.Source, maxSourceBytes, ErrInvalidSource},
-		{event.Subject, maxSubjectBytes, ErrInvalidSubject},
-		{event.EventID, maxEventIDBytes, ErrInvalidEventID},
-		{event.SchemaVersion, maxSchemaVersionBytes, ErrInvalidSchemaVersion},
-		{event.DataContentType, maxDataContentTypeBytes, ErrInvalidDataContentType},
-		{event.DataSchema, maxDataSchemaBytes, ErrInvalidDataSchema},
+		{Value: event.TenantID, MaxBytes: maxTenantIDBytes, Sentinel: ErrInvalidTenantID},
+		{Value: event.ResourceType, MaxBytes: maxResourceTypeBytes, Sentinel: ErrInvalidResourceType},
+		{Value: event.EventType, MaxBytes: maxEventTypeBytes, Sentinel: ErrInvalidEventType},
+		{Value: event.Source, MaxBytes: maxSourceBytes, Sentinel: ErrInvalidSource},
+		{Value: event.Subject, MaxBytes: maxSubjectBytes, Sentinel: ErrInvalidSubject},
+		{Value: event.EventID, MaxBytes: maxEventIDBytes, Sentinel: ErrInvalidEventID},
+		{Value: event.SchemaVersion, MaxBytes: maxSchemaVersionBytes, Sentinel: ErrInvalidSchemaVersion},
+		{Value: event.DataContentType, MaxBytes: maxDataContentTypeBytes, Sentinel: ErrInvalidDataContentType},
+		{Value: event.DataSchema, MaxBytes: maxDataSchemaBytes, Sentinel: ErrInvalidDataSchema},
 	}
 
 	for _, c := range checks {
-		if len(c.value) > c.maxBytes || hasControlChar(c.value) {
-			return c.sentinel
+		if len(c.Value) > c.MaxBytes || hasControlChar(c.Value) {
+			return c.Sentinel
 		}
 	}
 
@@ -230,7 +227,36 @@ func (p *Producer) publishDirect(ctx context.Context, event Event, topic string,
 // the caller's context deadline. The buffered channel (cap 1) ensures the
 // callback goroutine never leaks even if we exit via the ctx.Done() branch
 // — the callback writes to the buffer and returns.
+//
+// Defense-in-depth: every other broker-touching site (Healthy, CloseContext,
+// publishDLQ) explicitly guards p.client == nil and fires the asserter
+// trident on hand-built fixtures. produceWithContext is the funnel through
+// which BOTH publishDirect AND publishDLQ reach franz-go, so the same guard
+// applies here. The production code path always carries a non-nil client
+// (NewProducer's client construction is mandatory); a nil client at this
+// site means a hand-built *Producer{} bypassed the constructor — surface
+// it as ErrEmitterClosed rather than panicking at the franz-go callback
+// dispatch.
 func (p *Producer) produceWithContext(ctx context.Context, record *kgo.Record) error {
+	if p == nil {
+		return ErrNilProducer
+	}
+
+	if p.client == nil {
+		// Invariant violation: NewProducer always assigns p.client; reaching
+		// here means the *Producer was hand-built bypassing the constructor.
+		// Fire the trident so the construction antipattern shows up on
+		// dashboards rather than panicking at franz-go's callback dispatch.
+		// Public API contract is preserved: callers see ErrEmitterClosed
+		// (the closest documented sentinel for "producer cannot publish").
+		a := p.newAsserter("publish.produce_with_context")
+		_ = a.NotNil(ctx, p.client, "producer client must be initialized post-construction",
+			"producer_id", p.producerID,
+		)
+
+		return ErrEmitterClosed
+	}
+
 	errCh := make(chan error, 1)
 
 	p.client.Produce(ctx, record, func(_ *kgo.Record, err error) {

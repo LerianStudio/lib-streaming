@@ -29,9 +29,16 @@ var _ libCommons.App = (*Producer)(nil)
 //   - nil when the Producer was already closed before Run was called.
 //   - The error from CloseContext (if any) on normal shutdown.
 //
-// Nil-receiver safe: returns ErrNilProducer so a mis-wired bootstrap
-// surfaces as a typed error rather than a crash.
+// Nil-receiver safe: the inline guard returns ErrNilProducer so a mis-wired
+// bootstrap surfaces as a typed error rather than a crash. Even though
+// RunContext also guards p == nil, mirroring the inline check here keeps the
+// pattern uniform with every other public lifecycle method on *Producer
+// (Emit, Close, CloseContext, Healthy, RegisterOutboxRelay, Descriptor).
 func (p *Producer) Run(launcher *libCommons.Launcher) error {
+	if p == nil {
+		return ErrNilProducer
+	}
+
 	return p.RunContext(context.Background(), launcher)
 }
 

@@ -62,18 +62,18 @@ func (d EventDefinition) Topic() string {
 }
 
 func validateEventDefinitionHeaderFields(definition EventDefinition) error {
-	checks := [...]headerFieldCheck{
-		{definition.Key, maxEventIDBytes, ErrInvalidEventDefinition},
-		{definition.ResourceType, maxResourceTypeBytes, ErrInvalidResourceType},
-		{definition.EventType, maxEventTypeBytes, ErrInvalidEventType},
-		{definition.SchemaVersion, maxSchemaVersionBytes, ErrInvalidSchemaVersion},
-		{definition.DataContentType, maxDataContentTypeBytes, ErrInvalidDataContentType},
-		{definition.DataSchema, maxDataSchemaBytes, ErrInvalidDataSchema},
+	checks := [...]HeaderFieldCheck{
+		{Value: definition.Key, MaxBytes: MaxEventIDBytes, Sentinel: ErrInvalidEventDefinition},
+		{Value: definition.ResourceType, MaxBytes: MaxResourceTypeBytes, Sentinel: ErrInvalidResourceType},
+		{Value: definition.EventType, MaxBytes: MaxEventTypeBytes, Sentinel: ErrInvalidEventType},
+		{Value: definition.SchemaVersion, MaxBytes: MaxSchemaVersionBytes, Sentinel: ErrInvalidSchemaVersion},
+		{Value: definition.DataContentType, MaxBytes: MaxDataContentTypeBytes, Sentinel: ErrInvalidDataContentType},
+		{Value: definition.DataSchema, MaxBytes: MaxDataSchemaBytes, Sentinel: ErrInvalidDataSchema},
 	}
 
 	for _, c := range checks {
-		if len(c.value) > c.maxBytes || hasControlChar(c.value) {
-			return c.sentinel
+		if len(c.Value) > c.MaxBytes || HasControlChar(c.Value) {
+			return c.Sentinel
 		}
 	}
 

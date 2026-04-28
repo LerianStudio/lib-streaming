@@ -3,6 +3,8 @@ package manifest
 import (
 	"fmt"
 	"strings"
+
+	"github.com/LerianStudio/lib-streaming/internal/contract"
 )
 
 // PublisherDescriptor carries app-owned metadata used by manifest export and
@@ -27,12 +29,12 @@ type PublisherDescriptor struct {
 
 // NewPublisherDescriptor validates and normalizes a PublisherDescriptor.
 func NewPublisherDescriptor(descriptor PublisherDescriptor) (PublisherDescriptor, error) {
-	if hasControlChar(descriptor.ServiceName) ||
-		hasControlChar(descriptor.SourceBase) ||
-		hasControlChar(descriptor.RoutePath) ||
-		hasControlChar(descriptor.AppVersion) ||
-		hasControlChar(descriptor.LibVersion) ||
-		hasControlChar(descriptor.ProducerID) {
+	if contract.HasControlChar(descriptor.ServiceName) ||
+		contract.HasControlChar(descriptor.SourceBase) ||
+		contract.HasControlChar(descriptor.RoutePath) ||
+		contract.HasControlChar(descriptor.AppVersion) ||
+		contract.HasControlChar(descriptor.LibVersion) ||
+		contract.HasControlChar(descriptor.ProducerID) {
 		return PublisherDescriptor{}, fmt.Errorf("%w: metadata contains control chars", ErrInvalidPublisherDescriptor)
 	}
 

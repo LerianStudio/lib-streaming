@@ -18,20 +18,6 @@ const (
 	MaxDataSchemaBytes      = 2048
 )
 
-// Lowercase aliases keep moved white-box tests in this package source-compatible.
-const (
-	maxPayloadBytes         = MaxPayloadBytes
-	maxTenantIDBytes        = MaxTenantIDBytes
-	maxResourceTypeBytes    = MaxResourceTypeBytes
-	maxEventTypeBytes       = MaxEventTypeBytes
-	maxSourceBytes          = MaxSourceBytes
-	maxSubjectBytes         = MaxSubjectBytes
-	maxEventIDBytes         = MaxEventIDBytes
-	maxSchemaVersionBytes   = MaxSchemaVersionBytes
-	maxDataContentTypeBytes = MaxDataContentTypeBytes
-	maxDataSchemaBytes      = MaxDataSchemaBytes
-)
-
 // HasControlChar reports whether s contains ASCII control characters that are
 // unsafe for headers, logs, and telemetry attributes.
 func HasControlChar(s string) bool {
@@ -45,12 +31,12 @@ func HasControlChar(s string) bool {
 	return false
 }
 
-func hasControlChar(s string) bool {
-	return HasControlChar(s)
-}
-
-type headerFieldCheck struct {
-	value    string
-	maxBytes int
-	sentinel error
+// HeaderFieldCheck pairs a header-bound field value with its size ceiling and
+// the caller-correctable sentinel returned when the field is malformed
+// (control chars or over-limit). Exported so the producer package can compose
+// per-call check tables without redeclaring the struct.
+type HeaderFieldCheck struct {
+	Value    string
+	MaxBytes int
+	Sentinel error
 }

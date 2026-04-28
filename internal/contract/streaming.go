@@ -139,24 +139,24 @@ var (
 	ErrInvalidSubject = errors.New("streaming: Event.Subject contains control chars or exceeds 1024 bytes")
 
 	// ErrInvalidEventID is returned when Event.EventID exceeds
-	// maxEventIDBytes or contains control characters. EventID travels as
+	// MaxEventIDBytes or contains control characters. EventID travels as
 	// ce-id; a malformed value would corrupt downstream correlation
 	// tooling and trace context.
 	ErrInvalidEventID = errors.New("streaming: Event.EventID contains control chars or exceeds 256 bytes")
 
 	// ErrInvalidSchemaVersion is returned when Event.SchemaVersion exceeds
-	// maxSchemaVersionBytes or contains control characters. SchemaVersion
+	// MaxSchemaVersionBytes or contains control characters. SchemaVersion
 	// travels as ce-schemaversion and is used by major-version topic
 	// suffixing in Topic().
 	ErrInvalidSchemaVersion = errors.New("streaming: Event.SchemaVersion contains control chars or exceeds 64 bytes")
 
 	// ErrInvalidDataContentType is returned when Event.DataContentType
-	// exceeds maxDataContentTypeBytes or contains control characters.
+	// exceeds MaxDataContentTypeBytes or contains control characters.
 	// DataContentType travels as ce-datacontenttype.
 	ErrInvalidDataContentType = errors.New("streaming: Event.DataContentType contains control chars or exceeds 256 bytes")
 
 	// ErrInvalidDataSchema is returned when Event.DataSchema exceeds
-	// maxDataSchemaBytes or contains control characters. DataSchema
+	// MaxDataSchemaBytes or contains control characters. DataSchema
 	// travels as ce-dataschema.
 	ErrInvalidDataSchema = errors.New("streaming: Event.DataSchema contains control chars or exceeds 2048 bytes")
 

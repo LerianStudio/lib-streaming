@@ -25,6 +25,12 @@ type (
 	HealthError            = contract.HealthError
 	ErrorClass             = contract.ErrorClass
 	EmitError              = contract.EmitError
+	// headerFieldCheck is the producer-package alias for the canonical
+	// contract.HeaderFieldCheck. Validating header-safe fields with the
+	// shared shape prevents drift between contract-side and producer-side
+	// check tables — there used to be a duplicate type declaration; now
+	// there is exactly one definition (in the contract package).
+	headerFieldCheck = contract.HeaderFieldCheck
 )
 
 const (
@@ -54,6 +60,11 @@ const (
 	maxDataSchemaBytes       = contract.MaxDataSchemaBytes
 )
 
+// Producer-package sentinel re-exports. Only error sentinels actually
+// referenced by code in this package are re-exported here. Sentinels that
+// are produced exclusively by the contract package (e.g. catalog construction
+// errors) are reachable through errors.Is wrapping and do not need a
+// producer-package alias.
 var (
 	ErrMissingTenantID            = contract.ErrMissingTenantID
 	ErrSystemEventsNotAllowed     = contract.ErrSystemEventsNotAllowed
@@ -70,10 +81,7 @@ var (
 	ErrInvalidDataContentType     = contract.ErrInvalidDataContentType
 	ErrInvalidDataSchema          = contract.ErrInvalidDataSchema
 	ErrInvalidEventDefinition     = contract.ErrInvalidEventDefinition
-	ErrDuplicateEventDefinition   = contract.ErrDuplicateEventDefinition
 	ErrUnknownEventDefinition     = contract.ErrUnknownEventDefinition
-	ErrInvalidDeliveryPolicy      = contract.ErrInvalidDeliveryPolicy
-	ErrInvalidOutboxEnvelope      = contract.ErrInvalidOutboxEnvelope
 	ErrInvalidPublisherDescriptor = contract.ErrInvalidPublisherDescriptor
 	ErrEmitterClosed              = contract.ErrEmitterClosed
 	ErrEventDisabled              = contract.ErrEventDisabled

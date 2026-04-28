@@ -8,7 +8,3 @@ type (
 )
 
 var ErrInvalidPublisherDescriptor = contract.ErrInvalidPublisherDescriptor
-
-func hasControlChar(s string) bool {
-	return contract.HasControlChar(s)
-}

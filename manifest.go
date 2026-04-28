@@ -3,9 +3,7 @@ package streaming
 import (
 	"net/http"
 
-	"github.com/LerianStudio/lib-streaming/internal/cloudevents"
 	"github.com/LerianStudio/lib-streaming/internal/manifest"
-	"github.com/twmb/franz-go/pkg/kgo"
 )
 
 // BuildManifest renders a catalog and descriptor into an exportable document.
@@ -21,18 +19,21 @@ func NewPublisherDescriptor(descriptor PublisherDescriptor) (PublisherDescriptor
 // NewStreamingHandler returns a stdlib HTTP handler that serves the manifest.
 //
 // SECURITY: the manifest exposes event taxonomy, schema versions, service
-// metadata, and producer IDs. Callers must wrap this handler in their app's
-// auth middleware before mounting it publicly.
+// metadata, and producer IDs. Callers MUST wrap this handler in their app's
+// auth middleware before mounting it publicly. The library does not enforce
+// authentication and does not validate caller identity at request time.
+//
+// The handler pre-marshals the manifest payload at construction; subsequent
+// requests serve cached bytes. If the catalog or descriptor changes, callers
+// MUST rebuild the handler — runtime mutations are not reflected.
+//
+// Hardening shipped by the handler itself (operators can rely on these even
+// when the manifest is mounted behind a permissive auth chain):
+//   - Cache-Control: no-store
+//   - Content-Type: application/json
+//   - X-Content-Type-Options: nosniff
+//   - X-Frame-Options: DENY
+//   - HTTP method allowlist (GET, HEAD only)
 func NewStreamingHandler(descriptor PublisherDescriptor, catalog Catalog) (http.Handler, error) {
 	return manifest.NewStreamingHandler(descriptor, catalog)
-}
-
-// BuildCloudEventsHeaders assembles CloudEvents binary-mode Kafka headers for event.
-func BuildCloudEventsHeaders(event Event) []kgo.RecordHeader {
-	return cloudevents.BuildHeaders(event)
-}
-
-// ParseCloudEventsHeaders parses CloudEvents binary-mode Kafka headers into an Event.
-func ParseCloudEventsHeaders(headers []kgo.RecordHeader) (Event, error) {
-	return cloudevents.ParseCloudEventsHeaders(headers)
 }

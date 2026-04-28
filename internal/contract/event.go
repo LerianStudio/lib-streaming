@@ -182,7 +182,7 @@ func (e *Event) ApplyDefaults() {
 	}
 }
 
-// parseMajorVersion extracts the major version from a semver string. Returns
+// ParseMajorVersion extracts the major version from a semver string. Returns
 // 0 on any parse failure so callers can guard with "< 2" to fall through to
 // the base topic form.
 //
@@ -191,7 +191,12 @@ func (e *Event) ApplyDefaults() {
 // classifier in the Go ecosystem. We normalize the input to the "v"-prefixed
 // form because semver.Major requires it; a missing "v" would be reported as
 // an invalid semver otherwise.
-func parseMajorVersion(v string) int {
+//
+// Exported so the producer package's property tests can exercise the SAME
+// implementation that Topic() uses at runtime — previously the producer kept
+// a duplicate test-only copy that could (and did) drift from this canonical
+// version.
+func ParseMajorVersion(v string) int {
 	if v == "" {
 		return 0
 	}
@@ -221,4 +226,10 @@ func parseMajorVersion(v string) int {
 	}
 
 	return n
+}
+
+// parseMajorVersion is the lowercase intra-package alias; production code in
+// this package and the contract-pkg fuzz test reference it directly.
+func parseMajorVersion(v string) int {
+	return ParseMajorVersion(v)
 }

@@ -35,7 +35,7 @@ func newEmitRequest(request EmitRequest, copyPayload bool) (EmitRequest, error) 
 		return EmitRequest{}, err
 	}
 
-	if len(request.Payload) > maxPayloadBytes {
+	if len(request.Payload) > MaxPayloadBytes {
 		return EmitRequest{}, ErrPayloadTooLarge
 	}
 
@@ -70,16 +70,16 @@ func validateEmitRequestHeaderFields(request EmitRequest) error {
 	// (control chars, too long, empty bytes), NOT ErrUnknownEventDefinition —
 	// "unknown" is a catalog-lookup miss (key not registered), while "invalid"
 	// is a structural fault. Conflating the two used to mislead callers.
-	checks := [...]headerFieldCheck{
-		{request.DefinitionKey, maxEventIDBytes, ErrInvalidEventDefinition},
-		{request.TenantID, maxTenantIDBytes, ErrInvalidTenantID},
-		{request.Subject, maxSubjectBytes, ErrInvalidSubject},
-		{request.EventID, maxEventIDBytes, ErrInvalidEventID},
+	checks := [...]HeaderFieldCheck{
+		{Value: request.DefinitionKey, MaxBytes: MaxEventIDBytes, Sentinel: ErrInvalidEventDefinition},
+		{Value: request.TenantID, MaxBytes: MaxTenantIDBytes, Sentinel: ErrInvalidTenantID},
+		{Value: request.Subject, MaxBytes: MaxSubjectBytes, Sentinel: ErrInvalidSubject},
+		{Value: request.EventID, MaxBytes: MaxEventIDBytes, Sentinel: ErrInvalidEventID},
 	}
 
 	for _, c := range checks {
-		if len(c.value) > c.maxBytes || hasControlChar(c.value) {
-			return c.sentinel
+		if len(c.Value) > c.MaxBytes || HasControlChar(c.Value) {
+			return c.Sentinel
 		}
 	}
 

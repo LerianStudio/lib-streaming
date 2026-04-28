@@ -31,6 +31,11 @@ type MockEmitter struct {
 	closed   bool
 }
 
+// Compile-time assertion: *MockEmitter must satisfy streaming.Emitter. A
+// missing or renamed method fails the build here rather than at the test
+// site that fails to type-assert.
+var _ streaming.Emitter = (*MockEmitter)(nil)
+
 // NewMockEmitter returns a fresh MockEmitter with an empty event buffer and
 // no injected error.
 func NewMockEmitter() *MockEmitter {
@@ -123,7 +128,14 @@ func (m *MockEmitter) Close() error {
 
 // Healthy always returns nil — the mock is always "healthy" unless tests
 // explicitly override via SetError (which affects Emit only, by design).
+//
+// Nil-receiver safe for symmetry with the rest of the MockEmitter API: a
+// nil pointer cannot panic on this method.
 func (m *MockEmitter) Healthy(_ context.Context) error {
+	if m == nil {
+		return nil
+	}
+
 	return nil
 }
 

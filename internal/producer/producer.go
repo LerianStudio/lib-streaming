@@ -173,35 +173,12 @@ func NewProducer(ctx context.Context, cfg Config, opts ...EmitterOption) (*Produ
 		return nil, fmt.Errorf("streaming: invalid config: %w", err)
 	}
 
-	// Assemble the emitter options.
-	resolvedOpts := &emitterOptions{}
-
-	for _, apply := range opts {
-		if apply != nil {
-			apply(resolvedOpts)
-		}
-	}
-
+	resolvedOpts := resolveEmitterOptions(opts)
 	logger := resolvedOpts.logger
-	if logger == nil {
-		logger = log.NewNop()
-	}
 
-	if writer, ok := resolvedOpts.outboxWriter.(*libCommonsOutboxWriter); ok && writer != nil {
-		writer.logger = logger
-	}
+	warnPlaintextSASL(ctx, logger, resolvedOpts)
 
-	// Resolve close timeout: explicit option > Config default > hard-coded
-	// fallback. Zero option duration is treated as "use Config", matching
-	// the documented semantics on WithCloseTimeout.
-	closeTimeout := resolvedOpts.closeTimeout
-	if closeTimeout <= 0 {
-		closeTimeout = cfg.CloseTimeout
-	}
-
-	if closeTimeout <= 0 {
-		closeTimeout = 30 * time.Second
-	}
+	closeTimeout := resolveCloseTimeout(resolvedOpts.closeTimeout, cfg.CloseTimeout)
 
 	if err := validateCatalogAtBootstrap(resolvedOpts.catalog, cfg.PolicyOverrides, resolvedOpts.allowSystemEvents); err != nil {
 		return nil, err
@@ -226,34 +203,14 @@ func NewProducer(ctx context.Context, cfg Config, opts ...EmitterOption) (*Produ
 		return nil, fmt.Errorf("streaming: kgo client init: %s", sanitizeBrokerURL(err.Error()))
 	}
 
-	// Tracer fallback. A nil tracer here means the caller did not invoke
-	// WithTracer; we use the global tracer provider's "streaming" tracer
-	// so spans still surface in whatever provider the service bootstrapped.
-	// If the process has no provider set, otel.Tracer returns a no-op
-	// tracer — start/end are cheap and correct under that backend.
-	tracer := resolvedOpts.tracer
-	if tracer == nil {
-		tracer = otel.Tracer(tracerName)
-	}
-
-	// UUIDv7 is time-ordered; producerID shows up in CB service names, span
-	// attributes, and DLQ headers — sortable IDs make operator triage easier.
-	// Fall back to v4 if v7 generation ever fails (vanishingly unlikely).
-	var producerID string
-	if id, err := commons.GenerateUUIDv7(); err == nil {
-		producerID = id.String()
-	} else {
-		producerID = uuid.NewString()
-	}
-
 	p := &Producer{
 		client:            client,
 		cfg:               cfg,
 		cbManager:         resolvedOpts.cbManager,
-		tracer:            tracer,
+		tracer:            resolveTracer(resolvedOpts.tracer),
 		logger:            logger,
 		metrics:           newStreamingMetrics(resolvedOpts.metricsFactory, logger),
-		producerID:        producerID,
+		producerID:        generateProducerID(),
 		partFn:            resolvedOpts.partitionKeyFn,
 		closeTimeout:      closeTimeout,
 		outboxWriter:      resolvedOpts.outboxWriter,
@@ -274,6 +231,92 @@ func NewProducer(ctx context.Context, cfg Config, opts ...EmitterOption) (*Produ
 	}
 
 	return p, nil
+}
+
+// resolveEmitterOptions runs the functional-option closures, fills the
+// logger default, and wires the resolved logger into the lib-commons outbox
+// adapter so its asserter trident has a real logger to fire through.
+//
+// Extracted from NewProducer to keep that function's cyclomatic complexity
+// under the package threshold; consolidates the option-resolution surface
+// into one auditable site.
+func resolveEmitterOptions(opts []EmitterOption) *emitterOptions {
+	resolved := &emitterOptions{}
+
+	for _, apply := range opts {
+		if apply != nil {
+			apply(resolved)
+		}
+	}
+
+	if resolved.logger == nil {
+		resolved.logger = log.NewNop()
+	}
+
+	if writer, ok := resolved.outboxWriter.(*libCommonsOutboxWriter); ok && writer != nil {
+		writer.logger = resolved.logger
+	}
+
+	return resolved
+}
+
+// warnPlaintextSASL emits a single WARN log when the operator wired SASL
+// authentication without TLS. SASL credentials sent over an unencrypted TCP
+// connection are recoverable by anyone on the network path; this is a
+// documented operator footgun across Kafka client libraries.
+//
+// We do NOT promote this to an error: dev/test environments that use PLAIN
+// SASL against a local broker without TLS are legitimate. WARN is the right
+// calibration — the operator sees the misconfiguration in the bootstrap log
+// without a hard failure.
+func warnPlaintextSASL(ctx context.Context, logger log.Logger, opts *emitterOptions) {
+	if opts.saslMechanism == nil || opts.tlsConfig != nil {
+		return
+	}
+
+	logger.Log(ctx, log.LevelWarn,
+		"streaming: SASL configured without TLS — credentials will be sent in plaintext; pair WithSASL with WithTLSConfig in production",
+		log.String("sasl_mechanism", opts.saslMechanism.Name()),
+	)
+}
+
+// resolveCloseTimeout picks the effective Close timeout: explicit option >
+// Config default > hard-coded 30s fallback. Zero option duration is treated
+// as "use Config", matching the documented semantics on WithCloseTimeout.
+func resolveCloseTimeout(optionTimeout, configTimeout time.Duration) time.Duration {
+	if optionTimeout > 0 {
+		return optionTimeout
+	}
+
+	if configTimeout > 0 {
+		return configTimeout
+	}
+
+	return 30 * time.Second
+}
+
+// resolveTracer returns the supplied tracer or falls back to the global
+// "streaming" tracer. A nil supplied tracer means the caller did not invoke
+// WithTracer; otel.Tracer returns a no-op tracer when no provider is set,
+// which is cheap and correct under that backend.
+func resolveTracer(supplied trace.Tracer) trace.Tracer {
+	if supplied != nil {
+		return supplied
+	}
+
+	return otel.Tracer(tracerName)
+}
+
+// generateProducerID returns a UUIDv7 string when available, falling back to
+// UUIDv4 if v7 generation ever fails (vanishingly unlikely). Producer IDs
+// surface in CB service names, span attributes, and DLQ headers — sortable
+// IDs make operator triage easier.
+func generateProducerID() string {
+	if id, err := commons.GenerateUUIDv7(); err == nil {
+		return id.String()
+	}
+
+	return uuid.NewString()
 }
 
 // Emit and its helpers live in emit.go (plus setEmitSpanAttributes in

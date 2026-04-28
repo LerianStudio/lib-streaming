@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 	"sync"
-	"testing"
 
 	"github.com/LerianStudio/lib-commons/v5/commons/log"
 )
@@ -60,20 +59,4 @@ func (c *captureLogger) containsMessage(needle string) bool {
 	}
 
 	return false
-}
-
-// swapWriterAsserterLogger swaps writerAsserterLogger for the duration of the
-// test and restores the previous value via t.Cleanup. Tests that construct a
-// libCommonsOutboxWriter with a nil repo use this to observe the asserter's
-// trident log layer.
-//
-// NOT parallel-safe: the swap mutates a package-level variable. Tests using
-// this helper MUST NOT call t.Parallel(). The underlying reason is that the
-// outbox writer has no *Producer reference to carry a per-instance logger;
-// the package variable is the only wiring path.
-func swapWriterAsserterLogger(t *testing.T, l log.Logger) {
-	t.Helper()
-	prev := writerAsserterLogger
-	writerAsserterLogger = l
-	t.Cleanup(func() { writerAsserterLogger = prev })
 }

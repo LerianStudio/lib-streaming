@@ -85,3 +85,77 @@ func TestOutboxAdapterRejectsOversizedSerializedEnvelope(t *testing.T) {
 		t.Fatalf("createdCount = %d; want 0", got)
 	}
 }
+
+// TestIsNilInterface_TypedNil pins a regression contract: a typed-nil
+// interface (`var w OutboxWriter = (*libCommonsOutboxWriter)(nil)`) must be
+// detected as nil so the WithOutboxRepository / WithOutboxWriter options
+// correctly clear the writer instead of installing a useless typed-nil
+// shell that would NPE on first Emit.
+//
+// The standard Go gotcha: `var w OutboxWriter = (*Writer)(nil); w == nil`
+// returns FALSE because the interface carries a non-nil type tag. Only
+// reflect.ValueOf(w).IsNil() returns TRUE.
+func TestIsNilInterface_TypedNil(t *testing.T) {
+	tests := []struct {
+		name string
+		v    any
+		want bool
+	}{
+		{
+			name: "untyped nil",
+			v:    nil,
+			want: true,
+		},
+		{
+			name: "typed nil OutboxWriter",
+			v:    OutboxWriter((*libCommonsOutboxWriter)(nil)),
+			want: true,
+		},
+		{
+			name: "typed nil pointer to concrete writer",
+			v:    (*libCommonsOutboxWriter)(nil),
+			want: true,
+		},
+		{
+			name: "non-nil concrete writer",
+			v:    &libCommonsOutboxWriter{},
+			want: false,
+		},
+		{
+			name: "non-nil OutboxWriter interface",
+			v:    OutboxWriter(&libCommonsOutboxWriter{}),
+			want: false,
+		},
+		{
+			name: "typed nil map",
+			v:    (map[string]int)(nil),
+			want: true,
+		},
+		{
+			name: "non-nil empty map",
+			v:    map[string]int{},
+			want: false,
+		},
+		{
+			name: "typed nil slice",
+			v:    ([]byte)(nil),
+			want: true,
+		},
+		{
+			name: "non-nil int (not a nilable kind)",
+			v:    42,
+			want: false,
+		},
+		{
+			name: "non-nil string (not a nilable kind)",
+			v:    "hello",
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		if got := isNilInterface(tt.v); got != tt.want {
+			t.Errorf("isNilInterface(%T %v) = %v; want %v", tt.v, tt.v, got, tt.want)
+		}
+	}
+}

@@ -26,7 +26,14 @@ type Producer struct {
 	inner *producer.Producer
 }
 
-var _ Emitter = (*Producer)(nil)
+// Compile-time assertions: the wrapper Producer must satisfy both the public
+// Emitter contract (Emit/Close/Healthy) AND the lib-commons App lifecycle
+// contract (Run). A missing or renamed method fails the build here, not at a
+// distant call site in the consuming service's main.go.
+var (
+	_ Emitter     = (*Producer)(nil)
+	_ commons.App = (*Producer)(nil)
+)
 
 // New constructs the appropriate Emitter for cfg.
 //

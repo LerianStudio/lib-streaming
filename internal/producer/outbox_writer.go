@@ -15,17 +15,6 @@ import (
 	"github.com/LerianStudio/lib-commons/v5/commons/outbox"
 )
 
-// writerAsserterLogger backs the asserter used by libCommonsOutboxWriter
-// when invariant guards fire. The writer has no *Producer reference (it is
-// adapted from a caller-supplied outbox.OutboxRepository), so the asserter
-// cannot source a logger via p.newAsserter.
-//
-// Default log.NewNop keeps hand-built writers silent until Producer bootstrap
-// injects its resolved logger. Tests replace this variable in _test.go via
-// swapWriterAsserterLogger to verify the trident emits when the nil-repo guard
-// trips.
-var writerAsserterLogger log.Logger = log.NewNop()
-
 // OutboxWriter is the minimal durable-write boundary lib-streaming needs.
 // Services may adapt their own outbox implementations to this interface; the
 // built-in WithOutboxRepository adapter covers lib-commons/outbox.
@@ -52,12 +41,25 @@ type libCommonsOutboxWriter struct {
 	logger log.Logger
 }
 
+// asserterLogger returns the logger bound to this writer instance, falling
+// back to log.NewNop when the writer was hand-built without a logger. The
+// nop fallback keeps the asserter usable on hand-built fixtures while the
+// production path always carries the Producer's logger (wired in NewProducer
+// via the WithOutboxRepository adapter).
+//
+// Tests that need to observe the trident's log layer construct the writer
+// directly with a capture logger:
+//
+//	w := &libCommonsOutboxWriter{repo: nil, logger: capture}
+//
+// No package-level mutable state — every test gets its own instance, and
+// parallel tests are race-free.
 func (w *libCommonsOutboxWriter) asserterLogger() log.Logger {
 	if w != nil && w.logger != nil {
 		return w.logger
 	}
 
-	return writerAsserterLogger
+	return log.NewNop()
 }
 
 func (w *libCommonsOutboxWriter) Write(ctx context.Context, envelope OutboxEnvelope) error {

@@ -177,48 +177,36 @@ func isValidDLQMode(mode DLQMode) bool {
 	}
 }
 
-func (p DeliveryPolicy) directAllowed() bool {
+// DirectAllowed reports whether the policy permits a direct broker publish.
+func (p DeliveryPolicy) DirectAllowed() bool {
 	return p.Enabled && p.Direct == DirectModeDirect
 }
 
-func (p DeliveryPolicy) DirectAllowed() bool {
-	return p.directAllowed()
-}
-
-func (p DeliveryPolicy) outboxAlways() bool {
+// OutboxAlways reports whether outbox is the primary delivery path.
+func (p DeliveryPolicy) OutboxAlways() bool {
 	return p.Enabled && p.Outbox == OutboxModeAlways
 }
 
-func (p DeliveryPolicy) OutboxAlways() bool {
-	return p.outboxAlways()
-}
-
-func (p DeliveryPolicy) outboxFallbackOnCircuitOpen() bool {
+// OutboxFallbackOnCircuitOpen reports whether outbox should absorb the emit
+// when the circuit breaker is OPEN.
+func (p DeliveryPolicy) OutboxFallbackOnCircuitOpen() bool {
 	return p.Enabled && p.Outbox == OutboxModeFallbackOnCircuitOpen
 }
 
-func (p DeliveryPolicy) OutboxFallbackOnCircuitOpen() bool {
-	return p.outboxFallbackOnCircuitOpen()
-}
-
-func (p DeliveryPolicy) dlqAllowed() bool {
+// DLQAllowed reports whether routable publish failures should be copied to
+// the per-topic DLQ.
+func (p DeliveryPolicy) DLQAllowed() bool {
 	return p.Enabled && p.DLQ == DLQModeOnRoutableFailure
 }
 
-func (p DeliveryPolicy) DLQAllowed() bool {
-	return p.dlqAllowed()
-}
-
-func (p DeliveryPolicy) hasDeliveryPath() bool {
+// HasDeliveryPath reports whether the policy permits at least one outbound
+// path (direct OR outbox-always). Returns false for disabled policies.
+func (p DeliveryPolicy) HasDeliveryPath() bool {
 	if !p.Enabled {
 		return false
 	}
 
-	return p.directAllowed() || p.outboxAlways()
-}
-
-func (p DeliveryPolicy) HasDeliveryPath() bool {
-	return p.hasDeliveryPath()
+	return p.DirectAllowed() || p.OutboxAlways()
 }
 
 func cloneDeliveryPolicyOverrides(src map[string]DeliveryPolicyOverride) map[string]DeliveryPolicyOverride {

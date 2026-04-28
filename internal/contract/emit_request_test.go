@@ -96,7 +96,7 @@ func TestEmitRequest_New_RejectsInvalidShape(t *testing.T) {
 			name: "payload too large",
 			request: EmitRequest{
 				DefinitionKey: "transaction.created",
-				Payload:       json.RawMessage(make([]byte, maxPayloadBytes+1)),
+				Payload:       json.RawMessage(make([]byte, MaxPayloadBytes+1)),
 			},
 			want: ErrPayloadTooLarge,
 		},
