@@ -14,10 +14,43 @@ Pre-v1, breaking changes are allowed but ALWAYS land here with a migration note.
   package is now a public facade over internal implementation packages. Public
   contracts remain available from the root package, while the test double moved
   to `github.com/LerianStudio/lib-streaming/streamingtest`.
+
+  **Subtle but important behavioral change**: most public types
+  (`Event`, `EmitRequest`, `Catalog`, `DeliveryPolicy`, `OutboxEnvelope`,
+  `EmitError`, `HealthError`, `PublisherDescriptor`, `ManifestDocument`, ...)
+  are now Go type aliases (`type Event = contract.Event`). Identity-level
+  operations (`errors.As`, `errors.Is`, type switches, struct literals,
+  interface satisfaction) are unchanged — same Go type, same binary layout.
+  However, **reflect-level type identity has shifted**:
+
+  ```go
+  // Before v0.2.0:
+  reflect.TypeOf(streaming.EmitError{}).String()   // "streaming.EmitError"
+  reflect.TypeOf(streaming.Event{}).PkgPath()      // ".../lib-streaming"
+
+  // After v0.2.0:
+  reflect.TypeOf(streaming.EmitError{}).String()   // "contract.EmitError"
+  reflect.TypeOf(streaming.Event{}).PkgPath()      // ".../lib-streaming/internal/contract"
+  ```
+
+  Callers that log errors with `%T`, key on `reflect.TypeOf(x).PkgPath()`
+  in middleware, or rely on type-name strings in JSON-typed-error encoders
+  will see different output. The wrapper types `streaming.Producer` and
+  `streaming.NoopEmitter` keep their root-package PkgPath because they
+  are concrete struct definitions (not aliases), so error type-switches
+  on the Producer remain unchanged.
+
+  **Mitigation**: log structured fields (`error.class`, `error.tenant_id`,
+  `error.topic` from `*EmitError`) instead of `%T`; rely on
+  `errors.As(err, &streaming.EmitError{})` for type matching, which still
+  works correctly with type aliases.
+
 - **`MockEmitter` location** — `MockEmitter`, `NewMockEmitter`, and assertion
-  helpers moved from `streaming` to `streamingtest`. Migration: replace
-  `streaming.NewMockEmitter()` / `streaming.AssertEventEmitted(...)` with
-  `streamingtest.NewMockEmitter()` / `streamingtest.AssertEventEmitted(...)`.
+  helpers (`AssertEventEmitted`, `AssertEventCount`, `AssertTenantID`,
+  `AssertNoEvents`, `WaitForEvent`) moved from `streaming` to `streamingtest`.
+  Migration: replace `streaming.NewMockEmitter()` /
+  `streaming.AssertEventEmitted(...)` with `streamingtest.NewMockEmitter()` /
+  `streamingtest.AssertEventEmitted(...)`.
 
 - **`LoadConfig` signature** — now returns `(Config, []string, error)` instead
   of `(Config, error)`. The new `[]string` return value is a slice of
@@ -35,6 +68,66 @@ Pre-v1, breaking changes are allowed but ALWAYS land here with a migration note.
   was validated independently, which rejected valid order-dependent inputs
   such as `key.direct=skip,key.outbox=always` (the cross-field rule requires
   `Outbox=always` to be present when `Direct=skip`).
+
+### Changed (non-breaking)
+
+- **Extended credential redaction** — `sanitizeBrokerURL` now redacts
+  `secret=`, `client_secret=` (and `client-secret=`), `token=`, `bearer=`,
+  `apikey=` (and `api_key=`/`api-key=`), `auth=`, and `authorization=` key/
+  value pairs in addition to the existing `password=` and `pass=` patterns.
+  Marker remains `****`. Hardens defense-in-depth on error-message
+  surfacing for any future error path that lands credentials in non-URL form.
+- **Plaintext-SASL warning** — `NewProducer` now emits a WARN log when
+  `WithSASL` is configured without `WithTLSConfig`. SASL credentials over
+  unencrypted TCP are recoverable by anyone on the network path; the warning
+  surfaces the misconfiguration in the bootstrap log without a hard failure
+  (dev/test setups using PLAIN SASL against a local broker remain valid).
+- **Span attribute hygiene** — the `tenant.id` span attribute is now emitted
+  only when `Event.TenantID` is non-empty, mirroring the wire-format
+  discipline in `buildCloudEventsHeaders` (which omits `ce-tenantid` for
+  system events). System events emit the new `streaming.system_event=true`
+  attribute instead so trace queries can split tenant traffic from system
+  traffic without joining `tenant.id` presence.
+- **Compile-time interface assertions** — `streaming.Producer` (root wrapper)
+  now carries `var _ commons.App = (*Producer)(nil)` alongside its existing
+  `var _ Emitter` assertion. `streamingtest.MockEmitter` now carries
+  `var _ streaming.Emitter = (*MockEmitter)(nil)`. A missing or renamed
+  method on either type fails the build at the type definition rather than
+  at a distant test or service call site.
+- **Defense-in-depth nil guards** — `produceWithContext` now guards
+  `p.client == nil` and fires the asserter trident on hand-built `*Producer{}`
+  fixtures (matching the existing pattern in `Healthy`, `CloseContext`, and
+  `publishDLQ`). The internal `Run` method now carries an explicit
+  nil-receiver guard alongside `RunContext`.
+- **Test infrastructure** — `libCommonsOutboxWriter` no longer relies on a
+  package-level mutable `writerAsserterLogger` global. Tests now construct
+  the writer with a per-instance logger
+  (`&libCommonsOutboxWriter{repo: nil, logger: capture}`) and run with
+  `t.Parallel()`. Production behavior is unchanged.
+
+### Removed (non-breaking refactor cleanup)
+
+- Removed dual-export pattern in `internal/contract/delivery_policy.go`
+  (`directAllowed/DirectAllowed`, `outboxAlways/OutboxAlways`,
+  `outboxFallbackOnCircuitOpen/OutboxFallbackOnCircuitOpen`,
+  `dlqAllowed/DLQAllowed`, `hasDeliveryPath/HasDeliveryPath`). The lowercase
+  wrappers existed only to keep a contract-package white-box test
+  source-stable; that test was converted to `package contract_test` and
+  now uses the canonical uppercase methods.
+- Removed duplicate `parseMajorVersion` in `internal/producer/test_compat_test.go`
+  — `internal/producer/property_test.go` now exercises the canonical
+  `contract.ParseMajorVersion` (newly exported) so fuzz/property coverage
+  reflects the actual production implementation.
+- Removed duplicate `headerFieldCheck` struct definition. Both producer-side
+  and contract-side check tables now use the canonical
+  `contract.HeaderFieldCheck` shape.
+- Removed three transitively unused error-sentinel re-exports from
+  `internal/producer/aliases.go`: `ErrDuplicateEventDefinition`,
+  `ErrInvalidDeliveryPolicy`, `ErrInvalidOutboxEnvelope`. These sentinels are
+  produced exclusively by `internal/contract` and remain reachable through
+  `errors.Is` walking from the public root facade.
+- Removed dead `defaultCloseTimeout` constant in
+  `internal/producer/test_compat_test.go` (zero callers).
 
 ## [0.2.0] — 2026-04-23
 
@@ -145,8 +238,14 @@ the migration section before upgrading from v0.1.0.
 | `Config{EventToggles: map[string]bool{...}}` | `Config{PolicyOverrides: map[string]DeliveryPolicyOverride{...}}`. |
 | `producer.RegisterOutboxHandler(registry, "lerian.streaming.foo.created")` | `producer.RegisterOutboxRelay(registry)`. Single registration handles all streaming topics via the stable EventType. |
 | `mock.Events()` returning `[]Event` | `mock.Requests()` returning `[]EmitRequest`. |
-| `streaming.AssertEventEmitted(t, mock, "foo", "created")` | `streamingtest.AssertEventEmitted(t, mock, "foo.created")`. |
-| `streaming.WaitForEvent(t, ctx, mock, func(e streaming.Event) bool {...}, 1*time.Second)` | `streamingtest.WaitForEvent(t, ctx, mock, func(r streaming.EmitRequest) bool {...}, 1*time.Second)`; return is `EmitRequest`. |
+| `streaming.AssertEventEmitted(t, mock, "foo", "created")` | `streamingtest.AssertEventEmitted(t, mock, "foo.created")` (3-arg signature; package moved per `[Unreleased]` entry above). |
+| `streaming.WaitForEvent(t, ctx, mock, func(e streaming.Event) bool {...}, 1*time.Second)` | `streamingtest.WaitForEvent(t, ctx, mock, func(r streaming.EmitRequest) bool {...}, 1*time.Second)`; return is `EmitRequest`; package moved per `[Unreleased]` entry above. |
+
+> **Note**: the `streamingtest` package was introduced as part of the
+> `[Unreleased]` package-layout reorganization. Consumers upgrading from
+> v0.1.0 to the next-tagged release MUST apply the v0.2.0 migration AND
+> the `[Unreleased]` migration in one pass — the v0.2.0 migration table
+> references `streamingtest` symbols that only exist post-refactor.
 
 #### Required ops changes
 
