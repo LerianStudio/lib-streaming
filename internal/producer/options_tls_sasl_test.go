@@ -1,6 +1,6 @@
 //go:build unit
 
-package streaming
+package producer
 
 import (
 	"crypto/tls"
@@ -23,7 +23,7 @@ import (
 // A real TLS handshake / SCRAM round-trip is out of scope per the T8 scope
 // note — documented on WithTLSConfig / WithSASL godoc.
 
-// validT8Config returns a cfg.validate()-passing Config for buildKgoOpts
+// validT8Config returns a cfg.Validate()-passing Config for buildKgoOpts
 // tests. Kept local to this file — producer_kgo_test.go builds its own
 // inline Configs; centralizing would ripple beyond T8.
 func validT8Config() Config {

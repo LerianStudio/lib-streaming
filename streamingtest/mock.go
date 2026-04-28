@@ -1,10 +1,19 @@
-package streaming
+package streamingtest
 
 import (
 	"context"
 	"sync"
 	"testing"
 	"time"
+
+	streaming "github.com/LerianStudio/lib-streaming"
+)
+
+type EmitRequest = streaming.EmitRequest
+
+var (
+	ErrPayloadTooLarge = streaming.ErrPayloadTooLarge
+	ErrNotJSON         = streaming.ErrNotJSON
 )
 
 // MockEmitter is a concurrency-safe, zero-dependency test double for Emitter.

@@ -8,7 +8,7 @@ This file provides repository-specific guidance for coding agents working on `li
 - Language: Go
 - Go version: `1.25.9` (see `go.mod`)
 - Current API version: v0.2.0 (intentional break vs v0.1.0; see `CHANGELOG.md`)
-- Layout: single Go package at the repository root (`package streaming`). External tests live in `package streaming_test`. Scaffolding (`docs/`, `.github/`, `scripts/`) stays in subdirectories.
+- Layout: public root facade at the repository root (`package streaming`) with implementation in internal packages (`internal/contract`, `internal/config`, `internal/manifest`, `internal/cloudevents`, `internal/emitter`, `internal/producer`). Public test helpers live in `streamingtest`. Scaffolding (`docs/`, `.github/`, `scripts/`) stays in subdirectories.
 
 ## Primary objective for changes
 
@@ -19,7 +19,18 @@ This file provides repository-specific guidance for coding agents working on `li
 ## Repository shape
 
 Root:
-- `*.go`: the `streaming` package — producer, emitter implementations, config, CloudEvents envelope, classification, publish/DLQ/outbox paths, metrics, span helpers, lifecycle, catalog, delivery policy, manifest, HTTP introspection handler.
+- `*.go`: the `streaming` package public facade — constructors, root `Producer` wrapper, option wrappers, public aliases, manifest helpers, error sentinels/classes, and package documentation.
+
+Internal:
+- `internal/contract`: event model, catalog, delivery policies, health types, sentinels, validation primitives.
+- `internal/config`: `STREAMING_*` environment parsing and config validation.
+- `internal/manifest`: publisher descriptor, manifest DTOs, HTTP introspection handler.
+- `internal/cloudevents`: Kafka CloudEvents binary-mode header codec.
+- `internal/emitter`: no-op emitter implementation.
+- `internal/producer`: franz-go producer runtime, circuit breaker, publish/outbox/DLQ paths, metrics, spans, assertions.
+
+Public test support:
+- `streamingtest`: public test double and assertion helpers.
 
 Support:
 - `docs/`: design notes and standards pointers.
@@ -31,13 +42,13 @@ Support:
 ### Streaming
 
 - lib-streaming is producer-only; `github.com/LerianStudio/lib-commons/v5/commons/rabbitmq` handles internal command queues. The two are orthogonal and neither deprecates the other.
-- Three-method `Emitter` interface (`Emit(ctx, EmitRequest) error`, `Close() error`, `Healthy(ctx) error`). Three implementations: `*Producer` (franz-go-backed), `NoopEmitter` (fail-safe when disabled), and `MockEmitter` (concurrency-safe test double with deep-copy via `Requests()`, `AssertEventEmitted/AssertEventCount/AssertTenantID/AssertNoEvents` helpers, and `WaitForEvent`).
+- Three-method `Emitter` interface (`Emit(ctx, EmitRequest) error`, `Close() error`, `Healthy(ctx) error`). Three implementations: root `*Producer` (facade over franz-go-backed internal producer), `NoopEmitter` (fail-safe when disabled), and `streamingtest.MockEmitter` (concurrency-safe test double with deep-copy via `Requests()`, `AssertEventEmitted/AssertEventCount/AssertTenantID/AssertNoEvents` helpers, and `WaitForEvent`).
 - Constructors: `New(ctx, cfg Config, opts ...EmitterOption) (Emitter, error)` picks the right implementation from Config — returns a NoopEmitter when `Enabled=false` or `Brokers` is empty; `NewProducer(ctx, cfg, opts...) (*Producer, error)` forces construction, never substitutes a Noop, and REQUIRES `WithCatalog(catalog)` with a non-empty catalog.
-- `LoadConfig() (Config, error)` reads every `STREAMING_*` env var, applies defaults, and validates the result. Validation is skipped when `Enabled=false`.
+- `LoadConfig() (Config, []string, error)` reads every `STREAMING_*` env var, applies defaults, returns migration warnings, and validates the result. Validation is skipped when `Enabled=false`.
 - Functional options (12): `WithLogger`, `WithMetricsFactory`, `WithTracer`, `WithCircuitBreakerManager`, `WithPartitionKey`, `WithCloseTimeout`, `WithOutboxRepository`, `WithOutboxWriter`, `WithTLSConfig`, `WithSASL`, `WithAllowSystemEvents`, `WithCatalog`. Passing nil for any factory or manager is safe — the Producer falls back to a no-op recorder / its own CB manager. `WithOutboxRepository` and `WithOutboxWriter` are mutually exclusive (last call wins).
 - `Event` struct carries the CloudEvents 1.0 binary-mode envelope: `TenantID`, `ResourceType`, `EventType`, `EventID`, `SchemaVersion`, `Timestamp`, `Source` (required CloudEvents fields) plus `Subject`, `DataContentType`, `DataSchema`, `SystemEvent`, and `Payload json.RawMessage`. `ApplyDefaults()` fills missing EventID (UUIDv7 via `commons.GenerateUUIDv7`), Timestamp (now UTC), SchemaVersion ("1.0.0"), and DataContentType ("application/json") on a local copy before publish.
 - `Event.Topic()` derives `"lerian.streaming.<resource>.<event>"` (with `".v<major>"` suffix when `SchemaVersion` major is ≥2). `Event.PartitionKey()` returns `TenantID` by default, or `"system:" + EventType` when `SystemEvent=true`.
-- Caller-correctable sentinels (synchronous, no I/O — `IsCallerError(err)` returns true): `ErrMissingTenantID`, `ErrMissingSource`, `ErrMissingResourceType`, `ErrMissingEventType`, `ErrSystemEventsNotAllowed`, `ErrInvalidTenantID`, `ErrInvalidResourceType`, `ErrInvalidEventType`, `ErrInvalidSource`, `ErrInvalidSubject`, `ErrInvalidEventID`, `ErrInvalidSchemaVersion`, `ErrInvalidDataContentType`, `ErrInvalidDataSchema`, `ErrPayloadTooLarge` (1 MiB cap), `ErrNotJSON`, `ErrEventDisabled`, `ErrInvalidEventDefinition`, `ErrDuplicateEventDefinition`, `ErrUnknownEventDefinition`, `ErrInvalidDeliveryPolicy`, `ErrInvalidPublisherDescriptor`.
+- Caller-correctable sentinels (synchronous, no I/O — `IsCallerError(err)` returns true): `ErrMissingTenantID`, `ErrMissingSource`, `ErrMissingResourceType`, `ErrMissingEventType`, `ErrSystemEventsNotAllowed`, `ErrInvalidTenantID`, `ErrInvalidResourceType`, `ErrInvalidEventType`, `ErrInvalidSource`, `ErrInvalidSubject`, `ErrInvalidEventID`, `ErrInvalidSchemaVersion`, `ErrInvalidDataContentType`, `ErrInvalidDataSchema`, `ErrPayloadTooLarge` (1 MiB cap), `ErrNotJSON`, `ErrEventDisabled`, `ErrInvalidEventDefinition`, `ErrInvalidOutboxEnvelope`, `ErrDuplicateEventDefinition`, `ErrUnknownEventDefinition`, `ErrInvalidDeliveryPolicy`, `ErrInvalidPublisherDescriptor`.
 - Config-validation sentinels (also caller-correctable): `ErrMissingBrokers`, `ErrInvalidCompression`, `ErrInvalidAcks`.
 - Lifecycle/wiring sentinels (NOT caller errors — `IsCallerError` returns false): `ErrEmitterClosed`, `ErrNilProducer`, `ErrCircuitOpen`, `ErrOutboxNotConfigured`, `ErrOutboxTxUnsupported`, `ErrNilOutboxRegistry`.
 - `*EmitError` carries `ResourceType`, `EventType`, `TenantID`, `Topic`, `Class ErrorClass`, and `Cause error`. `Error()` runs through `sanitizeBrokerURL` so SASL credentials never surface in logs. `IsCallerError(err)` returns true for the caller-correctable sentinels and for `*EmitError` with class `ClassSerialization`, `ClassValidation`, or `ClassAuth`.
@@ -69,7 +80,7 @@ Support:
 ### Health, Concurrency, Metrics
 
 - `Healthy(ctx)` returns nil when ready; otherwise returns a `*HealthError` whose `State()` is one of `Healthy`, `Degraded` (broker unreachable but outbox viable), or `Down` (both unreachable). Health check bounds the broker Ping to 500ms.
-- Concurrency: `*Producer`, `MockEmitter`, and `NoopEmitter` are all safe for concurrent use from any number of goroutines.
+- Concurrency: `*Producer`, `streamingtest.MockEmitter`, and `NoopEmitter` are all safe for concurrent use from any number of goroutines.
 - Metrics: `streaming_emitted_total`, `streaming_emit_duration_ms`, `streaming_dlq_total`, `streaming_dlq_publish_failed_total`, `streaming_outbox_routed_total`, `streaming_circuit_state`. All registered via the `MetricsFactory` passed through `WithMetricsFactory`; nil factory degrades to a no-op recorder after a single WARN log at first Emit. **No `tenant_id` label on any metric** (cardinality discipline). Tenant identity lives on spans only.
 
 ### Runtime assertions (commons/assert)

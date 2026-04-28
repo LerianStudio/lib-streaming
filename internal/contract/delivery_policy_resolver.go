@@ -1,4 +1,4 @@
-package streaming
+package contract
 
 // ResolveDeliveryPolicy applies delivery policy precedence:
 //

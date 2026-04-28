@@ -1,4 +1,4 @@
-package streaming
+package producer
 
 import (
 	"context"
@@ -7,47 +7,6 @@ import (
 
 	"github.com/twmb/franz-go/pkg/kgo"
 )
-
-// maxPayloadBytes is the pre-flight payload-size ceiling. 1 MiB matches
-// Redpanda's default broker.max.message.bytes and github.com/LerianStudio/lib-commons/v5/commons/outbox's
-// DefaultMaxPayloadBytes, so the outbox-fallback path cannot accept a
-// payload Redpanda would reject downstream.
-const maxPayloadBytes = 1_048_576
-
-// Header-length ceilings for CloudEvents context attributes. Values
-// balance two constraints: (a) Kafka's default max.header.bytes per record
-// is large but not unbounded; (b) downstream log parsers and OTEL label
-// pipelines choke on arbitrary-length attribute values. The ceilings are
-// intentionally conservative — longer values almost always indicate a bug
-// (e.g. a UUID concatenated in a loop) rather than a legitimate use case.
-const (
-	maxTenantIDBytes        = 256
-	maxResourceTypeBytes    = 128
-	maxEventTypeBytes       = 128
-	maxSourceBytes          = 2048
-	maxSubjectBytes         = 1024
-	maxEventIDBytes         = 256
-	maxSchemaVersionBytes   = 64
-	maxDataContentTypeBytes = 256
-	maxDataSchemaBytes      = 2048
-)
-
-// hasControlChar reports whether s contains any ASCII control character
-// (bytes < 0x20 including tab 0x09, or the DEL byte 0x7F). Control chars
-// would corrupt log streams (CRLF injection, ANSI escape), break OTEL
-// label pipelines, and confuse downstream header parsers. Tab is included
-// in the deny set — legitimate CloudEvents attribute values never contain
-// tabs, and allowing them would be a discipline gap.
-func hasControlChar(s string) bool {
-	for i := range len(s) {
-		b := s[i]
-		if b < 0x20 || b == 0x7F {
-			return true
-		}
-	}
-
-	return false
-}
 
 // preFlight runs all caller-side validation on an Event before it reaches
 // the circuit breaker. Defaults must already be applied by the caller —
@@ -249,7 +208,7 @@ func (p *Producer) publishDirect(ctx context.Context, event Event, topic string,
 	// best-effort — failures are logged and metricked inside publishDLQ
 	// and do not propagate here.
 	cls := classifyError(err)
-	if policy.dlqAllowed() {
+	if policy.DLQAllowed() {
 		cls = p.routeToDLQIfApplicable(ctx, event, err, topic, firstAttempt)
 	}
 

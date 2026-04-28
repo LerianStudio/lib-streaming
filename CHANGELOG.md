@@ -10,6 +10,15 @@ Pre-v1, breaking changes are allowed but ALWAYS land here with a migration note.
 
 ### Changed (BREAKING)
 
+- **Package layout** — the root `github.com/LerianStudio/lib-streaming`
+  package is now a public facade over internal implementation packages. Public
+  contracts remain available from the root package, while the test double moved
+  to `github.com/LerianStudio/lib-streaming/streamingtest`.
+- **`MockEmitter` location** — `MockEmitter`, `NewMockEmitter`, and assertion
+  helpers moved from `streaming` to `streamingtest`. Migration: replace
+  `streaming.NewMockEmitter()` / `streaming.AssertEventEmitted(...)` with
+  `streamingtest.NewMockEmitter()` / `streamingtest.AssertEventEmitted(...)`.
+
 - **`LoadConfig` signature** — now returns `(Config, []string, error)` instead
   of `(Config, error)`. The new `[]string` return value is a slice of
   human-readable migration warnings (e.g. the legacy `STREAMING_EVENT_TOGGLES`
@@ -136,8 +145,8 @@ the migration section before upgrading from v0.1.0.
 | `Config{EventToggles: map[string]bool{...}}` | `Config{PolicyOverrides: map[string]DeliveryPolicyOverride{...}}`. |
 | `producer.RegisterOutboxHandler(registry, "lerian.streaming.foo.created")` | `producer.RegisterOutboxRelay(registry)`. Single registration handles all streaming topics via the stable EventType. |
 | `mock.Events()` returning `[]Event` | `mock.Requests()` returning `[]EmitRequest`. |
-| `streaming.AssertEventEmitted(t, mock, "foo", "created")` | `streaming.AssertEventEmitted(t, mock, "foo.created")`. |
-| `streaming.WaitForEvent(t, ctx, mock, func(e streaming.Event) bool {...}, 1*time.Second)` | matcher `func(r streaming.EmitRequest) bool`; return is `EmitRequest`. |
+| `streaming.AssertEventEmitted(t, mock, "foo", "created")` | `streamingtest.AssertEventEmitted(t, mock, "foo.created")`. |
+| `streaming.WaitForEvent(t, ctx, mock, func(e streaming.Event) bool {...}, 1*time.Second)` | `streamingtest.WaitForEvent(t, ctx, mock, func(r streaming.EmitRequest) bool {...}, 1*time.Second)`; return is `EmitRequest`. |
 
 #### Required ops changes
 

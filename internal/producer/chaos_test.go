@@ -22,7 +22,7 @@
 //  4. RESTORE: remove latency toxic.
 //  5. RECOVER: drain outbox via the replay handler; CB eventually CLOSED.
 
-package streaming
+package producer
 
 import (
 	"context"

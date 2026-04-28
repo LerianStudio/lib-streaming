@@ -1,4 +1,4 @@
-package streaming
+package contract
 
 import "fmt"
 
@@ -181,16 +181,32 @@ func (p DeliveryPolicy) directAllowed() bool {
 	return p.Enabled && p.Direct == DirectModeDirect
 }
 
+func (p DeliveryPolicy) DirectAllowed() bool {
+	return p.directAllowed()
+}
+
 func (p DeliveryPolicy) outboxAlways() bool {
 	return p.Enabled && p.Outbox == OutboxModeAlways
+}
+
+func (p DeliveryPolicy) OutboxAlways() bool {
+	return p.outboxAlways()
 }
 
 func (p DeliveryPolicy) outboxFallbackOnCircuitOpen() bool {
 	return p.Enabled && p.Outbox == OutboxModeFallbackOnCircuitOpen
 }
 
+func (p DeliveryPolicy) OutboxFallbackOnCircuitOpen() bool {
+	return p.outboxFallbackOnCircuitOpen()
+}
+
 func (p DeliveryPolicy) dlqAllowed() bool {
 	return p.Enabled && p.DLQ == DLQModeOnRoutableFailure
+}
+
+func (p DeliveryPolicy) DLQAllowed() bool {
+	return p.dlqAllowed()
 }
 
 func (p DeliveryPolicy) hasDeliveryPath() bool {
@@ -199,6 +215,10 @@ func (p DeliveryPolicy) hasDeliveryPath() bool {
 	}
 
 	return p.directAllowed() || p.outboxAlways()
+}
+
+func (p DeliveryPolicy) HasDeliveryPath() bool {
+	return p.hasDeliveryPath()
 }
 
 func cloneDeliveryPolicyOverrides(src map[string]DeliveryPolicyOverride) map[string]DeliveryPolicyOverride {
@@ -217,4 +237,8 @@ func cloneDeliveryPolicyOverrides(src map[string]DeliveryPolicyOverride) map[str
 	}
 
 	return dst
+}
+
+func CloneDeliveryPolicyOverrides(src map[string]DeliveryPolicyOverride) map[string]DeliveryPolicyOverride {
+	return cloneDeliveryPolicyOverrides(src)
 }

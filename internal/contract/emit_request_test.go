@@ -1,6 +1,6 @@
 //go:build unit
 
-package streaming
+package contract
 
 import (
 	"encoding/json"
@@ -14,6 +14,7 @@ func TestEmitRequest_New_CopiesAndPreservesRuntimeFields(t *testing.T) {
 
 	payload := json.RawMessage(`{"id":"tx-1"}`)
 	ts := time.Date(2026, 4, 23, 12, 0, 0, 0, time.UTC)
+	enabled := true
 
 	request, err := newEmitRequest(EmitRequest{
 		DefinitionKey: "transaction.created",
@@ -22,14 +23,21 @@ func TestEmitRequest_New_CopiesAndPreservesRuntimeFields(t *testing.T) {
 		EventID:       "evt-1",
 		Timestamp:     ts,
 		Payload:       payload,
+		PolicyOverride: DeliveryPolicyOverride{
+			Enabled: &enabled,
+		},
 	}, true)
 	if err != nil {
 		t.Fatalf("newEmitRequest() error = %v", err)
 	}
 
 	payload[0] = '['
+	enabled = false
 	if string(request.Payload) != `{"id":"tx-1"}` {
 		t.Errorf("newEmitRequest() did not copy payload, got %q", string(request.Payload))
+	}
+	if request.PolicyOverride.Enabled == nil || !*request.PolicyOverride.Enabled {
+		t.Errorf("newEmitRequest() did not copy PolicyOverride.Enabled, got %v", request.PolicyOverride.Enabled)
 	}
 	if request.Timestamp != ts {
 		t.Errorf("Timestamp = %v; want %v", request.Timestamp, ts)

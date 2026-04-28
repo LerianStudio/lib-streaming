@@ -1,4 +1,4 @@
-package streaming
+package producer
 
 import (
 	"context"
@@ -19,7 +19,7 @@ import (
 // (see circuitbreaker/manager.go). So we do NOT spawn our own goroutine and
 // we do NOT hold any lock. OnStateChange performs a single atomic store and a
 // single log call — both bounded in time, both panic-safe through
-// runtime.RecoverAndLog, both per TRD §9 "no I/O in the listener".
+// runtime.RecoverAndLogWithContext, both per TRD §9 "no I/O in the listener".
 //
 // The constraint that makes this work: the circuit-breaker Manager's 10s
 // listener deadline is plenty because the listener only touches atomics +
@@ -43,7 +43,7 @@ type streamingStateListener struct {
 // OnStateChange is invoked by the circuit-breaker Manager on every state
 // transition for any registered service. This implementation:
 //
-//  1. Recovers from panics via runtime.RecoverAndLog (belt-and-suspenders;
+//  1. Recovers from panics via runtime.RecoverAndLogWithContext (belt-and-suspenders;
 //     the Manager also wraps us in SafeGo).
 //  2. Filters events by serviceName — other Producers in the same manager
 //     don't own our state flag.
@@ -89,9 +89,9 @@ func (l *streamingStateListener) OnStateChange(
 
 	// Defense in depth — the Manager already wraps listeners in SafeGo with
 	// its own recover, but a panic in a logger implementation would otherwise
-	// poison the Manager goroutine. RecoverAndLog is cheap and side-effect-
-	// free on the happy path.
-	defer runtime.RecoverAndLog(l.producer.logger, "streaming.cb_state_listener")
+	// poison the Manager goroutine. Use the context-aware variant so this inner
+	// recovery still emits the runtime observability trident.
+	defer runtime.RecoverAndLogWithContext(ctx, l.producer.logger, "streaming", "cb_state_listener")
 
 	// Filter on service name. The Manager notifies every listener for every
 	// service; we only care about our own breaker. Cheap string compare, so

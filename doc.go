@@ -20,7 +20,7 @@
 //
 //	cfg, warnings, err := streaming.LoadConfig()
 //	if err != nil { return err }
-//	for _, w := range warnings { logger.Warnf(ctx, "%s", w) }
+//	for _, w := range warnings { logger.Log(ctx, log.LevelWarn, w) }
 //	catalog, err := streaming.NewCatalog(streaming.EventDefinition{
 //	    Key:          "transaction.created",
 //	    ResourceType: "transaction",
@@ -31,6 +31,7 @@
 //	// initialized. lib-streaming uses commons/assert internally for
 //	// post-construction invariant checks; without this bootstrap call the
 //	// assertion_failed_total counter stays at zero.
+//	runtime.InitPanicMetrics(metricsFactory)
 //	assert.InitAssertionMetrics(metricsFactory)
 //	producer, err := streaming.NewProducer(ctx, cfg,
 //	    streaming.WithLogger(logger),
@@ -45,7 +46,7 @@
 //	// registry so persisted rows drain back through publishDirect once the
 //	// broker recovers. Omitting this call leaves outbox rows unprocessed.
 //	if err := producer.RegisterOutboxRelay(outboxRegistry); err != nil { return err }
-//	launcher.Add("streaming", producer)
+//	if err := launcher.Add("streaming", producer); err != nil { return err }
 //	// Inject producer (as streaming.Emitter) into service constructors.
 //
 // Service method uses the injected Emitter:
@@ -59,10 +60,10 @@
 //
 // Unit-test with the mock emitter:
 //
-//	mock := streaming.NewMockEmitter()
+//	mock := streamingtest.NewMockEmitter()
 //	svc := NewMyService(mock)
 //	svc.DoSomething(ctx)
-//	streaming.AssertEventEmitted(t, mock, "transaction.created")
+//	streamingtest.AssertEventEmitted(t, mock, "transaction.created")
 //
 // # Environment variables
 //
@@ -91,8 +92,8 @@
 //
 // # Error classes and sentinels
 //
-// Sentinel errors are defined in streaming.go (search for `var (` on that
-// file for the authoritative list with full godoc on each). The categories:
+// Sentinel errors are exposed from the root streaming package and implemented
+// in the internal contract layer. The categories:
 //
 //   - Caller-side validation (synchronous, no I/O — IsCallerError returns
 //     true): ErrMissingTenantID, ErrSystemEventsNotAllowed, ErrMissingSource,
@@ -100,8 +101,9 @@
 //     ErrInvalid{TenantID,ResourceType,EventType,Source,Subject,EventID,
 //     SchemaVersion,DataContentType,DataSchema}, ErrPayloadTooLarge,
 //     ErrNotJSON, ErrEventDisabled, ErrInvalidEventDefinition,
-//     ErrDuplicateEventDefinition, ErrUnknownEventDefinition,
-//     ErrInvalidDeliveryPolicy, ErrInvalidPublisherDescriptor.
+//     ErrInvalidOutboxEnvelope, ErrDuplicateEventDefinition,
+//     ErrUnknownEventDefinition, ErrInvalidDeliveryPolicy,
+//     ErrInvalidPublisherDescriptor.
 //   - Config validation (LoadConfig): ErrMissingBrokers, ErrMissingSource,
 //     ErrInvalidCompression, ErrInvalidAcks.
 //   - Lifecycle / wiring (NOT caller errors — IsCallerError returns false):

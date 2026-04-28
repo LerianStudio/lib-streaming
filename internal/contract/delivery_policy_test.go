@@ -1,6 +1,6 @@
 //go:build unit
 
-package streaming
+package contract
 
 import (
 	"errors"

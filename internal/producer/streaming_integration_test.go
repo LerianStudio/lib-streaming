@@ -15,7 +15,7 @@
 // Requires Docker. When Docker is unavailable the testcontainers bootstrap
 // fails fast; individual tests turn that into a t.Skip via the skipIfNoDocker
 // helper below so CI in non-Docker environments still reports green.
-package streaming
+package producer
 
 import (
 	"context"

@@ -1,6 +1,6 @@
 //go:build unit
 
-package streaming
+package manifest
 
 import (
 	"encoding/json"

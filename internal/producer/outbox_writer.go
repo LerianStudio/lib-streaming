@@ -1,4 +1,4 @@
-package streaming
+package producer
 
 import (
 	"context"
@@ -20,10 +20,10 @@ import (
 // adapted from a caller-supplied outbox.OutboxRepository), so the asserter
 // cannot source a logger via p.newAsserter.
 //
-// Default log.NewNop keeps the trident's log layer silent in production;
-// the span-event + assertion_failed_total metric layers still fire. Tests
-// replace this variable in _test.go via swapWriterAsserterLogger to verify
-// the trident emits when the nil-repo guard trips.
+// Default log.NewNop keeps hand-built writers silent until Producer bootstrap
+// injects its resolved logger. Tests replace this variable in _test.go via
+// swapWriterAsserterLogger to verify the trident emits when the nil-repo guard
+// trips.
 var writerAsserterLogger log.Logger = log.NewNop()
 
 // OutboxWriter is the minimal durable-write boundary lib-streaming needs.
@@ -48,7 +48,16 @@ type TransactionalOutboxWriter interface {
 }
 
 type libCommonsOutboxWriter struct {
-	repo outbox.OutboxRepository
+	repo   outbox.OutboxRepository
+	logger log.Logger
+}
+
+func (w *libCommonsOutboxWriter) asserterLogger() log.Logger {
+	if w != nil && w.logger != nil {
+		return w.logger
+	}
+
+	return writerAsserterLogger
 }
 
 func (w *libCommonsOutboxWriter) Write(ctx context.Context, envelope OutboxEnvelope) error {
@@ -65,7 +74,7 @@ func (w *libCommonsOutboxWriter) Write(ctx context.Context, envelope OutboxEnvel
 	// "no outbox wired" at the caller's outcome-classification layer.
 	// Fire the observability trident; still return ErrOutboxNotConfigured
 	// so callers see the documented sentinel.
-	a := assert.New(context.Background(), writerAsserterLogger, asserterComponent, "outbox_writer.write")
+	a := assert.New(ctx, w.asserterLogger(), asserterComponent, "outbox_writer.write")
 	if err := a.NotNil(ctx, w.repo, "libCommonsOutboxWriter repo must be non-nil post-construction"); err != nil {
 		return ErrOutboxNotConfigured
 	}
@@ -91,7 +100,7 @@ func (w *libCommonsOutboxWriter) WriteWithTx(ctx context.Context, tx *sql.Tx, en
 	// Same invariant as Write: nil repo here means the writer was hand-
 	// built bypassing WithOutboxRepository's nil guard. Fire the trident,
 	// return ErrOutboxNotConfigured.
-	a := assert.New(context.Background(), writerAsserterLogger, asserterComponent, "outbox_writer.write_with_tx")
+	a := assert.New(ctx, w.asserterLogger(), asserterComponent, "outbox_writer.write_with_tx")
 	if err := a.NotNil(ctx, w.repo, "libCommonsOutboxWriter repo must be non-nil for WriteWithTx"); err != nil {
 		return ErrOutboxNotConfigured
 	}
@@ -119,7 +128,7 @@ func outboxRowFromEnvelope(envelope OutboxEnvelope) (*outbox.OutboxEvent, error)
 
 	// musttag nolint: OutboxEnvelope embeds Event, whose wire shape intentionally
 	// uses Go-default field names for CloudEvents fields.
-	payload, err := json.Marshal(envelope) //nolint:musttag
+	payload, err := json.Marshal(envelope)
 	if err != nil {
 		return nil, fmt.Errorf("streaming: marshal outbox envelope: %w", err)
 	}

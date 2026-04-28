@@ -1,4 +1,4 @@
-package streaming
+package contract
 
 import "fmt"
 

@@ -1,4 +1,4 @@
-package streaming
+package contract
 
 import (
 	"net/url"
@@ -53,6 +53,10 @@ func sanitizeBrokerURL(s string) string {
 	})
 
 	return s
+}
+
+func SanitizeBrokerURL(s string) string {
+	return sanitizeBrokerURL(s)
 }
 
 // redactURLCandidate applies URL-aware redaction to a single URL-shaped token.

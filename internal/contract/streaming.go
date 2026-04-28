@@ -3,7 +3,7 @@
 // This file defines the Emitter interface, the 8-class ErrorClass enum,
 // sentinel errors, and the EmitError custom type used to carry structured
 // diagnostic context to observers (logs, spans, metrics).
-package streaming
+package contract
 
 import (
 	"context"

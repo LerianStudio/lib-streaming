@@ -5,14 +5,14 @@ CloudEvents-framed domain event publisher to Redpanda/Kafka, with circuit-breake
 Producer-only. Orthogonal to `github.com/LerianStudio/lib-commons/v5/commons/rabbitmq` (internal command queues) — neither deprecates the other.
 
 - Module: `github.com/LerianStudio/lib-streaming`
-- Version: `v0.2.0`
+- Version: `Unreleased` (post-`v0.2.0`)
 - Go: `1.25.9`
 - License: Elastic License 2.0 (see [LICENSE](./LICENSE))
 
 ## Install
 
 ```
-go get github.com/LerianStudio/lib-streaming@v0.2.0
+go get github.com/LerianStudio/lib-streaming@main
 ```
 
 ## Upgrading from v0.1.0
@@ -31,8 +31,12 @@ See [`CHANGELOG.md`](./CHANGELOG.md) for the full list and the outbox-row compat
 Bootstrap in `main.go`:
 
 ```go
-cfg, err := streaming.LoadConfig()
+cfg, warnings, err := streaming.LoadConfig()
 if err != nil { return err }
+for _, warning := range warnings { logger.Log(ctx, log.LevelWarn, warning) }
+
+runtime.InitPanicMetrics(metricsFactory)
+assert.InitAssertionMetrics(metricsFactory)
 
 catalog, err := streaming.NewCatalog(streaming.EventDefinition{
     Key:          "transaction.created",
@@ -51,7 +55,7 @@ producer, err := streaming.NewProducer(ctx, cfg,
 )
 if err != nil { return err }
 if err := producer.RegisterOutboxRelay(outboxRegistry); err != nil { return err }
-launcher.Add("streaming", producer)
+if err := launcher.Add("streaming", producer); err != nil { return err }
 ```
 
 Service method uses the injected `Emitter`:
@@ -68,10 +72,10 @@ err := emitter.Emit(ctx, streaming.EmitRequest{
 Unit-test with the mock emitter:
 
 ```go
-mock := streaming.NewMockEmitter()
+mock := streamingtest.NewMockEmitter()
 svc := NewMyService(mock)
 svc.DoSomething(ctx)
-streaming.AssertEventEmitted(t, mock, "transaction.created")
+streamingtest.AssertEventEmitted(t, mock, "transaction.created")
 ```
 
 ## Features
@@ -91,7 +95,7 @@ streaming.AssertEventEmitted(t, mock, "transaction.created")
 |---|---|
 | `*Producer` | Production. Backed by franz-go. Implements `commons.App`. |
 | `NoopEmitter` | `STREAMING_ENABLED=false` or empty `STREAMING_BROKERS`. No-op. |
-| `MockEmitter` | Unit tests. Concurrency-safe. Deep-copies events. Includes `Assert*` helpers and `WaitForEvent`. |
+| `streamingtest.MockEmitter` | Unit tests. Concurrency-safe. Deep-copies emit requests. Includes `Assert*` helpers and `WaitForEvent`. |
 
 `streaming.New(ctx, cfg, opts...)` returns the right implementation based on `Config`. `streaming.NewProducer(ctx, cfg, opts...)` forces `*Producer` construction.
 

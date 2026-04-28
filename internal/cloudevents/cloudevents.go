@@ -1,4 +1,4 @@
-package streaming
+package cloudevents
 
 import (
 	"errors"
@@ -111,6 +111,11 @@ func buildCloudEventsHeaders(event Event) []kgo.RecordHeader {
 	}
 
 	return headers
+}
+
+// BuildHeaders assembles CloudEvents binary-mode Kafka headers for event.
+func BuildHeaders(event Event) []kgo.RecordHeader {
+	return buildCloudEventsHeaders(event)
 }
 
 // ErrMissingRequiredHeader is returned by ParseCloudEventsHeaders when a

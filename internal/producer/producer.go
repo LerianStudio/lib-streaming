@@ -1,4 +1,4 @@
-package streaming
+package producer
 
 import (
 	"context"
@@ -169,7 +169,7 @@ func New(ctx context.Context, cfg Config, opts ...EmitterOption) (Emitter, error
 func NewProducer(ctx context.Context, cfg Config, opts ...EmitterOption) (*Producer, error) {
 	// Belt-and-suspenders: even if LoadConfig wasn't used, re-validate here
 	// so ad-hoc Config{} constructions don't slip past with missing fields.
-	if err := cfg.validate(); err != nil {
+	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("streaming: invalid config: %w", err)
 	}
 
@@ -185,6 +185,10 @@ func NewProducer(ctx context.Context, cfg Config, opts ...EmitterOption) (*Produ
 	logger := resolvedOpts.logger
 	if logger == nil {
 		logger = log.NewNop()
+	}
+
+	if writer, ok := resolvedOpts.outboxWriter.(*libCommonsOutboxWriter); ok && writer != nil {
+		writer.logger = logger
 	}
 
 	// Resolve close timeout: explicit option > Config default > hard-coded

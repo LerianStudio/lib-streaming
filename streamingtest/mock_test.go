@@ -1,6 +1,6 @@
 //go:build unit
 
-package streaming
+package streamingtest
 
 import (
 	"context"
@@ -10,6 +10,8 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
+
+	streaming "github.com/LerianStudio/lib-streaming"
 )
 
 // TestMockEmitter_CaptureAndEvents verifies the simplest contract: Emit
@@ -74,6 +76,37 @@ func TestMockEmitter_DeepCopy(t *testing.T) {
 	}
 }
 
+func TestMockEmitter_RequestsReturnsDeepCopy(t *testing.T) {
+	t.Parallel()
+
+	m := NewMockEmitter()
+	enabled := true
+	request := EmitRequest{
+		DefinitionKey: "transaction.created",
+		TenantID:      "t-1",
+		Payload:       json.RawMessage(`{"amount":100}`),
+		PolicyOverride: streaming.DeliveryPolicyOverride{
+			Enabled: &enabled,
+		},
+	}
+
+	if err := m.Emit(context.Background(), request); err != nil {
+		t.Fatalf("Emit() error = %v", err)
+	}
+
+	snapshot := m.Requests()
+	snapshot[0].Payload[0] = '['
+	*snapshot[0].PolicyOverride.Enabled = false
+
+	second := m.Requests()[0]
+	if string(second.Payload) != `{"amount":100}` {
+		t.Fatalf("Requests() payload snapshot was not deep-copied: %q", string(second.Payload))
+	}
+	if second.PolicyOverride.Enabled == nil || !*second.PolicyOverride.Enabled {
+		t.Fatalf("Requests() PolicyOverride.Enabled snapshot was not deep-copied: %v", second.PolicyOverride.Enabled)
+	}
+}
+
 // TestMockEmitter_SetError forces Emit to return a preset error.
 func TestMockEmitter_SetError(t *testing.T) {
 	t.Parallel()
@@ -86,6 +119,9 @@ func TestMockEmitter_SetError(t *testing.T) {
 	err := m.Emit(ctx, EmitRequest{DefinitionKey: "transaction.created", TenantID: "t-1"})
 	if err != ErrPayloadTooLarge {
 		t.Errorf("Emit() err = %v; want ErrPayloadTooLarge", err)
+	}
+	if got := len(m.Requests()); got != 0 {
+		t.Fatalf("errored Emit captured %d requests; want 0", got)
 	}
 
 	// Clearing restores the happy path.
@@ -102,8 +138,12 @@ func TestMockEmitter_Reset(t *testing.T) {
 	m := NewMockEmitter()
 	ctx := context.Background()
 
-	_ = m.Emit(ctx, EmitRequest{DefinitionKey: "transaction.created", TenantID: "t-1"})
-	_ = m.Emit(ctx, EmitRequest{DefinitionKey: "account.updated", TenantID: "t-1"})
+	if err := m.Emit(ctx, EmitRequest{DefinitionKey: "transaction.created", TenantID: "t-1"}); err != nil {
+		t.Fatalf("Emit() error = %v", err)
+	}
+	if err := m.Emit(ctx, EmitRequest{DefinitionKey: "account.updated", TenantID: "t-1"}); err != nil {
+		t.Fatalf("Emit() error = %v", err)
+	}
 
 	if len(m.Requests()) != 2 {
 		t.Fatalf("pre-reset len = %d; want 2", len(m.Requests()))
@@ -132,10 +172,12 @@ func TestMockEmitter_ConcurrentEmits(t *testing.T) {
 	for i := 0; i < n; i++ {
 		go func(i int) {
 			defer wg.Done()
-			_ = m.Emit(ctx, EmitRequest{
+			if err := m.Emit(ctx, EmitRequest{
 				DefinitionKey: "transaction.created",
 				TenantID:      fmt.Sprintf("t-%d", i),
-			})
+			}); err != nil {
+				t.Errorf("Emit() error = %v", err)
+			}
 		}(i)
 	}
 	wg.Wait()
@@ -194,7 +236,9 @@ func TestAssertEventEmitted_Pass(t *testing.T) {
 	t.Parallel()
 
 	m := NewMockEmitter()
-	_ = m.Emit(context.Background(), EmitRequest{DefinitionKey: "transaction.created", TenantID: "t-1"})
+	if err := m.Emit(context.Background(), EmitRequest{DefinitionKey: "transaction.created", TenantID: "t-1"}); err != nil {
+		t.Fatalf("Emit() error = %v", err)
+	}
 
 	// All four exported assertion helpers must succeed silently on a
 	// matching mock. Any failure bubbles up through the real *testing.T.
@@ -226,7 +270,9 @@ func TestWaitForEvent_DeterministicMatch(t *testing.T) {
 
 		go func() {
 			time.Sleep(10 * time.Millisecond)
-			_ = m.Emit(ctx, EmitRequest{DefinitionKey: "transaction.created", TenantID: "t-1"})
+			if err := m.Emit(ctx, EmitRequest{DefinitionKey: "transaction.created", TenantID: "t-1"}); err != nil {
+				t.Errorf("Emit() error = %v", err)
+			}
 		}()
 
 		got := WaitForEvent(t, ctx, m, func(request EmitRequest) bool {
@@ -250,10 +296,12 @@ func TestWaitForEvent_NilContext(t *testing.T) {
 
 		go func() {
 			time.Sleep(5 * time.Millisecond)
-			_ = m.Emit(context.Background(), EmitRequest{
+			if err := m.Emit(context.Background(), EmitRequest{
 				DefinitionKey: "transaction.created",
 				TenantID:      "t-1",
-			})
+			}); err != nil {
+				t.Errorf("Emit() error = %v", err)
+			}
 		}()
 
 		//nolint:staticcheck // intentional nil ctx to verify fallback

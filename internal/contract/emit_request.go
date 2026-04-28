@@ -1,4 +1,4 @@
-package streaming
+package contract
 
 import (
 	"encoding/json"
@@ -45,9 +45,24 @@ func newEmitRequest(request EmitRequest, copyPayload bool) (EmitRequest, error) 
 
 	if copyPayload {
 		request.Payload = append(json.RawMessage(nil), request.Payload...)
+		if request.PolicyOverride.Enabled != nil {
+			enabled := *request.PolicyOverride.Enabled
+			request.PolicyOverride.Enabled = &enabled
+		}
 	}
 
 	return request, nil
+}
+
+// NewEmitRequest validates and defensively copies an EmitRequest for callers.
+func NewEmitRequest(request EmitRequest) (EmitRequest, error) {
+	return newEmitRequest(request, true)
+}
+
+// NewEmitRequestNoCopy validates an EmitRequest without copying Payload.
+// Internal hot paths use this when they immediately copy into an Event value.
+func NewEmitRequestNoCopy(request EmitRequest) (EmitRequest, error) {
+	return newEmitRequest(request, false)
 }
 
 func validateEmitRequestHeaderFields(request EmitRequest) error {

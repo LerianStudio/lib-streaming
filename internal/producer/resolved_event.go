@@ -1,4 +1,4 @@
-package streaming
+package producer
 
 // resolvedEvent is the internal output of resolving an EmitRequest against the
 // producer catalog and policy overrides.

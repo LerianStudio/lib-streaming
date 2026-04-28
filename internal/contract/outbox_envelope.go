@@ -1,4 +1,4 @@
-package streaming
+package contract
 
 import (
 	"errors"
@@ -12,8 +12,8 @@ const (
 	// streaming relay rows. The concrete Kafka topic lives in OutboxEnvelope.
 	StreamingOutboxEventType = "lerian.streaming.publish"
 
-	// outboxEnvelopeVersion is the wire-version of OutboxEnvelope. Validation
-	// uses strict equality (== outboxEnvelopeVersion) so unknown future versions
+	// OutboxEnvelopeVersion is the wire-version of OutboxEnvelope. Validation
+	// uses strict equality (== OutboxEnvelopeVersion) so unknown future versions
 	// are rejected as malformed. Forward-compatibility policy:
 	//   - When introducing version 2 (or higher), readers SHOULD accept v1 rows
 	//     transparently to support rolling deploys (drain-then-deploy is fragile
@@ -22,7 +22,7 @@ const (
 	//     the same pattern.
 	//   - Bumping this constant is an OPERATIONAL decision, not a code one.
 	//     Coordinate with downstream outbox consumers before changing.
-	outboxEnvelopeVersion = 1
+	OutboxEnvelopeVersion = 1
 )
 
 // OutboxEnvelope is the versioned payload stored in the application outbox
@@ -38,8 +38,8 @@ type OutboxEnvelope struct {
 
 func (e OutboxEnvelope) Validate() error {
 	// Strict equality: unknown versions are rejected as malformed. See
-	// outboxEnvelopeVersion godoc for forward-compat strategy.
-	if e.Version != outboxEnvelopeVersion {
+	// OutboxEnvelopeVersion godoc for forward-compat strategy.
+	if e.Version != OutboxEnvelopeVersion {
 		return fmt.Errorf("streaming: unsupported outbox envelope version %d", e.Version)
 	}
 

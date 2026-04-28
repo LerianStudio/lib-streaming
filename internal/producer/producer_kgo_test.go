@@ -1,6 +1,6 @@
 //go:build unit
 
-package streaming
+package producer
 
 import (
 	"errors"
@@ -168,7 +168,7 @@ func TestBuildKgoOpts_ClientIDOptional(t *testing.T) {
 }
 
 // TestBuildKgoOpts_InvalidCompressionSurfaces asserts that even though
-// cfg.validate() should catch this first, buildKgoOpts defends against a
+// cfg.Validate() should catch this first, buildKgoOpts defends against a
 // call with an unvalidated Config and returns ErrInvalidCompression
 // without panicking.
 func TestBuildKgoOpts_InvalidCompressionSurfaces(t *testing.T) {

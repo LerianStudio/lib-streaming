@@ -1,4 +1,4 @@
-package streaming
+package producer
 
 import (
 	"context"
@@ -119,9 +119,8 @@ func (p *Producer) handleOutboxRow(ctx context.Context, row *outbox.OutboxEvent)
 
 func (p *Producer) decodeOutboxRow(ctx context.Context, row *outbox.OutboxEvent) (OutboxEnvelope, error) {
 	var envelope OutboxEnvelope
-	// musttag nolint: OutboxEnvelope embeds Event, whose wire shape intentionally
-	// uses Go-default field names for CloudEvents fields.
-	unmarshalErr := json.Unmarshal(row.Payload, &envelope) //nolint:musttag
+
+	unmarshalErr := json.Unmarshal(row.Payload, &envelope)
 	if unmarshalErr != nil {
 		return OutboxEnvelope{}, fmt.Errorf("streaming: unmarshal outbox envelope row %s: %w", row.ID, unmarshalErr)
 	}
@@ -149,11 +148,6 @@ func (p *Producer) decodeOutboxRow(ctx context.Context, row *outbox.OutboxEvent)
 	}
 	if err := json.Unmarshal(row.Payload, &probe); err == nil && probe.Version == nil {
 		var legacyEvent Event
-		// Event has no `json:` tags — encoding uses Go field names verbatim.
-		// The musttag linter flags this; suppress with the same justification
-		// as outbox_writer.go's marshal site (single source of truth on the
-		// CloudEvents wire shape).
-		//nolint:musttag
 		if err := json.Unmarshal(row.Payload, &legacyEvent); err == nil &&
 			(legacyEvent.TenantID != "" || legacyEvent.ResourceType != "" || legacyEvent.EventType != "") {
 			synthesized := OutboxEnvelope{

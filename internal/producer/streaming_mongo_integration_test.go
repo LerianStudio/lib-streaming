@@ -1,6 +1,6 @@
 //go:build integration
 
-package streaming
+package producer
 
 import (
 	"context"

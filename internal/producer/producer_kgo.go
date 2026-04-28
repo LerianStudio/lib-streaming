@@ -1,4 +1,4 @@
-package streaming
+package producer
 
 import (
 	"fmt"
@@ -25,7 +25,7 @@ const maxBatchMaxBytes = math.MaxInt32
 // that must never come from environment variables (TLS certs, SASL secrets)
 // per the TRD §8 security boundary. Either argument may be zero-valued.
 //
-// This function assumes cfg has already passed cfg.validate(); invalid
+// This function assumes cfg has already passed cfg.Validate(); invalid
 // compression codec / acks values surface as ErrInvalidCompression /
 // ErrInvalidAcks defensively but the happy path never hits them.
 func buildKgoOpts(cfg Config, opts emitterOptions) ([]kgo.Opt, error) {
@@ -74,7 +74,7 @@ func buildKgoOpts(cfg Config, opts emitterOptions) ([]kgo.Opt, error) {
 		kgo.RecordDeliveryTimeout(cfg.RecordDeliveryTimeout),
 
 		// Durability. "all" maps to AllISRAcks; "leader" to LeaderAck;
-		// "none" to NoAck. Validated at cfg.validate() time.
+		// "none" to NoAck. Validated at cfg.Validate() time.
 		kgo.RequiredAcks(acks),
 
 		// Per-record topic is set on each kgo.Record, so the default
@@ -125,7 +125,7 @@ func buildKgoOpts(cfg Config, opts emitterOptions) ([]kgo.Opt, error) {
 }
 
 // resolveCompression maps the Config string to a kgo.CompressionCodec. The
-// match is exact (lowercase); cfg.validate() normalizes.
+// match is exact (lowercase); cfg.Validate() normalizes.
 func resolveCompression(name string) (kgo.CompressionCodec, error) {
 	switch name {
 	case "snappy":
@@ -143,7 +143,7 @@ func resolveCompression(name string) (kgo.CompressionCodec, error) {
 	}
 }
 
-// resolveAcks maps the Config string to a kgo.Acks value. cfg.validate()
+// resolveAcks maps the Config string to a kgo.Acks value. cfg.Validate()
 // already rejects anything outside the closed set; the default branch is
 // defensive.
 func resolveAcks(name string) (kgo.Acks, error) {

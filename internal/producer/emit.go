@@ -1,4 +1,4 @@
-package streaming
+package producer
 
 import (
 	"context"
@@ -67,7 +67,7 @@ func (p *Producer) Emit(ctx context.Context, request EmitRequest) error {
 	// Emit on the hot path for zero benefit.
 	policy := resolved.Policy
 
-	if !policy.hasDeliveryPath() {
+	if !policy.HasDeliveryPath() {
 		p.metrics.recordEmitted(ctx, topic, outcomeCallerError)
 
 		return ErrEventDisabled
@@ -132,7 +132,7 @@ func (p *Producer) Emit(ctx context.Context, request EmitRequest) error {
 		p.metrics.recordEmitDuration(ctx, topic, outcome, time.Since(start).Milliseconds())
 	}()
 
-	if policy.outboxAlways() {
+	if policy.OutboxAlways() {
 		if obxErr := p.publishToOutbox(ctx, event, topic, policy, resolved.DefinitionKey); obxErr != nil {
 			outcome = outcomeOutboxFailed
 
@@ -210,7 +210,7 @@ func (p *Producer) emitAttempt(ctx context.Context, span trace.Span, event Event
 		return p.emitCircuitOpenBranch(ctx, span, event, topic, definitionKey, policy, outcome)
 	}
 
-	if !policy.directAllowed() {
+	if !policy.DirectAllowed() {
 		*outcome = outcomeCallerError
 
 		return nil, ErrEventDisabled
@@ -233,7 +233,7 @@ func (p *Producer) emitAttempt(ctx context.Context, span trace.Span, event Event
 			span.SetAttributes(attribute.String("error.type", string(emitErr.Class)))
 
 			switch {
-			case policy.dlqAllowed() && isDLQRoutable(emitErr.Class):
+			case policy.DLQAllowed() && isDLQRoutable(emitErr.Class):
 				*outcome = outcomeDLQ
 
 				p.metrics.recordDLQ(ctx, topic, string(emitErr.Class))
@@ -270,7 +270,7 @@ func (p *Producer) emitAttempt(ctx context.Context, span trace.Span, event Event
 // the CB-open decision tree is simple but verbose enough to benefit from
 // its own docstring and test seams.
 func (p *Producer) emitCircuitOpenBranch(ctx context.Context, span trace.Span, event Event, topic, definitionKey string, policy DeliveryPolicy, outcome *string) (any, error) {
-	if policy.outboxFallbackOnCircuitOpen() && p.outboxWriter != nil {
+	if policy.OutboxFallbackOnCircuitOpen() && p.outboxWriter != nil {
 		if obxErr := p.publishToOutbox(ctx, event, topic, policy, definitionKey); obxErr != nil {
 			// Outbox write itself failed: surface the error so the caller
 			// knows the event wasn't durably captured. Silent drop here

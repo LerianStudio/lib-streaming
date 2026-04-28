@@ -1,4 +1,4 @@
-package streaming
+package config
 
 import (
 	"fmt"
@@ -169,6 +169,11 @@ func (c Config) validate() error {
 	}
 
 	return nil
+}
+
+// Validate enforces the fields that must be present when Enabled=true.
+func (c Config) Validate() error {
+	return c.validate()
 }
 
 // getenvFloat64OrDefault returns the parsed float value of os.Getenv(key) or

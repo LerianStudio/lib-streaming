@@ -1,4 +1,4 @@
-package streaming
+package manifest
 
 // ManifestVersion is the wire-version of the JSON document returned by
 // BuildManifest / NewStreamingHandler. Follows semver:

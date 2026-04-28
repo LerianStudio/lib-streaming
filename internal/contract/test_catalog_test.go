@@ -3,9 +3,12 @@
 // Adding a build tag here would leave the other suites unable to build. Any
 // tag-unused static-analysis findings on these helpers are expected.
 
-package streaming
+package contract
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func sampleCatalog(tb testing.TB) Catalog {
 	tb.Helper()
@@ -70,5 +73,17 @@ func eventToRequest(event Event) EmitRequest {
 		EventID:       event.EventID,
 		Timestamp:     event.Timestamp,
 		Payload:       event.Payload,
+	}
+}
+
+func sampleEvent() Event {
+	return Event{
+		TenantID:      "t-abc",
+		ResourceType:  "transaction",
+		EventType:     "created",
+		SchemaVersion: "1.0.0",
+		Source:        "//test/service",
+		Subject:       "tx-123",
+		Payload:       json.RawMessage(`{"amount":100}`),
 	}
 }
