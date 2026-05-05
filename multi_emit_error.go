@@ -1,6 +1,6 @@
 package streaming
 
-import "github.com/LerianStudio/lib-streaming/v2/internal/contract"
+import "github.com/LerianStudio/lib-streaming/internal/contract"
 
 // RouteError is the per-route failure record carried by MultiEmitError.
 //

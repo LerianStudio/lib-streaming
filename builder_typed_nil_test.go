@@ -7,9 +7,9 @@ import (
 	"errors"
 	"testing"
 
-	streaming "github.com/LerianStudio/lib-streaming/v2"
-	"github.com/LerianStudio/lib-streaming/v2/internal/producer"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
+	streaming "github.com/LerianStudio/lib-streaming"
+	"github.com/LerianStudio/lib-streaming/internal/producer"
+	"github.com/LerianStudio/lib-streaming/internal/transport"
 )
 
 // The three tests below pin a single contract — and a single notorious Go

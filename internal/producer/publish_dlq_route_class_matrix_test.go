@@ -10,8 +10,8 @@ import (
 
 	"github.com/LerianStudio/lib-commons/v5/commons/log"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
+	"github.com/LerianStudio/lib-streaming/internal/contract"
+	"github.com/LerianStudio/lib-streaming/internal/transport"
 )
 
 // classifyingFakeAdapter is a class-aware fake transport for the DLQ

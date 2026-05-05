@@ -13,7 +13,7 @@ import (
 	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kgo"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport/kafka"
+	"github.com/LerianStudio/lib-streaming/internal/transport/kafka"
 )
 
 // fakeNetTimeoutErr is a minimal net.Error implementation whose Timeout()

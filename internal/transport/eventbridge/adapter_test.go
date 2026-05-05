@@ -9,8 +9,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
+	"github.com/LerianStudio/lib-streaming/internal/contract"
+	"github.com/LerianStudio/lib-streaming/internal/transport"
 )
 
 type fakeClient struct {

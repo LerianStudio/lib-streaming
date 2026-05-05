@@ -3,7 +3,7 @@ package streaming
 import (
 	"net/http"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/manifest"
+	"github.com/LerianStudio/lib-streaming/internal/manifest"
 )
 
 // BuildManifest renders a catalog, descriptor, and route table into an

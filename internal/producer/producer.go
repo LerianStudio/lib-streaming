@@ -14,7 +14,7 @@ import (
 	"github.com/LerianStudio/lib-commons/v5/commons"
 	"github.com/LerianStudio/lib-commons/v5/commons/circuitbreaker"
 	"github.com/LerianStudio/lib-commons/v5/commons/log"
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
+	"github.com/LerianStudio/lib-streaming/internal/contract"
 )
 
 // tracerName + emitSpanName live in emit_span.go (colocated with the
@@ -126,6 +126,14 @@ type Producer struct {
 	// real CB. Per-target state remains observable via rt.state, structured
 	// log lines, and span events. Read-only after construction.
 	primaryTargetName string
+
+	// cbRecoveryInterval drives the background goroutine in cb_recovery.go
+	// that periodically calls manager.GetState on every target's CB. This
+	// is the load-bearing mechanism that breaks the mirror-OPEN deadlock
+	// for emit-only services — see cb_recovery.go for the full rationale.
+	// Resolved at construction via resolveCBRecoveryInterval(cbCfg.Timeout)
+	// to scale with the configured CBTimeout. Read-only after construction.
+	cbRecoveryInterval time.Duration
 }
 
 // Compile-time assertion: *Producer must satisfy Emitter. A missing method

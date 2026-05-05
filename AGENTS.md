@@ -4,10 +4,10 @@ This file provides repository-specific guidance for coding agents working on `li
 
 ## Project snapshot
 
-- Module: `github.com/LerianStudio/lib-streaming/v2`
+- Module: `github.com/LerianStudio/lib-streaming`
 - Language: Go
 - Go version: `1.25.9` (see `go.mod`)
-- Current API version: 1.0.0 (semantic import path is `/v2`; the path major and the tagged release number move independently — see `CHANGELOG.md`)
+- Current API version: 1.0.0 (module path carries no `/vN` suffix — Go's semantic-import-versioning rule forbids a path-major suffix at major versions 0 and 1. A `/v2` suffix only enters when the first true breaking release is cut. See `CHANGELOG.md` for tagged history.)
 - Layout: public root facade at the repository root (`package streaming`) with implementation in internal packages (`internal/contract`, `internal/config`, `internal/manifest`, `internal/cloudevents`, `internal/emitter`, `internal/producer`, `internal/transport`). Public test helpers live in `streamingtest`. Scaffolding (`docs/`, `.github/`, `scripts/`) stays in subdirectories.
 
 ## Primary objective for changes
@@ -58,6 +58,7 @@ Support:
 - `*EmitError` carries `ResourceType`, `EventType`, `TenantID`, `Topic`, `Class ErrorClass`, and `Cause error`. `Error()` runs through `sanitizeBrokerURL` so SASL credentials never surface in logs. `IsCallerError(err)` returns true for the caller-correctable sentinels and for `*EmitError` with class `ClassSerialization`, `ClassValidation`, or `ClassAuth`.
 - Eight `ErrorClass` values: `ClassSerialization`, `ClassValidation`, `ClassAuth`, `ClassTopicNotFound`, `ClassBrokerUnavailable`, `ClassNetworkTimeout`, `ClassContextCanceled`, `ClassBrokerOverloaded`. DLQ routing applies to every class except `ClassValidation` and `ClassContextCanceled` (TRD §C9), gated AND'd with the per-event `DeliveryPolicy.DLQ` mode.
 - Lifecycle invariants: `*Producer` implements `commons.App` — `Run(launcher)` / `RunContext(ctx, launcher)` block until ctx is canceled or Close is called, then invoke `CloseContext` with a fresh background ctx so a canceled caller ctx does not abort Flush. `Close`/`CloseContext` are idempotent via `atomic.Bool` CAS. Post-close `Emit` returns `ErrEmitterClosed` synchronously before any I/O. Service methods MUST NOT call Close — the Launcher owns lifecycle.
+- Background CB recovery goroutine: each `*Producer` spawns ONE additional goroutine via `runtime.SafeGoWithContextAndComponent` (component=`"streaming"`, goroutine_name=`"cb_recovery_loop"` — static label for bounded panic-metric cardinality). It ticks at `clamped(cbTimeout/4, [500ms, 5s])` and calls `manager.GetState` on every registered target so gobreaker's lazy OPEN→HALF-OPEN expiry transition fires deterministically — without this loop, an emit-only service whose breaker has tripped OPEN would stay degraded forever (the hot-path early-out at `rt.state.Load() == flagCBOpen` skips `cb.Execute`, so `currentState` is never invoked and the listener never updates the mirror). Lifecycle: started at the tail of `NewProducerMulti` after listener registration; exits when `Close`/`CloseContext` closes `p.stop`. Per-Producer cost: one goroutine, microsecond-scale per tick. Multi-Producer-per-process services (per-tenant or per-region wirings) see proportional goroutine count growth. Interval is intentionally not directly customizable; the CBTimeout-derived envelope is the public contract. Panic policy is `runtime.KeepRunning` — the wrapped goroutine exits on panic with full trident recording, no auto-restart (a panicking `GetState` is a real bug, not noise to swallow).
 
 ### Multi-transport routing (Builder)
 
@@ -125,8 +126,9 @@ Support:
 - `make test` — run unit tests (uses gotestsum if available)
 - `make test-unit` — run unit tests excluding integration
 - `make test-integration` — run integration tests with testcontainers (requires Docker)
-- `make test-all` — run all tests (unit + integration)
-- `make ci` — run the local fix + verify pipeline (`lint-fix`, `format`, `tidy`, `check-tests`, `sec`, `vet`, `test-unit`, `test-integration`)
+- `make test-chaos` — run chaos tests with toxiproxy + Redpanda (requires Docker; sets `CHAOS=1` automatically so the dual-gated tests do not silently `t.Skip`)
+- `make test-all` — run all tests (unit + integration + chaos)
+- `make ci` — run the local fix + verify pipeline (`lint-fix`, `format`, `tidy`, `check-tests`, `sec`, `vet`, `test-unit`, `test-integration`). The chaos suite is intentionally NOT in `ci` — chaos tests are slower, network-fault-injection scoped, and run on a separate cadence.
 - `make lint` — run lint checks (read-only)
 - `make lint-fix` — auto-fix lint issues
 - `make build` — build all packages

@@ -48,7 +48,7 @@ Architectural constraints and design decisions for the `lib-streaming` codebase.
 
 ## 3. Required Libraries
 
-- Module path: `github.com/LerianStudio/lib-streaming/v2`.
+- Module path: `github.com/LerianStudio/lib-streaming` (bare path; no `/vN` suffix while on v0/v1 per Go's semantic-import-versioning rules).
 - Go version: `1.25.9` as declared in `go.mod`.
 - Commons: use `github.com/LerianStudio/lib-commons/v5` primitives where they are the Lerian standard.
 - Assertions: use `github.com/LerianStudio/lib-commons/v5/commons/assert` for post-construction internal invariants.
@@ -208,7 +208,8 @@ Build tags are the authoritative test type discriminator:
 - `make test` runs the default unit test suite.
 - `make test-unit` runs unit tests excluding integration packages.
 - `make test-integration` runs testcontainers-backed integration tests.
-- `make test-all` runs unit and integration suites.
+- `make test-chaos` runs Toxiproxy-backed chaos tests and sets `CHAOS=1` automatically.
+- `make test-all` runs unit, integration, and chaos suites.
 - `make coverage-unit`, `make coverage-integration`, and `make coverage` generate coverage outputs.
 - `make check-tests` validates repository test expectations.
 
@@ -264,7 +265,7 @@ Build tags are the authoritative test type discriminator:
 
 ## 20. Versioning and Compatibility
 
-- Semantic import path is `/v2`; all install docs and examples must use `github.com/LerianStudio/lib-streaming/v2`.
+- Semantic import path is the bare `github.com/LerianStudio/lib-streaming` while the module is on v0/v1; all install docs and examples must use this exact path. A `/v2` path-major suffix is required only when cutting the first v2.0.0 breaking release, at which point every import in the codebase, every example in the docs, and the `module` directive in `go.mod` move together.
 - Breaking changes require a `CHANGELOG.md` entry and a migration note.
 - New exported identifiers require Go doc comments.
 - Behavior changes in exported functions require tests and documentation updates.

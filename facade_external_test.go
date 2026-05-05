@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	streaming "github.com/LerianStudio/lib-streaming/v2"
+	streaming "github.com/LerianStudio/lib-streaming"
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 

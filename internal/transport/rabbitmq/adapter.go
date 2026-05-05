@@ -19,8 +19,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
+	"github.com/LerianStudio/lib-streaming/internal/contract"
+	"github.com/LerianStudio/lib-streaming/internal/transport"
 )
 
 // DefaultContentType is the wire content-type the adapter sends when the

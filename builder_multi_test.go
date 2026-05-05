@@ -7,8 +7,8 @@ import (
 	"errors"
 	"testing"
 
-	streaming "github.com/LerianStudio/lib-streaming/v2"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport/fake"
+	streaming "github.com/LerianStudio/lib-streaming"
+	"github.com/LerianStudio/lib-streaming/internal/transport/fake"
 )
 
 // TestBuilder_MultiTargetBuildWithFakeTransports drives the multi-target

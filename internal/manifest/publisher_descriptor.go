@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
+	"github.com/LerianStudio/lib-streaming/internal/contract"
 )
 
 // PublisherDescriptor carries app-owned metadata used by manifest export and

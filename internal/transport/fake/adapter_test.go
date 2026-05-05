@@ -8,8 +8,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
+	"github.com/LerianStudio/lib-streaming/internal/contract"
+	"github.com/LerianStudio/lib-streaming/internal/transport"
 )
 
 func TestAdapter_PublishRecordsDeepCopy(t *testing.T) {

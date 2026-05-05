@@ -1,6 +1,6 @@
 package config
 
-import "github.com/LerianStudio/lib-streaming/v2/internal/contract"
+import "github.com/LerianStudio/lib-streaming/internal/contract"
 
 type (
 	DeliveryPolicyOverride = contract.DeliveryPolicyOverride

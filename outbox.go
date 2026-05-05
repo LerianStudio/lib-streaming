@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/producer"
+	"github.com/LerianStudio/lib-streaming/internal/producer"
 )
 
 type (

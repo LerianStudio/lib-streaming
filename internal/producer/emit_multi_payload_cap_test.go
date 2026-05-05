@@ -11,8 +11,8 @@ import (
 
 	"github.com/LerianStudio/lib-commons/v5/commons/log"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport/fake"
+	"github.com/LerianStudio/lib-streaming/internal/contract"
+	"github.com/LerianStudio/lib-streaming/internal/transport/fake"
 )
 
 // TestEmitMulti_PerTransportPayloadCap pins the C4 fix: a payload that

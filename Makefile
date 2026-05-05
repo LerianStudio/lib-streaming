@@ -29,10 +29,14 @@ RUN ?=
 PKG ?=
 
 # Computed run pattern: uses RUN if set, otherwise defaults to '^TestIntegration'
+# for integration runs and '^TestChaos' for chaos runs. The two profiles share
+# the RUN override so callers can scope a single test across either suite.
 ifeq ($(RUN),)
   RUN_PATTERN := ^TestIntegration
+  CHAOS_RUN_PATTERN := ^TestChaos
 else
   RUN_PATTERN := $(RUN)
+  CHAOS_RUN_PATTERN := $(RUN)
 endif
 
 # Low-resource mode for limited machines (sets -p=1 -parallel=1, disables -race)
@@ -115,7 +119,8 @@ help:
 	@echo "Test Suite Commands:"
 	@echo "  make test-unit                   - Run unit tests (LOW_RESOURCE=1 supported)"
 	@echo "  make test-integration            - Run integration tests with testcontainers (RUN=<test>, LOW_RESOURCE=1)"
-	@echo "  make test-all                    - Run all tests (unit + integration)"
+	@echo "  make test-chaos                  - Run chaos tests with toxiproxy (RUN=<test>, LOW_RESOURCE=1; sets CHAOS=1 automatically)"
+	@echo "  make test-all                    - Run all tests (unit + integration + chaos)"
 	@echo ""
 	@echo ""
 	@echo "Coverage Commands:"
@@ -313,14 +318,88 @@ test-integration:
 	fi
 	@echo "$(GREEN)$(BOLD)[ok]$(NC) Integration tests passed$(GREEN) ✔️$(NC)"
 
-# Run all tests (unit + integration)
+# Chaos tests with toxiproxy (no coverage)
+# These tests use the `chaos` build tag and testcontainers-go to spin up an
+# ephemeral Redpanda + Toxiproxy pair, then inject network faults (latency,
+# partition, jitter) to verify graceful degradation: circuit-breaker trip,
+# outbox-fallback absorption, and recovery on toxic removal.
+#
+# The chaos suite is dual-gated by design: -tags=chaos selects the build, and
+# CHAOS=1 in the env turns the tests on (otherwise they t.Skip cleanly so a
+# bare `go test ./...` against the chaos tag does not consume Docker hours
+# unintentionally). This target sets CHAOS=1 automatically — callers do not
+# need to remember it.
+#
+# Requirements:
+#   - Test files must follow the naming convention: *chaos_test.go
+#   - Test functions must start with TestChaos_ (e.g., TestChaos_BrokerLatency)
+#   - Docker required for both Redpanda and Toxiproxy testcontainers
+.PHONY: test-chaos
+test-chaos:
+	$(call print_title,Running chaos tests with toxiproxy)
+	$(call check_command,go,"Install Go from https://golang.org/doc/install")
+	$(call check_command,docker,"Install Docker from https://docs.docker.com/get-docker/")
+	@set -e; mkdir -p $(TEST_REPORTS_DIR); \
+	if [ -n "$(PKG)" ]; then \
+	  echo "Using specified package: $(PKG)"; \
+	  pkgs=$$(go list $(PKG) 2>/dev/null | tr '\n' ' '); \
+	else \
+	  echo "Finding packages with *chaos_test.go files..."; \
+	  dirs=$$(find . -name '*chaos_test.go' -not -path './vendor/*' -exec dirname {} \; 2>/dev/null | sort -u | tr '\n' ' '); \
+	  pkgs=$$(if [ -n "$$dirs" ]; then go list $$dirs 2>/dev/null | tr '\n' ' '; fi); \
+	fi; \
+	if [ -z "$$pkgs" ]; then \
+	  echo "No chaos test packages found"; \
+	else \
+	  echo "Packages: $$pkgs"; \
+	  echo "Running packages sequentially (-p=1) to avoid Docker container conflicts"; \
+	  echo "CHAOS=1 set automatically by Makefile target"; \
+	  if [ "$(LOW_RESOURCE)" = "1" ]; then \
+	    echo "LOW_RESOURCE mode: -parallel=1, race detector disabled"; \
+	  fi; \
+	  if [ -n "$(GOTESTSUM)" ]; then \
+	    echo "Running chaos tests with gotestsum"; \
+	    CHAOS=1 gotestsum --format testname -- \
+	      -tags=chaos -v $(LOW_RES_RACE_FLAG) -count=1 -timeout 600s $(GO_TEST_LDFLAGS) \
+	      -p 1 $(LOW_RES_PARALLEL_FLAG) \
+	      -run '$(CHAOS_RUN_PATTERN)' $$pkgs || { \
+	      if [ "$(RETRY_ON_FAIL)" = "1" ]; then \
+	        echo "Retrying chaos tests once..."; \
+	        CHAOS=1 gotestsum --format testname -- \
+	          -tags=chaos -v $(LOW_RES_RACE_FLAG) -count=1 -timeout 600s $(GO_TEST_LDFLAGS) \
+	          -p 1 $(LOW_RES_PARALLEL_FLAG) \
+	          -run '$(CHAOS_RUN_PATTERN)' $$pkgs; \
+	      else \
+	        exit 1; \
+	      fi; \
+	    }; \
+	  else \
+	    CHAOS=1 go test -tags=chaos -v $(LOW_RES_RACE_FLAG) -count=1 -timeout 600s $(GO_TEST_LDFLAGS) \
+	      -p 1 $(LOW_RES_PARALLEL_FLAG) \
+	      -run '$(CHAOS_RUN_PATTERN)' $$pkgs || { \
+	      if [ "$(RETRY_ON_FAIL)" = "1" ]; then \
+	        echo "Retrying chaos tests once..."; \
+	        CHAOS=1 go test -tags=chaos -v $(LOW_RES_RACE_FLAG) -count=1 -timeout 600s $(GO_TEST_LDFLAGS) \
+	          -p 1 $(LOW_RES_PARALLEL_FLAG) \
+	          -run '$(CHAOS_RUN_PATTERN)' $$pkgs; \
+	      else \
+	        exit 1; \
+	      fi; \
+	    }; \
+	  fi; \
+	fi
+	@echo "$(GREEN)$(BOLD)[ok]$(NC) Chaos tests passed$(GREEN) ✔️$(NC)"
+
+# Run all tests (unit + integration + chaos)
 .PHONY: test-all
 test-all:
-	$(call print_title,Running all tests (unit + integration))
+	$(call print_title,Running all tests (unit + integration + chaos))
 	$(call print_title,Running unit tests)
 	$(MAKE) test-unit
 	$(call print_title,Running integration tests)
 	$(MAKE) test-integration
+	$(call print_title,Running chaos tests)
+	$(MAKE) test-chaos
 	@echo "$(GREEN)$(BOLD)[ok]$(NC) All tests passed$(GREEN) ✔️$(NC)"
 
 #-------------------------------------------------------

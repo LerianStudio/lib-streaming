@@ -2,7 +2,7 @@
 
 [![Latest Release](https://img.shields.io/github/v/release/LerianStudio/lib-streaming?include_prereleases)](https://github.com/LerianStudio/lib-streaming/releases)
 [![License](https://img.shields.io/badge/license-Elastic%20License%202.0-4c1.svg)](LICENSE)
-[![Go Report](https://goreportcard.com/badge/github.com/LerianStudio/lib-streaming/v2)](https://goreportcard.com/report/github.com/LerianStudio/lib-streaming/v2)
+[![Go Report](https://goreportcard.com/badge/github.com/LerianStudio/lib-streaming)](https://goreportcard.com/report/github.com/LerianStudio/lib-streaming)
 [![Discord](https://img.shields.io/badge/Discord-Lerian%20Studio-%237289da.svg?logo=discord)](https://discord.gg/DnhqKwkGv3)
 
 </div>
@@ -15,7 +15,7 @@ Producer-only means this library publishes business facts. It does not consume K
 
 | | |
 |---|---|
-| **Module** | `github.com/LerianStudio/lib-streaming/v2` |
+| **Module** | `github.com/LerianStudio/lib-streaming` |
 | **Go** | `1.25.9` |
 | **License** | Elastic License 2.0. See [LICENSE](./LICENSE) |
 
@@ -26,7 +26,7 @@ Producer-only means this library publishes business facts. It does not consume K
 | **Contract-First Events** | Services publish catalog-keyed events; resource, event type, schema version, content type, and default delivery policy live in immutable event definitions |
 | **CloudEvents Native** | Every message uses CloudEvents 1.0 binary-mode metadata with raw JSON payloads |
 | **Multi-Transport** | One Emit fans out to Kafka, SQS, RabbitMQ, and EventBridge in parallel; per-target circuit breakers, all-or-error semantics for required routes, best-effort for optional |
-| **Broker Resilience** | Per-target circuit breakers prevent hot-looping on broker failures and route through outbox fallback when configured |
+| **Broker Resilience** | Per-target circuit breakers prevent hot-looping on broker failures and route through outbox fallback when configured. A background recovery goroutine per Producer auto-heals stuck-OPEN breakers within `CBTimeout + 5s` of broker recovery, even for emit-only services with no other CB traffic |
 | **Reliable Replay** | Route-aware outbox envelopes persist target name, transport, destination, policy, and event payload for deterministic replay |
 | **Forensic DLQs** | Routable failures land in the route's DLQ with structured headers for source topic, error class, retry count, failure time, and producer identity |
 | **Testing Ergonomics** | `streamingtest.MockEmitter` gives services a concurrency-safe test double with assertion helpers and wait support |
@@ -87,7 +87,7 @@ Producer-only means this library publishes business facts. It does not consume K
 ### 1. Install
 
 ```bash
-go get github.com/LerianStudio/lib-streaming/v2@latest
+go get github.com/LerianStudio/lib-streaming@latest
 ```
 
 ### 2. Bootstrap a Producer
@@ -333,7 +333,8 @@ lib-streaming/
 | `make test` | Run unit tests |
 | `make test-unit` | Run unit tests excluding integration packages |
 | `make test-integration` | Run testcontainers-backed integration tests |
-| `make test-all` | Run unit and integration suites |
+| `make test-chaos` | Run Toxiproxy-backed chaos tests (`CHAOS=1` set automatically) |
+| `make test-all` | Run unit, integration, and chaos suites |
 | `make coverage-unit` | Generate unit coverage |
 | `make coverage-integration` | Generate integration coverage |
 | `make coverage` | Generate combined coverage reports |
@@ -364,7 +365,7 @@ The default `make test` target is unit-focused. Integration and chaos coverage i
 The package-level API documentation is generated from Go doc comments:
 
 ```bash
-go doc github.com/LerianStudio/lib-streaming/v2
+go doc github.com/LerianStudio/lib-streaming
 ```
 
 Key public API areas:

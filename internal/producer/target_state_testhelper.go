@@ -1,8 +1,15 @@
-//go:build unit
+//go:build unit || integration || chaos
 
 package producer
 
-// targetState returns the cached circuit-state mirror for unit tests.
+// Test-only helpers exposing the per-target CB mirror to test code.
+//
+// Build tag rationale: targetState is read from chaos_test.go (build tag
+// `chaos`); setTargetState is written from unit-tagged tests. The combined
+// `unit || integration || chaos` tag covers both audiences without leaking
+// either symbol into a release binary.
+
+// targetState returns the cached circuit-state mirror for tests.
 func (p *Producer) targetState(targetName string) int32 {
 	if p == nil {
 		return flagCBClosed

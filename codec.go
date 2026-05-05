@@ -3,7 +3,7 @@ package streaming
 import (
 	"github.com/twmb/franz-go/pkg/kgo"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/cloudevents"
+	"github.com/LerianStudio/lib-streaming/internal/cloudevents"
 )
 
 // CloudEvents binary-mode Kafka header codec — pure helpers exposed at the

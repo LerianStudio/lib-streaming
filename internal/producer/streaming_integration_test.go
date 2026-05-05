@@ -40,6 +40,7 @@ import (
 	"github.com/LerianStudio/lib-commons/v5/commons/outbox"
 	outboxpg "github.com/LerianStudio/lib-commons/v5/commons/outbox/postgres"
 	libPostgres "github.com/LerianStudio/lib-commons/v5/commons/postgres"
+	"github.com/LerianStudio/lib-streaming/internal/contract"
 )
 
 // redpandaImage pins the Redpanda container image. Pinning the tag (not
@@ -595,22 +596,31 @@ func TestIntegration_DLQRouting(t *testing.T) {
 
 	consumer := newConsumerClient(t, brokers, dlqName)
 
-	// Emit should surface an *EmitError carrying ClassSerialization. The DLQ
-	// write should succeed in the background — the *EmitError.Cause is the
-	// original broker error, not a DLQ-write error.
+	// Emit should surface a *MultiEmitError carrying one required-route
+	// failure with ClassSerialization. The DLQ write should succeed in the
+	// background — the RouteError.Cause is the original broker error, not a
+	// DLQ-write error. (Pre-Builder this was *EmitError; the multi-target
+	// runtime now carries per-route diagnostics on RouteError instead.)
 	emitErr := p.Emit(context.Background(), eventToRequest(event))
 	require.Error(t, emitErr, "expected Emit to fail on oversize payload")
 
-	var emitEE *EmitError
-	require.ErrorAs(t, emitErr, &emitEE, "expected *EmitError")
-	require.Equal(t, sourceTopic, emitEE.Topic, "EmitError.Topic")
+	var multiErr *contract.MultiEmitError
+	require.ErrorAs(t, emitErr, &multiErr, "expected *MultiEmitError from multi-target Emit")
+	require.Truef(t, multiErr.HasRequiredFailures(),
+		"MultiEmitError should carry at least one required failure")
+	require.Lenf(t, multiErr.Required, 1,
+		"expected exactly one required-route failure, got %d", len(multiErr.Required))
+
+	routeFail := multiErr.Required[0]
+	require.Equal(t, sourceTopic, routeFail.Destination,
+		"RouteError.Destination should equal source topic for kafka transport")
 	// franz-go's behavior under a broker-side reject may map to
 	// ClassSerialization (the normal expected class for MessageTooLarge)
 	// or ClassBrokerUnavailable on some broker versions. Accept either so
 	// the test stays robust across Redpanda releases — the DLQ routing
 	// rule includes both classes.
-	require.Truef(t, isDLQRoutable(emitEE.Class),
-		"error class %q should route to DLQ", emitEE.Class)
+	require.Truef(t, isDLQRoutable(routeFail.Class),
+		"error class %q should route to DLQ", routeFail.Class)
 
 	records := pollRecords(t, consumer, 1, 30*time.Second)
 	require.Len(t, records, 1, "expected 1 record on DLQ topic %s", dlqName)

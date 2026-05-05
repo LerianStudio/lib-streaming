@@ -158,7 +158,7 @@ func assertMongoOutboxEnvelope(t *testing.T, doc bson.M, tenantID, topic, defini
 
 	var envelope OutboxEnvelope
 	require.NoError(t, json.Unmarshal([]byte(payload), &envelope), "decode persisted outbox envelope")
-	require.Equal(t, topic, envelope.Topic)
+	require.Equal(t, topic, envelope.Event.Topic())
 	require.Equal(t, definitionKey, envelope.DefinitionKey)
 	require.Equal(t, tenantID, envelope.Event.TenantID)
 	require.Equal(t, "payment", envelope.Event.ResourceType)

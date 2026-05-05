@@ -10,9 +10,9 @@ import (
 
 	"github.com/LerianStudio/lib-commons/v5/commons/log"
 
-	streaming "github.com/LerianStudio/lib-streaming/v2"
-	"github.com/LerianStudio/lib-streaming/v2/internal/producer"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
+	streaming "github.com/LerianStudio/lib-streaming"
+	"github.com/LerianStudio/lib-streaming/internal/producer"
+	"github.com/LerianStudio/lib-streaming/internal/transport"
 )
 
 // captureLoggerSentinel is a no-op logger that wraps log.NewNop so a test

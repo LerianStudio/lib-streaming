@@ -49,6 +49,11 @@ func TestProducer_EmitPreFlight_SystemEventWithoutOpt_Rejected(t *testing.T) {
 func TestProducer_EmitPreFlight_SystemEventWithOpt_Accepted(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
+	// First emitter: verifies construction succeeds with WithAllowSystemEvents
+	// against a non-system catalog (smoke test for the option's interaction
+	// with normal catalogs). Captured under its own variable so its
+	// t.Cleanup closure closes THIS emitter, not the systemEmitter
+	// reassigned below.
 	emitter, err := New(context.Background(), cfg,
 		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithAllowSystemEvents(),
@@ -69,21 +74,27 @@ func TestProducer_EmitPreFlight_SystemEventWithOpt_Accepted(t *testing.T) {
 		t.Fatalf("NewCatalog() error = %v", err)
 	}
 
-	emitter, err = New(context.Background(), cfg,
+	// Second emitter: uses the system-flagged catalog so we can actually
+	// emit a SystemEvent. Distinct variable name from `emitter` above so
+	// each Cleanup closure closes the emitter it was registered for.
+	// Pre-fix this site reassigned `emitter`, leaving the original
+	// emitter's recovery goroutine leaked at suite teardown when goleak
+	// inspects.
+	systemEmitter, err := New(context.Background(), cfg,
 		WithLogger(log.NewNop()), WithCatalog(systemCatalog),
 		WithAllowSystemEvents(),
 	)
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
-	t.Cleanup(func() { _ = emitter.Close() })
+	t.Cleanup(func() { _ = systemEmitter.Close() })
 
 	event := EmitRequest{DefinitionKey: "transaction.created", Payload: json.RawMessage(`{}`)}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if err := emitter.Emit(ctx, event); err != nil {
+	if err := systemEmitter.Emit(ctx, event); err != nil {
 		t.Errorf("Emit with WithAllowSystemEvents err = %v; want nil", err)
 	}
 }

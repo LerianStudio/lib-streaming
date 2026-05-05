@@ -10,9 +10,9 @@ import (
 
 	"github.com/LerianStudio/lib-commons/v5/commons/circuitbreaker"
 	"github.com/LerianStudio/lib-commons/v5/commons/log"
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport/kafka"
+	"github.com/LerianStudio/lib-streaming/internal/contract"
+	"github.com/LerianStudio/lib-streaming/internal/transport"
+	"github.com/LerianStudio/lib-streaming/internal/transport/kafka"
 )
 
 // TargetSpec is the per-target wiring fed to NewProducerMulti. The
@@ -107,21 +107,22 @@ func NewProducerMulti(
 	}
 
 	p := &Producer{
-		cbManager:         cbManager,
-		tracer:            resolveTracer(resolvedOpts.tracer),
-		logger:            logger,
-		metrics:           newStreamingMetrics(resolvedOpts.metricsFactory, logger),
-		producerID:        generateProducerID(),
-		partFn:            resolvedOpts.partitionKeyFn,
-		closeTimeout:      closeTimeout,
-		outboxWriter:      resolvedOpts.outboxWriter,
-		stop:              make(chan struct{}),
-		allowSystemEvents: resolvedOpts.allowSystemEvents,
-		catalog:           resolvedOpts.catalog,
-		policyOverrides:   cloneDeliveryPolicyOverrides(policyOverrides),
-		targets:           make(map[string]*targetRuntime, len(targets)),
-		routes:            routes,
-		cloudEventsSource: mpc.Source,
+		cbManager:          cbManager,
+		tracer:             resolveTracer(resolvedOpts.tracer),
+		logger:             logger,
+		metrics:            newStreamingMetrics(resolvedOpts.metricsFactory, logger),
+		producerID:         generateProducerID(),
+		partFn:             resolvedOpts.partitionKeyFn,
+		closeTimeout:       closeTimeout,
+		outboxWriter:       resolvedOpts.outboxWriter,
+		stop:               make(chan struct{}),
+		allowSystemEvents:  resolvedOpts.allowSystemEvents,
+		catalog:            resolvedOpts.catalog,
+		policyOverrides:    cloneDeliveryPolicyOverrides(policyOverrides),
+		targets:            make(map[string]*targetRuntime, len(targets)),
+		routes:             routes,
+		cloudEventsSource:  mpc.Source,
+		cbRecoveryInterval: resolveCBRecoveryInterval(cbCfg.Timeout),
 	}
 
 	// Build per-target runtimes BEFORE registering the shared CB listener.
@@ -189,6 +190,14 @@ func NewProducerMulti(
 	// shared listener across targets; it filters by service name
 	// internally.
 	p.cbManager.RegisterStateChangeListener(&streamingStateListener{producer: p})
+
+	// Background CB recovery goroutine: starts AFTER listener registration
+	// so any transitions fired by the very first GetState poke are
+	// observed by the listener and mirrored onto rt.state. Without the
+	// listener wired first, an OPEN→HALF-OPEN transition triggered by the
+	// initial poke would update gobreaker's state but never propagate to
+	// the mirror. See cb_recovery.go for the full rationale.
+	p.startCBRecoveryLoop()
 
 	return p, nil
 }

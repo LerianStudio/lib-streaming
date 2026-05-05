@@ -6,13 +6,14 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/LerianStudio/lib-commons/v5/commons/log"
-	streaming "github.com/LerianStudio/lib-streaming/v2"
-	"github.com/LerianStudio/lib-streaming/v2/internal/producer"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
+	streaming "github.com/LerianStudio/lib-streaming"
+	"github.com/LerianStudio/lib-streaming/internal/producer"
+	"github.com/LerianStudio/lib-streaming/internal/transport"
 	"github.com/twmb/franz-go/pkg/kfake"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/twmb/franz-go/pkg/sasl/plain"
@@ -297,6 +298,51 @@ func TestBuilder_TLSConfigWithInsecureSkipVerifyRejectsConfig(t *testing.T) {
 		Build(context.Background())
 	if !errors.Is(err, streaming.ErrInvalidTLSConfig) {
 		t.Fatalf("Build() error = %v; want streaming.ErrInvalidTLSConfig", err)
+	}
+}
+
+// TestBuilder_TargetNameWithControlCharRejected pins the target.Name
+// sanitization invariant. The CB recovery goroutine drives state
+// transitions on every registered target, reliably surfacing target.Name
+// into operator logs via the per-target StateChangeListener — a target
+// name carrying a newline or other control character would inject
+// crafted lines into the log stream. Closes a latent log-injection vector
+// that the recovery goroutine amplifies even in emit-only services.
+func TestBuilder_TargetNameWithControlCharRejected(t *testing.T) {
+	t.Parallel()
+
+	target := builderKafkaTarget()
+	target.Name = "primary\nattacker-injected" // newline = control char
+
+	_, err := streaming.NewBuilder().
+		Source("svc://ledger").
+		Catalog(builderCatalog(t)).
+		Routes(builderRoute("lerian.streaming.transaction.created")).
+		Target(target).
+		Build(context.Background())
+	if !errors.Is(err, streaming.ErrInvalidRouteDefinition) {
+		t.Fatalf("Build() error = %v; want streaming.ErrInvalidRouteDefinition", err)
+	}
+}
+
+// TestBuilder_TargetNameTooLongRejected pins the target.Name length cap.
+// Same vector as control-char injection: an oversize name would log-bomb
+// the operator log stream. The cap matches MaxEventIDBytes so target and
+// route fields share a symmetric validation surface.
+func TestBuilder_TargetNameTooLongRejected(t *testing.T) {
+	t.Parallel()
+
+	target := builderKafkaTarget()
+	target.Name = strings.Repeat("a", 257) // > MaxEventIDBytes (256)
+
+	_, err := streaming.NewBuilder().
+		Source("svc://ledger").
+		Catalog(builderCatalog(t)).
+		Routes(builderRoute("lerian.streaming.transaction.created")).
+		Target(target).
+		Build(context.Background())
+	if !errors.Is(err, streaming.ErrInvalidRouteDefinition) {
+		t.Fatalf("Build() error = %v; want streaming.ErrInvalidRouteDefinition", err)
 	}
 }
 

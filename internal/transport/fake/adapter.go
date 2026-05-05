@@ -7,8 +7,8 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
+	"github.com/LerianStudio/lib-streaming/internal/contract"
+	"github.com/LerianStudio/lib-streaming/internal/transport"
 )
 
 // Adapter is a concurrency-safe in-memory transport adapter for unit tests.

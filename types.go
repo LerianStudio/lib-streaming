@@ -1,9 +1,9 @@
 package streaming
 
 import (
-	"github.com/LerianStudio/lib-streaming/v2/internal/config"
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/manifest"
+	"github.com/LerianStudio/lib-streaming/internal/config"
+	"github.com/LerianStudio/lib-streaming/internal/contract"
+	"github.com/LerianStudio/lib-streaming/internal/manifest"
 )
 
 type (

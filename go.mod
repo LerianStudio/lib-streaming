@@ -1,4 +1,4 @@
-module github.com/LerianStudio/lib-streaming/v2
+module github.com/LerianStudio/lib-streaming
 
 go 1.25.9
 

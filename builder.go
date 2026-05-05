@@ -13,9 +13,9 @@ import (
 	"github.com/twmb/franz-go/pkg/sasl"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/producer"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
+	"github.com/LerianStudio/lib-streaming/internal/contract"
+	"github.com/LerianStudio/lib-streaming/internal/producer"
+	"github.com/LerianStudio/lib-streaming/internal/transport"
 )
 
 // TransportAdapter is the outbound transport port. Adapter implementations
@@ -504,6 +504,21 @@ func (b *Builder) buildTargetSpecs(ctx context.Context) ([]producer.TargetSpec, 
 			rollback()
 
 			return nil, fmt.Errorf("%w: credential-like target material is not allowed", ErrMissingTarget)
+		}
+
+		// Reject control characters and oversize names. The CB recovery
+		// goroutine drives state transitions on every registered target,
+		// reliably surfacing target.Name into operator logs via the
+		// per-target StateChangeListener — a target name carrying a
+		// newline or other control character would inject crafted lines
+		// into the log stream. Length cap matches the per-event ID cap
+		// applied to RouteDefinition fields so the validation surface is
+		// symmetric across routes and targets.
+		if contract.HasControlChar(target.Name) || len(target.Name) > contract.MaxEventIDBytes {
+			rollback()
+
+			return nil, fmt.Errorf("%w: target name carries control characters or exceeds size cap (max %d bytes)",
+				ErrInvalidRouteDefinition, contract.MaxEventIDBytes)
 		}
 
 		if _, dup := seen[target.Name]; dup {

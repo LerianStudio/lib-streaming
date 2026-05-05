@@ -11,7 +11,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	streaming "github.com/LerianStudio/lib-streaming/v2"
+	streaming "github.com/LerianStudio/lib-streaming"
 )
 
 // TestMockEmitter_CaptureAndEvents verifies the simplest contract: Emit

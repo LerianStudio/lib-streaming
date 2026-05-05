@@ -64,16 +64,55 @@ func (f *fakeCB) Counts() circuitbreaker.Counts {
 // fakeCBManager is a test-only circuitbreaker.Manager that lets tests force
 // state transitions via ForceTransition, capturing listener notifications
 // deterministically.
+//
+// getStateCallsByService records the number of GetState invocations per
+// service name. Used by cb_recovery_test.go to assert the background poke
+// goroutine is actually pumping. atomic.Int64 stored as *atomic.Int64 so
+// the LoadOrStore in GetState can return a stable pointer the caller
+// increments without re-storing.
 type fakeCBManager struct {
 	mu        sync.Mutex
 	breakers  map[string]*fakeCB
 	listeners []circuitbreaker.StateChangeListener
+
+	getStateCallsByService sync.Map // string → *atomic.Int64
+	getStateTransitions    sync.Map // string → *fakeGetStateTransition
+}
+
+type fakeGetStateTransition struct {
+	afterCalls int64
+	to         circuitbreaker.State
+	fired      atomic.Bool
 }
 
 func newFakeCBManager() *fakeCBManager {
 	return &fakeCBManager{
 		breakers: map[string]*fakeCB{},
 	}
+}
+
+// getStateCallsFor returns the number of GetState calls observed for the
+// named service. Returns 0 when the service has never been queried. Used by
+// cb_recovery_test.go to verify the recovery loop's per-target poke pump.
+func (f *fakeCBManager) getStateCallsFor(name string) int64 {
+	v, ok := f.getStateCallsByService.Load(name)
+	if !ok {
+		return 0
+	}
+
+	return v.(*atomic.Int64).Load()
+}
+
+// transitionOnGetState configures GetState to synchronously drive a state
+// transition after the named service has been poked at least afterCalls
+// times. This models gobreaker's lazy OPEN→HALF-OPEN expiry transition,
+// where reading State() is itself the operation that fires the listener.
+func (f *fakeCBManager) transitionOnGetState(name string, afterCalls int64, to circuitbreaker.State) {
+	if afterCalls < 1 {
+		afterCalls = 1
+	}
+
+	f.getStateTransitions.Store(name, &fakeGetStateTransition{afterCalls: afterCalls, to: to})
 }
 
 func (f *fakeCBManager) GetOrCreate(name string, _ circuitbreaker.Config) (circuitbreaker.CircuitBreaker, error) {
@@ -94,6 +133,18 @@ func (f *fakeCBManager) Execute(_ string, _ func() (any, error)) (any, error) {
 }
 
 func (f *fakeCBManager) GetState(name string) circuitbreaker.State {
+	// Counter increment goes first — even unknown-service queries count
+	// for cb_recovery_test.go's "poke fired for every target" assertions.
+	counter, _ := f.getStateCallsByService.LoadOrStore(name, &atomic.Int64{})
+	calls := counter.(*atomic.Int64).Add(1)
+
+	if transitionValue, ok := f.getStateTransitions.Load(name); ok {
+		transition := transitionValue.(*fakeGetStateTransition)
+		if calls >= transition.afterCalls && transition.fired.CompareAndSwap(false, true) {
+			f.ForceTransition(name, transition.to)
+		}
+	}
+
 	f.mu.Lock()
 	b, ok := f.breakers[name]
 	f.mu.Unlock()

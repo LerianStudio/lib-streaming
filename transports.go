@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport/eventbridge"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport/rabbitmq"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport/sqs"
+	"github.com/LerianStudio/lib-streaming/internal/transport"
+	"github.com/LerianStudio/lib-streaming/internal/transport/eventbridge"
+	"github.com/LerianStudio/lib-streaming/internal/transport/rabbitmq"
+	"github.com/LerianStudio/lib-streaming/internal/transport/sqs"
 )
 
 // SQSPublisherClient is the caller-supplied client interface used by the

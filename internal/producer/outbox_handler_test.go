@@ -17,7 +17,7 @@ import (
 	"github.com/LerianStudio/lib-commons/v5/commons/circuitbreaker"
 	"github.com/LerianStudio/lib-commons/v5/commons/log"
 	"github.com/LerianStudio/lib-commons/v5/commons/outbox"
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
+	"github.com/LerianStudio/lib-streaming/internal/contract"
 )
 
 // newTestUUIDv7 returns a time-ordered UUID via commons.GenerateUUIDv7. Used

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
+	"github.com/LerianStudio/lib-streaming/internal/contract"
 )
 
 func descriptorFixture() PublisherDescriptor {
