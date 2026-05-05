@@ -1,0 +1,22 @@
+.idea/*
+.DS_Store
+.claude/
+.mcp.json
+
+# Compiled test binaries (`go test -c` artifacts)
+*.test
+
+# Test reports and coverage
+reports/
+coverage.out
+coverage.html
+*_coverage.out
+*_coverage.html
+
+# Security scan reports
+gosec-report.sarif
+
+docs/codereview/
+docs/dev-simplify/
+.codegraph/
+vendor/

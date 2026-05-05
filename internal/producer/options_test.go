@@ -1,0 +1,63 @@
+//go:build unit
+
+package producer
+
+import (
+	"testing"
+	"time"
+
+	"github.com/LerianStudio/lib-commons/v5/commons/log"
+)
+
+// TestOptions_ApplyAllSetsFields threads every EmitterOption through an
+// empty emitterOptions and verifies each field is populated. This is a
+// plumbing test only — no Producer construction is exercised; that lands
+// in T2. Ensures each option function is at minimum non-broken so the T2
+// harness does not hit compile errors first.
+func TestOptions_ApplyAllSetsFields(t *testing.T) {
+	t.Parallel()
+
+	logger := log.NewNop()
+	partFn := func(_ Event) string { return "custom" }
+	catalog, err := NewCatalog(EventDefinition{
+		Key:          "transaction.created",
+		ResourceType: "transaction",
+		EventType:    "created",
+	})
+	if err != nil {
+		t.Fatalf("NewCatalog() error = %v", err)
+	}
+
+	opts := &emitterOptions{}
+	for _, apply := range []EmitterOption{
+		WithLogger(logger),
+		WithMetricsFactory(nil), // nil is a valid, supported value
+		WithTracer(nil),         // nil is a valid, supported value
+		WithCircuitBreakerManager(nil),
+		WithPartitionKey(partFn),
+		WithCloseTimeout(7 * time.Second),
+		WithAllowSystemEvents(),
+		WithCatalog(catalog),
+	} {
+		apply(opts)
+	}
+
+	if opts.logger == nil {
+		t.Error("WithLogger did not set opts.logger")
+	}
+	if opts.partitionKeyFn == nil {
+		t.Error("WithPartitionKey did not set opts.partitionKeyFn")
+	}
+	if got := opts.partitionKeyFn(Event{}); got != "custom" {
+		t.Errorf("opts.partitionKeyFn returned %q; want custom", got)
+	}
+	if opts.closeTimeout != 7*time.Second {
+		t.Errorf("opts.closeTimeout = %v; want 7s", opts.closeTimeout)
+	}
+	if !opts.allowSystemEvents {
+		t.Error("WithAllowSystemEvents did not set opts.allowSystemEvents")
+	}
+	if opts.catalog.Len() != 1 {
+		t.Errorf("WithCatalog did not set opts.catalog; len = %d, want 1", opts.catalog.Len())
+	}
+}

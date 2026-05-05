@@ -1,0 +1,299 @@
+package producer
+
+import (
+	"crypto/tls"
+	"time"
+
+	"github.com/LerianStudio/lib-commons/v5/commons/circuitbreaker"
+	"github.com/LerianStudio/lib-commons/v5/commons/log"
+	"github.com/LerianStudio/lib-commons/v5/commons/opentelemetry/metrics"
+	"github.com/LerianStudio/lib-commons/v5/commons/outbox"
+	"github.com/twmb/franz-go/pkg/sasl"
+	"go.opentelemetry.io/otel/trace"
+)
+
+// EmitterOption configures a Producer at construction time. Options are
+// functional; callers chain them in any order. Producer applies defaults for
+// every unset option.
+//
+// Transport-level security (WithTLSConfig, WithSASL) is fail-closed: TLS
+// configs are cloned and validated, and SASL without TLS is rejected unless the
+// caller explicitly opts into unsafe local/dev plaintext.
+type EmitterOption func(*emitterOptions)
+
+// emitterOptions is the internal struct assembled from every EmitterOption.
+// Producer reads from this struct at New() and does not retain the value
+// beyond construction.
+type emitterOptions struct {
+	// logger is the structured logger. Defaults to log.NewNop() when nil.
+	logger log.Logger
+
+	// metricsFactory produces OTEL instruments. Nil is valid — the Producer
+	// falls back to a no-op recorder, logs a single warning at first Emit.
+	metricsFactory *metrics.MetricsFactory
+
+	// tracer is the OTEL tracer for streaming.emit spans. Nil falls back to
+	// the global tracer provider.
+	tracer trace.Tracer
+
+	// cbManager, when non-nil, is reused so the caller's process-level manager
+	// provides metrics, state listeners, and config governance. Nil means the
+	// Producer creates its own manager from its logger.
+	cbManager circuitbreaker.Manager
+
+	// partitionKeyFn, when non-nil, overrides Event.PartitionKey() at publish
+	// time. Useful for hot-tenant salting (see PRD R2).
+	partitionKeyFn func(Event) string
+
+	// closeTimeout caps how long Close waits for flush + outbox drain.
+	// Zero means "use the STREAMING_CLOSE_TIMEOUT_S config default (30s)".
+	closeTimeout time.Duration
+
+	// outboxWriter, when non-nil, enables policy-selected outbox writes. The
+	// caller is responsible for constructing and owning the writer.
+	outboxWriter OutboxWriter
+
+	// tlsConfig, when non-nil, is threaded to kgo.DialTLSConfig so broker
+	// connections run over TLS. Nil means plaintext (the default). See
+	// WithTLSConfig for the full contract.
+	tlsConfig *tls.Config
+
+	// saslMechanism, when non-nil, is threaded to kgo.SASL so the client
+	// authenticates against brokers using the selected mechanism. Nil means
+	// no SASL (the default). See WithSASL for the full contract.
+	saslMechanism sasl.Mechanism
+
+	// allowPlaintextSASL permits SASL without TLS. Defaults to false because
+	// plaintext SASL exposes broker credentials on the network path. See
+	// WithAllowPlaintextSASL for the explicit unsafe local/dev opt-in.
+	allowPlaintextSASL bool
+
+	// allowSystemEvents gates SystemEvent=true emissions. Defaults to false:
+	// a Producer that has not opted in rejects SystemEvent emissions with
+	// ErrSystemEventsNotAllowed at preflight. See WithAllowSystemEvents.
+	allowSystemEvents bool
+
+	// catalog is the immutable source of truth for catalog-backed emission,
+	// manifest export, and introspection.
+	catalog Catalog
+}
+
+// WithLogger sets the structured logger used across the package. When not
+// supplied, the Producer uses log.NewNop() so lib-commons stays silent by
+// default in library code.
+func WithLogger(l log.Logger) EmitterOption {
+	return func(o *emitterOptions) {
+		o.logger = l
+	}
+}
+
+// WithMetricsFactory wires the OTEL metrics factory used to register the 6
+// streaming instruments (see metrics.go in T6). Passing nil is supported —
+// the Producer switches to a no-op recorder and logs a single warning on
+// the first Emit.
+func WithMetricsFactory(f *metrics.MetricsFactory) EmitterOption {
+	return func(o *emitterOptions) {
+		o.metricsFactory = f
+	}
+}
+
+// WithTracer overrides the OTEL tracer used for the streaming.emit span.
+// When unset, the Producer uses the global tracer provider.
+func WithTracer(t trace.Tracer) EmitterOption {
+	return func(o *emitterOptions) {
+		o.tracer = t
+	}
+}
+
+// WithCircuitBreakerManager lets the caller share a process-level
+// circuitbreaker.Manager with the Producer. When omitted, the Producer
+// constructs its own manager from the supplied logger.
+func WithCircuitBreakerManager(m circuitbreaker.Manager) EmitterOption {
+	return func(o *emitterOptions) {
+		o.cbManager = m
+	}
+}
+
+// WithPartitionKey overrides the default Event.PartitionKey() behavior at
+// publish time. Use for hot-tenant salting (e.g. tenant_id|0..K-1) or to
+// partition by aggregate ID within a tenant.
+func WithPartitionKey(fn func(Event) string) EmitterOption {
+	return func(o *emitterOptions) {
+		o.partitionKeyFn = fn
+	}
+}
+
+// WithCloseTimeout caps how long Close waits for buffered-record flush and
+// outbox drain. A zero duration means "use the config default"; negative
+// values are normalized to zero by the caller at construction time.
+func WithCloseTimeout(d time.Duration) EmitterOption {
+	return func(o *emitterOptions) {
+		o.closeTimeout = d
+	}
+}
+
+// WithOutboxRepository adapts a lib-commons OutboxRepository so the Producer
+// can write versioned streaming relay envelopes. Without this option or
+// WithOutboxWriter, outbox-selected emits fail with ErrOutboxNotConfigured and
+// circuit-open fallback returns ErrCircuitOpen.
+//
+// The typical pairing is: the caller also invokes (*Producer).RegisterOutboxRelay
+// on the process-level outbox Dispatcher's HandlerRegistry so outbox rows are
+// drained back through the originating target adapter once the broker recovers.
+//
+// The Producer NEVER constructs an OutboxRepository itself; ownership and
+// lifecycle stay with the consuming service.
+//
+// Passing nil is NOT a harmless no-op: under the last-call-wins semantics a nil
+// argument acts as an explicit reset and clears any previously selected outbox
+// writer (including a transactional one installed via a prior WithOutboxWriter
+// call). Only pass nil when you intend to disable outbox plumbing.
+//
+// Mutually exclusive with WithOutboxWriter — last call wins. Mixing them
+// silently loses transactional capability if the custom writer does not
+// implement TransactionalOutboxWriter.
+func WithOutboxRepository(repo outbox.OutboxRepository) EmitterOption {
+	return func(o *emitterOptions) {
+		if isNilInterface(repo) {
+			o.outboxWriter = nil
+
+			return
+		}
+
+		o.outboxWriter = &libCommonsOutboxWriter{repo: repo}
+	}
+}
+
+// WithOutboxWriter wires a custom outbox writer boundary.
+//
+// Passing nil is NOT a harmless no-op: under the last-call-wins semantics a nil
+// argument acts as an explicit reset and clears any previously selected outbox
+// writer (including a repository-adapted one installed via a prior
+// WithOutboxRepository call). Only pass nil when you intend to disable outbox
+// plumbing.
+//
+// Mutually exclusive with WithOutboxRepository — last call wins. Mixing them
+// silently loses transactional capability if the custom writer does not
+// implement TransactionalOutboxWriter.
+func WithOutboxWriter(writer OutboxWriter) EmitterOption {
+	return func(o *emitterOptions) {
+		if isNilInterface(writer) {
+			o.outboxWriter = nil
+
+			return
+		}
+
+		o.outboxWriter = writer
+	}
+}
+
+// WithTLSConfig sets a TLS configuration for broker connections.
+//
+// When set, the Producer dials brokers using the supplied *tls.Config via
+// franz-go's kgo.DialTLSConfig. Typical use cases include connecting to
+// Redpanda Cloud clusters, enforcing mutual TLS (client certificates), or
+// pinning CA roots for on-premise Kafka clusters served by internal CAs.
+// franz-go clones the config at each dial and fills in ServerName from the
+// broker host when ServerName is empty, so callers rarely need to set it.
+//
+// When nil, brokers are connected via plaintext unless SASL is also enabled;
+// SASL without TLS is rejected by default with ErrPlaintextSASLNotAllowed.
+//
+// TLS is PROCESS-LEVEL, not per-tenant. The *tls.Config authenticates the
+// streaming producer process to the broker under a single identity; it is
+// not rotated or multiplexed by Event.TenantID. Per-tenant broker isolation
+// is NOT the streaming producer's responsibility — it is an infrastructure
+// concern (broker ACLs, network segmentation) or a consumer-side filtering
+// concern (ce-tenantid header).
+//
+// The config is cloned before storage so later caller mutations cannot weaken
+// the producer's broker dial policy. InsecureSkipVerify=true is rejected at
+// construction. MinVersion defaults to tls.VersionTLS12 when unset; explicit
+// TLS 1.0 / 1.1 MinVersion or MaxVersion values are rejected. Caller-specified
+// TLS 1.2 CipherSuites must be approved AEAD/ECDHE suites; omit CipherSuites to
+// use Go's secure defaults.
+//
+// v1 ships this option for forward-compatibility. The plumbing is unit-tested
+// — a real TLS handshake is not. Integration coverage arrives with the first
+// TLS-using consumer per the T8 scope note in docs/pre-dev/streaming/tasks.md.
+func WithTLSConfig(cfg *tls.Config) EmitterOption {
+	return func(o *emitterOptions) {
+		// Clone with defaults; validateTLSConfig runs during producer construction.
+		o.tlsConfig = cloneTLSConfigWithDefaults(cfg)
+	}
+}
+
+// WithSASL sets the SASL mechanism for broker authentication.
+//
+// franz-go ships mechanisms for PLAIN, SCRAM-SHA-256, SCRAM-SHA-512, and
+// OAUTHBEARER via github.com/twmb/franz-go/pkg/sasl/*. Pass the mechanism
+// constructor's result, e.g.:
+//
+//	WithSASL(scram.Auth{User: "alice", Pass: "secret"}.AsSha256Mechanism())
+//	WithSASL(plain.Auth{User: "alice", Pass: "secret"}.AsMechanism())
+//
+// When nil, SASL is not configured (the default).
+//
+// SASL requires TLS by default. Constructing a Producer with WithSASL and no
+// WithTLSConfig returns ErrPlaintextSASLNotAllowed before any broker I/O. This
+// fail-closed default prevents reusable broker credentials from crossing the
+// network in cleartext.
+//
+// SASL auth is PROCESS-LEVEL, not per-tenant. The mechanism authenticates
+// the streaming producer process to the broker under a single service
+// identity; it is not rotated or multiplexed by Event.TenantID. A consuming
+// service that wires per-tenant credentials here will NOT see them applied
+// per tenant — the Producer holds one mechanism for its lifetime.
+//
+// v1 ships plumbing only — a real SCRAM/OAUTHBEARER handshake is not covered
+// by unit tests. Integration coverage arrives with the first SASL-using
+// consumer per the T8 scope note in docs/pre-dev/streaming/tasks.md.
+func WithSASL(mech sasl.Mechanism) EmitterOption {
+	return func(o *emitterOptions) {
+		if isNilInterface(mech) {
+			o.saslMechanism = nil
+
+			return
+		}
+
+		o.saslMechanism = mech
+	}
+}
+
+// WithAllowPlaintextSASL permits SASL authentication without TLS.
+//
+// This is intentionally unsafe and exists only for local/dev brokers that do
+// not support TLS. Do not use it in production: SASL credentials sent over a
+// plaintext TCP connection are visible to any observer on the network path.
+func WithAllowPlaintextSASL() EmitterOption {
+	return func(o *emitterOptions) {
+		o.allowPlaintextSASL = true
+	}
+}
+
+// WithAllowSystemEvents opts a Producer into accepting Event.SystemEvent=true
+// emissions. Without this option, any Emit whose Event has SystemEvent=true
+// is rejected at preflight with ErrSystemEventsNotAllowed.
+//
+// SystemEvents are a privileged capability: they bypass tenant discipline
+// (TenantID may be empty) and hijack the "system:*" partition space so a
+// per-tenant service that sets SystemEvent=true by accident could cause
+// cross-tenant ordering issues. Only platform-level publishers (reaper
+// services, ops fan-out) should enable this option.
+//
+// FORBIDDEN for per-tenant service flows. A buggy service that sets
+// SystemEvent=true without this option will see ErrSystemEventsNotAllowed
+// at runtime instead of silently hijacking the partition space.
+func WithAllowSystemEvents() EmitterOption {
+	return func(o *emitterOptions) {
+		o.allowSystemEvents = true
+	}
+}
+
+// WithCatalog wires the immutable event catalog used by the catalog-backed
+// EmitRequest path, manifest export, and /streaming introspection helpers.
+func WithCatalog(catalog Catalog) EmitterOption {
+	return func(o *emitterOptions) {
+		o.catalog = catalog
+	}
+}

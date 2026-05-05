@@ -1,0 +1,88 @@
+package streaming
+
+import (
+	"github.com/LerianStudio/lib-streaming/v2/internal/cloudevents"
+	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
+)
+
+type (
+	// ErrorClass classifies publish failures into operational buckets.
+	ErrorClass = contract.ErrorClass
+	// EmitError carries structured publish-failure context.
+	EmitError = contract.EmitError
+)
+
+const (
+	ClassSerialization     = contract.ClassSerialization
+	ClassValidation        = contract.ClassValidation
+	ClassAuth              = contract.ClassAuth
+	ClassTopicNotFound     = contract.ClassTopicNotFound
+	ClassBrokerUnavailable = contract.ClassBrokerUnavailable
+	ClassNetworkTimeout    = contract.ClassNetworkTimeout
+	ClassContextCanceled   = contract.ClassContextCanceled
+	ClassBrokerOverloaded  = contract.ClassBrokerOverloaded
+)
+
+var (
+	ErrMissingTenantID                    = contract.ErrMissingTenantID
+	ErrSystemEventsNotAllowed             = contract.ErrSystemEventsNotAllowed
+	ErrMissingSource                      = contract.ErrMissingSource
+	ErrMissingResourceType                = contract.ErrMissingResourceType
+	ErrMissingEventType                   = contract.ErrMissingEventType
+	ErrInvalidTenantID                    = contract.ErrInvalidTenantID
+	ErrInvalidResourceType                = contract.ErrInvalidResourceType
+	ErrInvalidEventType                   = contract.ErrInvalidEventType
+	ErrInvalidSource                      = contract.ErrInvalidSource
+	ErrInvalidSubject                     = contract.ErrInvalidSubject
+	ErrInvalidEventID                     = contract.ErrInvalidEventID
+	ErrInvalidSchemaVersion               = contract.ErrInvalidSchemaVersion
+	ErrInvalidDataContentType             = contract.ErrInvalidDataContentType
+	ErrInvalidDataSchema                  = contract.ErrInvalidDataSchema
+	ErrInvalidEventDefinition             = contract.ErrInvalidEventDefinition
+	ErrInvalidOutboxEnvelope              = contract.ErrInvalidOutboxEnvelope
+	ErrDuplicateEventDefinition           = contract.ErrDuplicateEventDefinition
+	ErrUnknownEventDefinition             = contract.ErrUnknownEventDefinition
+	ErrInvalidDeliveryPolicy              = contract.ErrInvalidDeliveryPolicy
+	ErrInvalidPublisherDescriptor         = contract.ErrInvalidPublisherDescriptor
+	ErrInvalidRouteDefinition             = contract.ErrInvalidRouteDefinition
+	ErrInvalidDestination                 = contract.ErrInvalidDestination
+	ErrDuplicateRouteDefinition           = contract.ErrDuplicateRouteDefinition
+	ErrNoRoutesConfigured                 = contract.ErrNoRoutesConfigured
+	ErrMissingTarget                      = contract.ErrMissingTarget
+	ErrMultiTransportRuntimeNotConfigured = contract.ErrMultiTransportRuntimeNotConfigured
+	ErrEmitterClosed                      = contract.ErrEmitterClosed
+	ErrEventDisabled                      = contract.ErrEventDisabled
+	ErrPayloadTooLarge                    = contract.ErrPayloadTooLarge
+	ErrNotJSON                            = contract.ErrNotJSON
+	ErrMissingBrokers                     = contract.ErrMissingBrokers
+	ErrInvalidCompression                 = contract.ErrInvalidCompression
+	ErrInvalidAcks                        = contract.ErrInvalidAcks
+	ErrInvalidTLSConfig                   = contract.ErrInvalidTLSConfig
+	ErrPlaintextSASLNotAllowed            = contract.ErrPlaintextSASLNotAllowed
+	ErrNilProducer                        = contract.ErrNilProducer
+	ErrCircuitOpen                        = contract.ErrCircuitOpen
+	ErrOutboxNotConfigured                = contract.ErrOutboxNotConfigured
+	ErrOutboxTxUnsupported                = contract.ErrOutboxTxUnsupported
+	ErrNilOutboxRegistry                  = contract.ErrNilOutboxRegistry
+	ErrMissingRequiredHeader              = cloudevents.ErrMissingRequiredHeader
+	ErrUnsupportedSpecVersion             = cloudevents.ErrUnsupportedSpecVersion
+)
+
+// IsCallerError reports whether err is caller-correctable rather than infrastructure-caused.
+//
+// For *MultiEmitError, returns true only when EVERY Required-route failure
+// is itself caller-correctable. A single infrastructure-class failure (broker
+// unavailable, circuit open, network timeout) anywhere in the Required set
+// flips the answer to false — there is at least one fault the caller cannot
+// fix on its own, so the aggregate is treated as infrastructure.
+func IsCallerError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	if isCaller, matched := contract.IsMultiEmitErrorCallerError(err); matched {
+		return isCaller
+	}
+
+	return contract.IsCallerError(err)
+}

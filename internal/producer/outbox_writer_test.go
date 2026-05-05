@@ -1,0 +1,161 @@
+//go:build unit
+
+package producer
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"strings"
+	"testing"
+
+	"github.com/google/uuid"
+)
+
+func TestOutboxAdapterWritesStableEnvelopeRows(t *testing.T) {
+	repo := &fakeOutboxRepo{}
+	writer := &libCommonsOutboxWriter{repo: repo}
+
+	event := sampleEvent()
+	event.ApplyDefaults()
+	envelope := testOutboxEnvelope(event, event.Topic(), "transaction.created", DefaultDeliveryPolicy(), uuid.New())
+
+	if err := writer.Write(context.Background(), envelope); err != nil {
+		t.Fatalf("Write err = %v", err)
+	}
+
+	row := repo.firstCreated()
+	if row == nil {
+		t.Fatal("repo.Create was not called")
+	}
+	if row.EventType != StreamingOutboxEventType {
+		t.Fatalf("row.EventType = %q; want %q", row.EventType, StreamingOutboxEventType)
+	}
+
+	var got OutboxEnvelope
+	if err := json.Unmarshal(row.Payload, &got); err != nil {
+		t.Fatalf("json.Unmarshal row.Payload err = %v", err)
+	}
+	if got.Destination.Name != event.Topic() {
+		t.Fatalf("envelope.Destination.Name = %q; want %q", got.Destination.Name, event.Topic())
+	}
+}
+
+func TestOutboxAdapterWriteWithTxUsesRepositoryTransaction(t *testing.T) {
+	repo := &fakeOutboxRepo{}
+	writer := &libCommonsOutboxWriter{repo: repo}
+
+	event := sampleEvent()
+	event.ApplyDefaults()
+	envelope := testOutboxEnvelope(event, event.Topic(), "transaction.created", DefaultDeliveryPolicy(), uuid.New())
+
+	if err := writer.WriteWithTx(context.Background(), &sql.Tx{}, envelope); err != nil {
+		t.Fatalf("WriteWithTx err = %v", err)
+	}
+
+	if got := repo.createdWithTxCount(); got != 1 {
+		t.Fatalf("createdWithTxCount = %d; want 1", got)
+	}
+	if got := repo.createdCount(); got != 0 {
+		t.Fatalf("createdCount = %d; want 0", got)
+	}
+}
+
+func TestOutboxAdapterNilRepositoryReturnsConfiguredSentinel(t *testing.T) {
+	var nilWriter *libCommonsOutboxWriter
+	if err := nilWriter.Write(context.Background(), OutboxEnvelope{}); !errors.Is(err, ErrOutboxNotConfigured) {
+		t.Fatalf("Write err = %v; want ErrOutboxNotConfigured", err)
+	}
+}
+
+func TestOutboxAdapterRejectsOversizedSerializedEnvelope(t *testing.T) {
+	repo := &fakeOutboxRepo{}
+	writer := &libCommonsOutboxWriter{repo: repo}
+
+	event := sampleEvent()
+	event.Payload = json.RawMessage(`"` + strings.Repeat("x", maxPayloadBytes-1) + `"`)
+	event.ApplyDefaults()
+	envelope := testOutboxEnvelope(event, event.Topic(), "transaction.created", DefaultDeliveryPolicy(), uuid.New())
+
+	if err := writer.Write(context.Background(), envelope); !errors.Is(err, ErrPayloadTooLarge) {
+		t.Fatalf("Write err = %v; want ErrPayloadTooLarge", err)
+	}
+	if got := repo.createdCount(); got != 0 {
+		t.Fatalf("createdCount = %d; want 0", got)
+	}
+}
+
+// TestIsNilInterface_TypedNil pins a regression contract: a typed-nil
+// interface (`var w OutboxWriter = (*libCommonsOutboxWriter)(nil)`) must be
+// detected as nil so the WithOutboxRepository / WithOutboxWriter options
+// correctly clear the writer instead of installing a useless typed-nil
+// shell that would NPE on first Emit.
+//
+// The standard Go gotcha: `var w OutboxWriter = (*Writer)(nil); w == nil`
+// returns FALSE because the interface carries a non-nil type tag. Only
+// reflect.ValueOf(w).IsNil() returns TRUE.
+func TestIsNilInterface_TypedNil(t *testing.T) {
+	tests := []struct {
+		name string
+		v    any
+		want bool
+	}{
+		{
+			name: "untyped nil",
+			v:    nil,
+			want: true,
+		},
+		{
+			name: "typed nil OutboxWriter",
+			v:    OutboxWriter((*libCommonsOutboxWriter)(nil)),
+			want: true,
+		},
+		{
+			name: "typed nil pointer to concrete writer",
+			v:    (*libCommonsOutboxWriter)(nil),
+			want: true,
+		},
+		{
+			name: "non-nil concrete writer",
+			v:    &libCommonsOutboxWriter{},
+			want: false,
+		},
+		{
+			name: "non-nil OutboxWriter interface",
+			v:    OutboxWriter(&libCommonsOutboxWriter{}),
+			want: false,
+		},
+		{
+			name: "typed nil map",
+			v:    (map[string]int)(nil),
+			want: true,
+		},
+		{
+			name: "non-nil empty map",
+			v:    map[string]int{},
+			want: false,
+		},
+		{
+			name: "typed nil slice",
+			v:    ([]byte)(nil),
+			want: true,
+		},
+		{
+			name: "non-nil int (not a nilable kind)",
+			v:    42,
+			want: false,
+		},
+		{
+			name: "non-nil string (not a nilable kind)",
+			v:    "hello",
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		if got := isNilInterface(tt.v); got != tt.want {
+			t.Errorf("isNilInterface(%T %v) = %v; want %v", tt.v, tt.v, got, tt.want)
+		}
+	}
+}
