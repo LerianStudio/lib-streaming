@@ -24,7 +24,7 @@ func TestStreamingHandler_ReturnsManifestJSON(t *testing.T) {
 	handler, err := NewStreamingHandler(PublisherDescriptor{
 		ServiceName: "transaction-service",
 		SourceBase:  "//lerian.midaz/transaction-service",
-	}, catalog)
+	}, catalog, RouteTable{})
 	if err != nil {
 		t.Fatalf("NewStreamingHandler() error = %v", err)
 	}
@@ -64,7 +64,7 @@ func TestStreamingHandler_HEADReturnsHeadersWithoutBody(t *testing.T) {
 	handler, err := NewStreamingHandler(PublisherDescriptor{
 		ServiceName: "transaction-service",
 		SourceBase:  "//lerian.midaz/transaction-service",
-	}, Catalog{})
+	}, Catalog{}, RouteTable{})
 	if err != nil {
 		t.Fatalf("NewStreamingHandler() error = %v", err)
 	}
@@ -87,7 +87,7 @@ func TestStreamingHandler_NilRequestDoesNotPanic(t *testing.T) {
 	handler, err := NewStreamingHandler(PublisherDescriptor{
 		ServiceName: "transaction-service",
 		SourceBase:  "//lerian.midaz/transaction-service",
-	}, Catalog{})
+	}, Catalog{}, RouteTable{})
 	if err != nil {
 		t.Fatalf("NewStreamingHandler() error = %v", err)
 	}
@@ -106,7 +106,7 @@ func TestStreamingHandler_MethodNotAllowed(t *testing.T) {
 	handler, err := NewStreamingHandler(PublisherDescriptor{
 		ServiceName: "transaction-service",
 		SourceBase:  "//lerian.midaz/transaction-service",
-	}, Catalog{})
+	}, Catalog{}, RouteTable{})
 	if err != nil {
 		t.Fatalf("NewStreamingHandler() error = %v", err)
 	}

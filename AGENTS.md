@@ -101,7 +101,7 @@ Support:
 ### Manifest and Introspection
 
 - `BuildManifest(descriptor PublisherDescriptor, catalog Catalog, routes RouteTable) (ManifestDocument, error)` renders a JSON-serializable view of the catalog plus active route table for ops/contract introspection. The optional `Routes` field is populated when the route table has entries; an empty `RouteTable` produces a catalog-only document.
-- `NewStreamingHandler(descriptor, catalog) (http.Handler, error)` returns a stdlib `http.Handler` exposing the manifest. The handler pre-marshals the payload at construction; rebuild the handler if the catalog changes. **SECURITY:** the library does NOT enforce auth — callers MUST wrap the handler in their app's auth middleware before mounting publicly.
+- `NewStreamingHandler(descriptor, catalog, opts ...HandlerOption) (http.Handler, error)` returns a stdlib `http.Handler` exposing the manifest. The handler pre-marshals the payload at construction; rebuild the handler if the catalog changes. Use `WithManifestRoutes(RouteTable)` to advertise the active route table in the manifest's `routes` section. **SECURITY:** the library does NOT enforce auth — callers MUST wrap the handler in their app's auth middleware before mounting publicly.
 - `PublisherDescriptor` carries `ServiceName`, `SourceBase`, `RoutePath` (defaults `/streaming`), `OutboxSupported`, `AppVersion`, `LibVersion`, and `ProducerID` (random per process, surfaced for replica disambiguation in DLQ headers and span attributes).
 - `ManifestVersion` is a semver string (current `1.0.0`). Minor bumps are additive; major bumps remove or change a field.
 

@@ -132,7 +132,7 @@ Architectural constraints and design decisions for the `lib-streaming` codebase.
 ## 10. Manifest and Introspection
 
 - `BuildManifest(descriptor, catalog, routes)` renders the JSON-serializable catalog view plus active route table for ops and contract introspection. Pass an empty `RouteTable` for a catalog-only document.
-- `NewStreamingHandler(descriptor, catalog)` returns a stdlib `http.Handler`.
+- `NewStreamingHandler(descriptor, catalog, opts ...HandlerOption)` returns a stdlib `http.Handler`. `HandlerOption` is the variadic functional-option surface; `WithManifestRoutes(RouteTable)` opts a route table into the manifest's `routes` section.
 - The handler pre-marshals the manifest at construction; rebuild the handler if catalog or descriptor data changes.
 - The library does not enforce auth on the manifest handler.
 - Consuming services must wrap the handler in their own auth middleware before mounting it on a public route.

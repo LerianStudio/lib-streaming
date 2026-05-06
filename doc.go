@@ -249,8 +249,10 @@
 // serializable document. NewStreamingHandler returns an optional net/http
 // handler that serves the same document, but the consuming app remains
 // responsible for mounting the route, enforcing auth, starting the server,
-// and publishing any manifest artifact in CI/S3/GitHub. The wire-version
-// constant is exposed at the root package as streaming.ManifestVersion.
+// and publishing any manifest artifact in CI/S3/GitHub. Pass
+// WithManifestRoutes(routes) to advertise the active route table in the
+// manifest's `routes` section. The wire-version constant is exposed at the
+// root package as streaming.ManifestVersion.
 //
 // # Consumer responsibilities
 //
