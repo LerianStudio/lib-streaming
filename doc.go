@@ -31,9 +31,13 @@
 //	// Consuming services wire panic + assertion metrics once at bootstrap
 //	// after telemetry is initialized. lib-streaming uses commons/assert
 //	// internally for post-construction invariant checks; without this call
-//	// the assertion_failed_total counter stays at zero.
+//	// the assertion_failed_total counter stays at zero. SetProductionMode
+//	// scrubs panic value strings and truncates stack traces before they
+//	// reach log fields, span events, and ErrorReporter payloads — without
+//	// it, arbitrary panic arguments flow verbatim into telemetry.
 //	runtime.InitPanicMetrics(metricsFactory)
 //	assert.InitAssertionMetrics(metricsFactory)
+//	runtime.SetProductionMode(cfg.Env == "production")
 //
 //	// Disabled-feature-flag fallback. When STREAMING_ENABLED=false or no
 //	// brokers are configured, return a NoopEmitter and skip launcher wiring.
@@ -245,8 +249,10 @@
 // serializable document. NewStreamingHandler returns an optional net/http
 // handler that serves the same document, but the consuming app remains
 // responsible for mounting the route, enforcing auth, starting the server,
-// and publishing any manifest artifact in CI/S3/GitHub. The wire-version
-// constant is exposed at the root package as streaming.ManifestVersion.
+// and publishing any manifest artifact in CI/S3/GitHub. Pass
+// WithManifestRoutes(routes) to advertise the active route table in the
+// manifest's `routes` section. The wire-version constant is exposed at the
+// root package as streaming.ManifestVersion.
 //
 // # Consumer responsibilities
 //

@@ -3,9 +3,12 @@
 package streaming_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -176,5 +179,282 @@ func TestFacade_ManifestAndCloudEventsWrappers(t *testing.T) {
 	}
 	if parsed.EventID != "event-1" || parsed.Source != "//svc" {
 		t.Fatalf("parsed event = %+v", parsed)
+	}
+}
+
+// handlerOptionsCatalogFixture builds a stable single-event catalog used by
+// the WithManifestRoutes test surface. Local helper, not exported.
+func handlerOptionsCatalogFixture(t *testing.T) streaming.Catalog {
+	t.Helper()
+
+	catalog, err := streaming.NewCatalog(streaming.EventDefinition{
+		Key:          "transaction.created",
+		ResourceType: "transaction",
+		EventType:    "created",
+	})
+	if err != nil {
+		t.Fatalf("NewCatalog() error = %v", err)
+	}
+
+	return catalog
+}
+
+func handlerOptionsDescriptorFixture() streaming.PublisherDescriptor {
+	return streaming.PublisherDescriptor{
+		ServiceName: "svc",
+		SourceBase:  "//svc",
+	}
+}
+
+func serveManifestBody(t *testing.T, handler http.Handler) []byte {
+	t.Helper()
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/streaming", nil)
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d; want %d", recorder.Code, http.StatusOK)
+	}
+
+	return recorder.Body.Bytes()
+}
+
+// TestFacade_NewStreamingHandler_NoOptsByteIdenticalToZeroRouteTable pins the
+// load-bearing backward-compat guarantee: NewStreamingHandler(d, c) and
+// NewStreamingHandler(d, c, WithManifestRoutes(RouteTable{})) produce
+// byte-identical response bodies. This is what makes the variadic extension
+// source-compatible with all existing two-argument call sites.
+func TestFacade_NewStreamingHandler_NoOptsByteIdenticalToZeroRouteTable(t *testing.T) {
+	t.Parallel()
+
+	descriptor := handlerOptionsDescriptorFixture()
+	catalog := handlerOptionsCatalogFixture(t)
+
+	plain, err := streaming.NewStreamingHandler(descriptor, catalog)
+	if err != nil {
+		t.Fatalf("NewStreamingHandler(d, c) error = %v", err)
+	}
+	withZero, err := streaming.NewStreamingHandler(descriptor, catalog, streaming.WithManifestRoutes(streaming.RouteTable{}))
+	if err != nil {
+		t.Fatalf("NewStreamingHandler(d, c, WithManifestRoutes(zero)) error = %v", err)
+	}
+
+	plainBody := serveManifestBody(t, plain)
+	zeroBody := serveManifestBody(t, withZero)
+
+	if !bytes.Equal(plainBody, zeroBody) {
+		t.Fatalf("manifest bodies diverge:\nno-opts: %s\nzero-table: %s", plainBody, zeroBody)
+	}
+}
+
+// TestFacade_NewStreamingHandler_WithRoutesRoundTrip exercises the happy
+// path: a populated RouteTable threads through to the manifest's `routes`
+// section verbatim, with deterministic ordering preserved.
+func TestFacade_NewStreamingHandler_WithRoutesRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	descriptor := handlerOptionsDescriptorFixture()
+	catalog := handlerOptionsCatalogFixture(t)
+
+	routes, err := streaming.NewRouteTable(streaming.RouteDefinition{
+		Key:           "transaction.created.kafka.primary",
+		DefinitionKey: "transaction.created",
+		Target:        "primary",
+		Destination:   streaming.KafkaTopic("lerian.streaming.transaction.created"),
+		Requirement:   streaming.RouteRequired,
+	})
+	if err != nil {
+		t.Fatalf("NewRouteTable() error = %v", err)
+	}
+
+	handler, err := streaming.NewStreamingHandler(descriptor, catalog, streaming.WithManifestRoutes(routes))
+	if err != nil {
+		t.Fatalf("NewStreamingHandler(...) error = %v", err)
+	}
+
+	body := serveManifestBody(t, handler)
+
+	var doc streaming.ManifestDocument
+	if err := json.Unmarshal(body, &doc); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+
+	if got := len(doc.Routes); got != 1 {
+		t.Fatalf("len(Routes) = %d; want 1", got)
+	}
+
+	r := doc.Routes[0]
+	if r.Key != "transaction.created.kafka.primary" {
+		t.Errorf("Key = %q; want transaction.created.kafka.primary", r.Key)
+	}
+	if r.DefinitionKey != "transaction.created" {
+		t.Errorf("DefinitionKey = %q; want transaction.created", r.DefinitionKey)
+	}
+	if r.Target != "primary" {
+		t.Errorf("Target = %q; want primary", r.Target)
+	}
+	if r.Transport != streaming.TransportKafkaLike {
+		t.Errorf("Transport = %q; want kafka", r.Transport)
+	}
+	if r.Destination != "lerian.streaming.transaction.created" {
+		t.Errorf("Destination = %q; want lerian.streaming.transaction.created", r.Destination)
+	}
+	if !r.Required {
+		t.Errorf("Required = false; want true")
+	}
+}
+
+// TestFacade_NewStreamingHandler_LastWithManifestRoutesWins pins the
+// last-write-wins semantic for repeated WithManifestRoutes calls. A future
+// refactor that introduced merge/append semantics would silently change
+// behavior for callers building handlers from layered config.
+func TestFacade_NewStreamingHandler_LastWithManifestRoutesWins(t *testing.T) {
+	t.Parallel()
+
+	descriptor := handlerOptionsDescriptorFixture()
+	catalog := handlerOptionsCatalogFixture(t)
+
+	first, err := streaming.NewRouteTable(streaming.RouteDefinition{
+		Key:           "transaction.created.kafka.first",
+		DefinitionKey: "transaction.created",
+		Target:        "first",
+		Destination:   streaming.KafkaTopic("first.topic"),
+		Requirement:   streaming.RouteRequired,
+	})
+	if err != nil {
+		t.Fatalf("NewRouteTable(first) error = %v", err)
+	}
+
+	last, err := streaming.NewRouteTable(streaming.RouteDefinition{
+		Key:           "transaction.created.kafka.last",
+		DefinitionKey: "transaction.created",
+		Target:        "last",
+		Destination:   streaming.KafkaTopic("last.topic"),
+		Requirement:   streaming.RouteRequired,
+	})
+	if err != nil {
+		t.Fatalf("NewRouteTable(last) error = %v", err)
+	}
+
+	handler, err := streaming.NewStreamingHandler(
+		descriptor,
+		catalog,
+		streaming.WithManifestRoutes(first),
+		streaming.WithManifestRoutes(last),
+	)
+	if err != nil {
+		t.Fatalf("NewStreamingHandler(...) error = %v", err)
+	}
+
+	var doc streaming.ManifestDocument
+	if err := json.Unmarshal(serveManifestBody(t, handler), &doc); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+
+	if got := len(doc.Routes); got != 1 {
+		t.Fatalf("len(Routes) = %d; want 1 (last call wins, no merge)", got)
+	}
+	if doc.Routes[0].Target != "last" {
+		t.Errorf("Routes[0].Target = %q; want \"last\" (last call wins)", doc.Routes[0].Target)
+	}
+	if doc.Routes[0].Key != "transaction.created.kafka.last" {
+		t.Errorf("Routes[0].Key = %q; want \"transaction.created.kafka.last\"", doc.Routes[0].Key)
+	}
+}
+
+// TestFacade_NewStreamingHandler_ConstructionTimeErrorPropagation pins the
+// fail-fast semantic: BuildManifest validation failures surface as the
+// constructor's error return, not as deferred runtime 500s.
+//
+// The reachable failure path through NewStreamingHandler is invalid
+// PublisherDescriptor input — RouteTable values are pre-validated at
+// NewRouteTable construction, so by the time WithManifestRoutes accepts
+// them the table itself cannot fail BuildManifest. We exercise the
+// architectural property (nil handler + non-nil error returned at
+// construction, not deferred) via the descriptor path that BuildManifest
+// actually validates.
+func TestFacade_NewStreamingHandler_ConstructionTimeErrorPropagation(t *testing.T) {
+	t.Parallel()
+
+	routes, err := streaming.NewRouteTable(streaming.RouteDefinition{
+		Key:           "transaction.created.kafka.primary",
+		DefinitionKey: "transaction.created",
+		Target:        "primary",
+		Destination:   streaming.KafkaTopic("lerian.streaming.transaction.created"),
+	})
+	if err != nil {
+		t.Fatalf("NewRouteTable() error = %v", err)
+	}
+
+	// Empty PublisherDescriptor fails NewPublisherDescriptor inside
+	// BuildManifest with ErrInvalidPublisherDescriptor.
+	handler, err := streaming.NewStreamingHandler(
+		streaming.PublisherDescriptor{},
+		handlerOptionsCatalogFixture(t),
+		streaming.WithManifestRoutes(routes),
+	)
+
+	if !errors.Is(err, streaming.ErrInvalidPublisherDescriptor) {
+		t.Fatalf("NewStreamingHandler() error = %v; want errors.Is(err, ErrInvalidPublisherDescriptor)", err)
+	}
+	if handler != nil {
+		t.Fatalf("NewStreamingHandler() handler = %v; want nil on construction failure", handler)
+	}
+}
+
+// TestFacade_NewStreamingHandler_NilOptionSafety asserts the variadic
+// constructor tolerates nil HandlerOption entries — both as the sole option
+// and interleaved with a real option. Tolerance means the handler still
+// serves a manifest observably equivalent to the same call without the nil,
+// not just "doesn't crash."
+func TestFacade_NewStreamingHandler_NilOptionSafety(t *testing.T) {
+	t.Parallel()
+
+	descriptor := handlerOptionsDescriptorFixture()
+	catalog := handlerOptionsCatalogFixture(t)
+
+	routes, err := streaming.NewRouteTable(streaming.RouteDefinition{
+		Key:           "transaction.created.kafka.primary",
+		DefinitionKey: "transaction.created",
+		Target:        "primary",
+		Destination:   streaming.KafkaTopic("lerian.streaming.transaction.created"),
+	})
+	if err != nil {
+		t.Fatalf("NewRouteTable() error = %v", err)
+	}
+
+	referenceNoOpts, err := streaming.NewStreamingHandler(descriptor, catalog)
+	if err != nil {
+		t.Fatalf("baseline NewStreamingHandler(d, c) error = %v", err)
+	}
+	referenceNoOptsBody := serveManifestBody(t, referenceNoOpts)
+
+	referenceWithRoutes, err := streaming.NewStreamingHandler(descriptor, catalog, streaming.WithManifestRoutes(routes))
+	if err != nil {
+		t.Fatalf("baseline NewStreamingHandler(d, c, WithManifestRoutes) error = %v", err)
+	}
+	referenceWithRoutesBody := serveManifestBody(t, referenceWithRoutes)
+
+	nilOnly, err := streaming.NewStreamingHandler(descriptor, catalog, nil)
+	if err != nil {
+		t.Fatalf("NewStreamingHandler(d, c, nil) error = %v; want nil", err)
+	}
+	if nilOnly == nil {
+		t.Fatal("NewStreamingHandler(d, c, nil) handler = nil; want non-nil")
+	}
+	if got := serveManifestBody(t, nilOnly); !bytes.Equal(got, referenceNoOptsBody) {
+		t.Fatalf("nil-only manifest body diverges from no-opts:\nnil-only: %s\nno-opts:  %s", got, referenceNoOptsBody)
+	}
+
+	interleaved, err := streaming.NewStreamingHandler(descriptor, catalog, nil, streaming.WithManifestRoutes(routes))
+	if err != nil {
+		t.Fatalf("NewStreamingHandler(d, c, nil, WithManifestRoutes(routes)) error = %v; want nil", err)
+	}
+	if interleaved == nil {
+		t.Fatal("NewStreamingHandler(d, c, nil, WithManifestRoutes(routes)) handler = nil; want non-nil")
+	}
+	if got := serveManifestBody(t, interleaved); !bytes.Equal(got, referenceWithRoutesBody) {
+		t.Fatalf("interleaved (nil + WithManifestRoutes) manifest body diverges from WithManifestRoutes-only")
 	}
 }

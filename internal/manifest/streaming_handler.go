@@ -16,10 +16,13 @@ import (
 //
 // SNAPSHOT SEMANTICS: NewStreamingHandler serializes the manifest payload
 // ONCE at construction. Subsequent requests serve the cached bytes. If the
-// catalog or descriptor changes after construction, callers must rebuild
-// the handler; this handler will not reflect runtime mutations.
-func NewStreamingHandler(descriptor PublisherDescriptor, catalog Catalog) (http.Handler, error) {
-	manifest, err := BuildManifest(descriptor, catalog, RouteTable{})
+// catalog, descriptor, or route table changes after construction, callers
+// must rebuild the handler; this handler will not reflect runtime mutations.
+//
+// Passing a zero RouteTable produces a catalog-only manifest, byte-identical
+// to the previous two-argument form.
+func NewStreamingHandler(descriptor PublisherDescriptor, catalog Catalog, routes RouteTable) (http.Handler, error) {
+	manifest, err := BuildManifest(descriptor, catalog, routes)
 	if err != nil {
 		return nil, err
 	}

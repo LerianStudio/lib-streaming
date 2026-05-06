@@ -103,6 +103,10 @@ for _, warning := range warnings {
 
 runtime.InitPanicMetrics(metricsFactory)
 assert.InitAssertionMetrics(metricsFactory)
+// Scrubs panic value strings and truncates stack traces before they hit
+// log fields, span events, and ErrorReporter payloads — guards against
+// PII leakage from arbitrary panic arguments and OTel attribute bloat.
+runtime.SetProductionMode(cfg.Env == "production")
 
 catalog, err := streaming.NewCatalog(streaming.EventDefinition{
     Key:          "transaction.created",
@@ -276,7 +280,7 @@ For SDK shapes lib-streaming does not cover (Kinesis, Pub/Sub, NATS, ...), decla
 
 ## Manifest
 
-`streaming.BuildManifest(descriptor, catalog, routes)` renders a JSON-serializable view of the catalog plus the active route table for ops and contract introspection. `streaming.NewStreamingHandler(descriptor, catalog)` returns a stdlib `http.Handler` that serves the manifest.
+`streaming.BuildManifest(descriptor, catalog, routes)` renders a JSON-serializable view of the catalog plus the active route table for ops and contract introspection. `streaming.NewStreamingHandler(descriptor, catalog, opts ...HandlerOption)` returns a stdlib `http.Handler` that serves the manifest. Pass `streaming.WithManifestRoutes(routeTable)` to advertise the active route table in the manifest's `routes` section; with no options the handler serves a catalog-only manifest, byte-identical to the prior two-argument form.
 
 ```go
 doc, err := streaming.BuildManifest(descriptor, catalog, routeTable)
@@ -392,7 +396,7 @@ Key public API areas:
 - **Requests** — `EmitRequest`, `NewEmitRequest`, payload rules, tenant/subject metadata.
 - **Delivery Policies** — `DefaultDeliveryPolicy`, `ResolveDeliveryPolicy`, `DirectMode`, `OutboxMode`, `DLQMode`, `DeliveryPolicy`, `DeliveryPolicyOverride`.
 - **Outbox** — `OutboxEnvelope` (with `Validate` / `ValidateShape`), `OutboxWriter`, `WithOutboxTx`, `StreamingOutboxEventType`, transactional writer support, relay registration.
-- **Manifest** — `BuildManifest`, `NewStreamingHandler`, `NewPublisherDescriptor`, `ManifestDocument`, `ManifestEvent`, `ManifestRoute`, `ManifestVersion`.
+- **Manifest** — `BuildManifest`, `NewStreamingHandler`, `HandlerOption`, `WithManifestRoutes`, `NewPublisherDescriptor`, `ManifestDocument`, `ManifestEvent`, `ManifestRoute`, `ManifestVersion`.
 - **Errors** — sentinels, `EmitError`, `MultiEmitError`, `RouteError`, error classes, `HealthError`, and `IsCallerError`.
 
 ## Contributing

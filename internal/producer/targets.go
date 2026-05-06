@@ -76,8 +76,23 @@ func (p *Producer) targetRuntimeByServiceName(serviceName string) *targetRuntime
 		return nil
 	}
 
-	for _, rt := range p.targets {
+	for name, rt := range p.targets {
 		if rt == nil {
+			// State-corruption invariant violation. NewProducerMulti
+			// guarantees every entry in p.targets is non-nil
+			// post-construction (producer_multi.go:135-166); reaching
+			// here means the map was mutated, which we never do. Fire
+			// the trident so the silent skip becomes a loud signal,
+			// then preserve the silent-continue downstream behavior so
+			// a corrupted slot does not cascade into a panic. Producer
+			// id + target name correlate the violation back to the
+			// per-target audit trail.
+			a := p.newAsserter("targets.lookup_by_service_name")
+			_ = a.NotNil(context.Background(), rt, "targets map entry must be non-nil post-construction",
+				"producer_id", p.producerID,
+				"target", name,
+			)
+
 			continue
 		}
 
@@ -131,6 +146,25 @@ func (p *Producer) closeTargets(ctx context.Context) error {
 	for _, name := range p.orderedTargetNames() {
 		rt := p.targets[name]
 		if rt == nil || rt.adapter == nil {
+			// State-corruption guard. Both rt and rt.adapter are
+			// guaranteed non-nil by NewProducerMulti. Reaching here
+			// means a corrupted map slot — fire the trident so dropped
+			// adapter sockets surface on dashboards (otherwise we leak
+			// the connection silently), then preserve the silent
+			// continue so the rest of the close fan-out completes.
+			a := p.newAsserter("targets.close_targets")
+			_ = a.NotNil(ctx, rt, "targets map entry must be non-nil at Close",
+				"producer_id", p.producerID,
+				"target", name,
+			)
+
+			if rt != nil {
+				_ = a.NotNil(ctx, rt.adapter, "target adapter must be non-nil at Close",
+					"producer_id", p.producerID,
+					"target", name,
+				)
+			}
+
 			continue
 		}
 
@@ -172,8 +206,14 @@ func (p *Producer) healthyTargets(ctx context.Context) error {
 
 	if len(p.targets) == 0 {
 		// Defense in depth — Healthy gates this call on len(targets) > 0,
-		// so reaching here means corrupted state. Public contract is
-		// preserved (returns *HealthError) but loud signal via Down.
+		// so reaching here means corrupted state. Fire the trident so
+		// the invariant violation surfaces on dashboards, then preserve
+		// the public contract (returns *HealthError) with Down state.
+		a := p.newAsserter("targets.healthy_targets")
+		_ = a.That(ctx, false, "p.targets must be non-empty at healthyTargets — Healthy gate should have rejected earlier",
+			"producer_id", p.producerID,
+		)
+
 		return contract.NewHealthError(contract.Down, ErrNilProducer)
 	}
 
@@ -184,7 +224,25 @@ func (p *Producer) healthyTargets(ctx context.Context) error {
 	for _, name := range p.orderedTargetNames() {
 		rt := p.targets[name]
 		if rt == nil || rt.adapter == nil {
+			// State-corruption guard. The error string surfaces in the
+			// joined health output, but the metric stays at zero
+			// without the trident — fire it so the invariant violation
+			// is visible on dashboards alongside the health string.
+			a := p.newAsserter("targets.healthy_targets")
+			_ = a.NotNil(ctx, rt, "target runtime must be non-nil during health check",
+				"producer_id", p.producerID,
+				"target", name,
+			)
+
+			if rt != nil {
+				_ = a.NotNil(ctx, rt.adapter, "target adapter must be non-nil during health check",
+					"producer_id", p.producerID,
+					"target", name,
+				)
+			}
+
 			joined = errors.Join(joined, fmt.Errorf("streaming: target %q has no adapter", name))
+
 			continue
 		}
 

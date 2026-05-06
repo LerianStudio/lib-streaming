@@ -57,6 +57,7 @@ var (
 	ErrMissingBrokers                     = contract.ErrMissingBrokers
 	ErrInvalidCompression                 = contract.ErrInvalidCompression
 	ErrInvalidAcks                        = contract.ErrInvalidAcks
+	ErrInvalidConfigField                 = contract.ErrInvalidConfigField
 	ErrInvalidTLSConfig                   = contract.ErrInvalidTLSConfig
 	ErrPlaintextSASLNotAllowed            = contract.ErrPlaintextSASLNotAllowed
 	ErrNilProducer                        = contract.ErrNilProducer

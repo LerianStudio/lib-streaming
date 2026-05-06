@@ -249,6 +249,16 @@ var (
 	// and buildKgoOpts (defensive re-check).
 	ErrInvalidAcks = errors.New("streaming: invalid required-acks value")
 
+	// ErrInvalidConfigField is returned by Config.validate when a numeric
+	// or duration field fails its documented range contract. Examples:
+	// CBFailureRatio outside (0.0, 1.0]; negative RecordDeliveryTimeout;
+	// zero or negative BatchMaxBytes / MaxBufferedRecords / CloseTimeout.
+	// Surfaced exclusively by LoadConfig at bootstrap so a misconfigured
+	// STREAMING_* env var fails closed at service startup rather than
+	// flowing into franz-go and surfacing as a confusing transport-layer
+	// error. Caller-correctable.
+	ErrInvalidConfigField = errors.New("streaming: invalid config field value")
+
 	// ErrInvalidTLSConfig is returned when the caller supplies a TLS config that
 	// would weaken broker transport security. InsecureSkipVerify is forbidden,
 	// and explicit TLS versions must permit TLS 1.2 or newer. Caller-specified
@@ -382,6 +392,7 @@ var callerErrorSentinels = []error{
 	ErrMissingBrokers,
 	ErrInvalidCompression,
 	ErrInvalidAcks,
+	ErrInvalidConfigField,
 	ErrInvalidTLSConfig,
 	ErrPlaintextSASLNotAllowed,
 	ErrInvalidTenantID,
@@ -415,7 +426,8 @@ var callerErrorSentinels = []error{
 //   - ErrMissingTenantID, ErrSystemEventsNotAllowed, ErrMissingSource,
 //     ErrMissingResourceType, ErrMissingEventType, ErrPayloadTooLarge,
 //     ErrNotJSON, ErrEventDisabled, ErrMissingBrokers, ErrInvalidCompression,
-//     ErrInvalidAcks, ErrInvalidTenantID, ErrInvalidResourceType,
+//     ErrInvalidAcks, ErrInvalidConfigField, ErrInvalidTenantID,
+//     ErrInvalidResourceType,
 //     ErrInvalidEventType, ErrInvalidSource, ErrInvalidSubject,
 //     ErrInvalidEventID, ErrInvalidSchemaVersion, ErrInvalidDataContentType,
 //     ErrInvalidDataSchema, ErrInvalidEventDefinition,

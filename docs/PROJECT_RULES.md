@@ -54,7 +54,7 @@ Architectural constraints and design decisions for the `lib-streaming` codebase.
 - Go version: `1.25.9` as declared in `go.mod`.
 - Commons: use `github.com/LerianStudio/lib-commons/v5` primitives where they are the Lerian standard.
 - Assertions: use `github.com/LerianStudio/lib-commons/v5/commons/assert` for post-construction internal invariants.
-- Panic observability: consuming services must initialize `commons/runtime` panic metrics; this library must not add naked goroutines or unobservable recovery paths.
+- Panic observability: consuming services must initialize `commons/runtime` panic metrics and call `runtime.SetProductionMode` to scrub panic values before telemetry; this library must not add naked goroutines or unobservable recovery paths.
 - UUIDs: prefer `commons.GenerateUUIDv7()` for generated event IDs.
 - Kafka client: franz-go is the producer backend. Do not introduce another Kafka client without an explicit architecture decision.
 - Outbox integration: use `lib-commons/v5/commons/outbox` registry/repository contracts through the library adapter; do not implement a parallel dispatcher in this library.
@@ -132,7 +132,7 @@ Architectural constraints and design decisions for the `lib-streaming` codebase.
 ## 10. Manifest and Introspection
 
 - `BuildManifest(descriptor, catalog, routes)` renders the JSON-serializable catalog view plus active route table for ops and contract introspection. Pass an empty `RouteTable` for a catalog-only document.
-- `NewStreamingHandler(descriptor, catalog)` returns a stdlib `http.Handler`.
+- `NewStreamingHandler(descriptor, catalog, opts ...HandlerOption)` returns a stdlib `http.Handler`. `HandlerOption` is the variadic functional-option surface; `WithManifestRoutes(RouteTable)` opts a route table into the manifest's `routes` section.
 - The handler pre-marshals the manifest at construction; rebuild the handler if catalog or descriptor data changes.
 - The library does not enforce auth on the manifest handler.
 - Consuming services must wrap the handler in their own auth middleware before mounting it on a public route.
@@ -192,6 +192,7 @@ Architectural constraints and design decisions for the `lib-streaming` codebase.
 - Assertion failures must preserve the public API contract: record the trident signal and still return the documented sentinel/error.
 - Do not put tenant IDs on assertion metrics.
 - Consuming services must call `assert.InitAssertionMetrics(metricsFactory)` during bootstrap if they want assertion failure metrics to alert.
+- Consuming services should call `runtime.SetProductionMode(env == "production")` during bootstrap to scrub panic value strings and truncate stack traces in telemetry payloads.
 
 ## 14. Concurrency and Nil-Safety
 

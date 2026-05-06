@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strconv"
@@ -8,7 +9,29 @@ import (
 	"time"
 
 	"github.com/LerianStudio/lib-commons/v5/commons"
+	"github.com/LerianStudio/lib-commons/v5/commons/assert"
+	"github.com/LerianStudio/lib-commons/v5/commons/log"
 )
+
+// configAsserterComponent matches internal/producer.asserterComponent so
+// invariant violations surfaced from Config.validate aggregate under the
+// same component axis as runtime invariants.
+const configAsserterComponent = "streaming"
+
+// newConfigAsserter constructs an *assert.Asserter for a per-call-site
+// operation. The config package has no caller-supplied logger today —
+// LoadConfig runs before structured logging is initialized — so we use a
+// no-op logger here. The asserter's metric layer (assertion_failed_total)
+// still fires after the consuming service calls
+// assert.InitAssertionMetrics at bootstrap; the log layer is intentionally
+// no-op at this site.
+//
+// Each NotNil/That/InRange call passes its own ctx (typically
+// context.Background() at bootstrap) which takes precedence over the
+// fallback ctx wired here.
+func newConfigAsserter(operation string) *assert.Asserter {
+	return assert.New(context.Background(), log.NewNop(), configAsserterComponent, operation)
+}
 
 // Config is the full runtime configuration for a Producer. Every field maps
 // to a STREAMING_* environment variable consumed by LoadConfig.
@@ -151,6 +174,25 @@ func LoadConfig() (Config, []string, error) {
 
 // validate enforces the fields that must be present when Enabled=true.
 // Returns the first failure encountered — callers use errors.Is to match.
+//
+// Range-validation contract for the numeric/duration fields:
+//
+//   - CBFailureRatio: documented as (0.0, 1.0]. Zero is treated as "use the
+//     lib-commons HTTP preset" by producer_multi.buildCBConfigFromMulti, so
+//     zero is permitted and skipped here. Nonzero values outside the range
+//     are rejected with ErrInvalidConfigField.
+//   - BatchLingerMs / RecordRetries / CBMinRequests / CBTimeout: zero is
+//     accepted because the producer's preset-fallback path treats zero as
+//     "use the documented default". Negative values are rejected.
+//   - BatchMaxBytes / MaxBufferedRecords / RecordDeliveryTimeout /
+//     CloseTimeout: zero or negative is rejected — these have no meaningful
+//     "use default" path through the construction code, so zero would flow
+//     into franz-go and surface as a confusing transport error rather than
+//     a config-validation rejection at bootstrap.
+//
+// Each rejection fires the asserter trident
+// (assertion_failed_total{component="streaming",operation="config.validate"})
+// before returning the wrapped sentinel.
 func (c Config) validate() error {
 	if len(c.Brokers) == 0 {
 		return ErrMissingBrokers
@@ -166,6 +208,105 @@ func (c Config) validate() error {
 
 	if _, ok := validAcks[c.RequiredAcks]; !ok {
 		return fmt.Errorf("%w: %q", ErrInvalidAcks, c.RequiredAcks)
+	}
+
+	return c.validateRanges()
+}
+
+// validateRanges enforces the numeric/duration field contracts. Split out
+// from validate() so the range-check surface stays cohesive and the
+// asserter call sites cluster in one place.
+func (c Config) validateRanges() error {
+	ctx := context.Background()
+	a := newConfigAsserter("config.validate")
+
+	// CBFailureRatio: (0.0, 1.0] when nonzero. Zero falls through to the
+	// HTTP preset; nonzero values must lie strictly above 0.0 and at most
+	// 1.0. STREAMING_CB_FAILURE_RATIO=2.5 silently breaks gobreaker
+	// semantics today; gate it here so the misconfiguration fails closed
+	// at bootstrap.
+	if c.CBFailureRatio != 0 {
+		ok := c.CBFailureRatio > 0 && c.CBFailureRatio <= 1.0
+		_ = a.That(ctx, ok, "CBFailureRatio must be in (0.0, 1.0] when nonzero",
+			"field", "CBFailureRatio",
+			"value", c.CBFailureRatio,
+		)
+
+		if !ok {
+			return fmt.Errorf("%w: CBFailureRatio=%g (must be in (0.0, 1.0])", ErrInvalidConfigField, c.CBFailureRatio)
+		}
+	}
+
+	// Non-negative checks: zero permitted (preset fallback).
+	for _, check := range []struct {
+		field string
+		value int
+	}{
+		{"BatchLingerMs", c.BatchLingerMs},
+		{"RecordRetries", c.RecordRetries},
+		{"CBMinRequests", c.CBMinRequests},
+	} {
+		ok := check.value >= 0
+		_ = a.That(ctx, ok, "config field must be non-negative",
+			"field", check.field,
+			"value", check.value,
+		)
+
+		if !ok {
+			return fmt.Errorf("%w: %s=%d (must be non-negative)", ErrInvalidConfigField, check.field, check.value)
+		}
+	}
+
+	// Duration non-negative: zero permitted (preset fallback).
+	{
+		ok := c.CBTimeout >= 0
+		_ = a.That(ctx, ok, "CBTimeout must be non-negative",
+			"field", "CBTimeout",
+			"value", c.CBTimeout,
+		)
+
+		if !ok {
+			return fmt.Errorf("%w: CBTimeout=%s (must be non-negative)", ErrInvalidConfigField, c.CBTimeout)
+		}
+	}
+
+	// Strictly positive integer counts: zero/negative would cap throughput
+	// or buffering at zero with no meaningful "use default" path.
+	for _, check := range []struct {
+		field string
+		value int
+	}{
+		{"BatchMaxBytes", c.BatchMaxBytes},
+		{"MaxBufferedRecords", c.MaxBufferedRecords},
+	} {
+		ok := check.value > 0
+		_ = a.That(ctx, ok, "config field must be positive",
+			"field", check.field,
+			"value", check.value,
+		)
+
+		if !ok {
+			return fmt.Errorf("%w: %s=%d (must be positive)", ErrInvalidConfigField, check.field, check.value)
+		}
+	}
+
+	// Strictly positive durations.
+	for _, check := range []struct {
+		field string
+		value time.Duration
+	}{
+		{"RecordDeliveryTimeout", c.RecordDeliveryTimeout},
+		{"CloseTimeout", c.CloseTimeout},
+	} {
+		ok := check.value > 0
+		_ = a.That(ctx, ok, "config duration must be positive",
+			"field", check.field,
+			"value", check.value,
+		)
+
+		if !ok {
+			return fmt.Errorf("%w: %s=%s (must be positive)", ErrInvalidConfigField, check.field, check.value)
+		}
 	}
 
 	return nil

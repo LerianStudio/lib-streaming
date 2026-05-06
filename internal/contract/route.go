@@ -9,10 +9,53 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync/atomic"
 
+	"github.com/LerianStudio/lib-commons/v5/commons/assert"
+	"github.com/LerianStudio/lib-commons/v5/commons/log"
 	"github.com/LerianStudio/lib-commons/v5/commons/security"
 	"github.com/LerianStudio/lib-commons/v5/commons/security/ssrf"
 )
+
+// contractAsserterComponent is the component label for asserter trident
+// emissions from the contract package. Mirrors
+// internal/producer.asserterComponent and the streaming root facade so
+// invariant violations across construction-time (catalog/route/event/
+// outbox) and runtime (producer) aggregate under one component axis on
+// dashboards.
+const contractAsserterComponent = "streaming"
+
+// contractAsserterLogger is the package-default logger that backs every
+// contract-package asserter. The contract package has no caller-supplied
+// logger today — every NewCatalog / NewRouteDefinition / NewRouteTable /
+// NewEventDefinition / OutboxEnvelope.Validate call site is a value-
+// receiver constructor with no logger plumbing — so we default to a
+// no-op logger here. The asserter's metric layer (assertion_failed_total)
+// still fires after the consuming service calls assert.InitAssertionMetrics
+// at bootstrap; the log layer is silent unless tests swap this pointer
+// through setContractAsserterLogger.
+//
+// Stored as atomic.Pointer so writers (test-only) call setContractAsserterLogger
+// which atomically swaps the pointer — readers (newContractAsserter) load
+// the pointer race-free. The earlier plain-var form was a data race against
+// parallel tests that swap the logger; production code never writes this
+// var, so the cost is one atomic load per asserter construction.
+var contractAsserterLogger atomic.Pointer[log.Logger]
+
+func init() {
+	nop := log.NewNop()
+	contractAsserterLogger.Store(&nop)
+}
+
+// newContractAsserter constructs an *assert.Asserter for the per-call-site
+// operation, backed by contractAsserterLogger. context.Background() is
+// intentional — construction-time call sites are bootstrap-only with no
+// caller ctx; the assert package only uses ctx as a fallback when a
+// per-call ctx is nil, and each .That/.NotNil call site passes its own
+// ctx (typically context.Background() at bootstrap).
+func newContractAsserter(operation string) *assert.Asserter {
+	return assert.New(context.Background(), *contractAsserterLogger.Load(), contractAsserterComponent, operation)
+}
 
 // TransportKind identifies the outbound transport family used by a route.
 type TransportKind string
@@ -141,6 +184,18 @@ func NewRouteDefinition(route RouteDefinition) (RouteDefinition, error) {
 		// fail every DLQ delivery for the route — fail closed at
 		// construction with a precise wiring error instead.
 		if dlq.Kind != route.Destination.Kind {
+			// Construction-time invariant: publishRouteDLQ uses the
+			// source route's adapter, so a cross-kind DLQ silently
+			// no-ops every DLQ delivery for the route. Fire the
+			// trident so the rejection becomes a loud signal alongside
+			// the wrapped sentinel.
+			a := newContractAsserter("route.dlq_kind_match")
+			_ = a.That(context.Background(), false, "route DLQ kind must match destination kind",
+				"route_key", route.Key,
+				"destination_kind", string(route.Destination.Kind),
+				"dlq_kind", string(dlq.Kind),
+			)
+
 			return RouteDefinition{}, fmt.Errorf("%w: route %q DLQ kind %q does not match destination kind %q",
 				ErrInvalidRouteDefinition, route.Key, dlq.Kind, route.Destination.Kind)
 		}
@@ -180,6 +235,13 @@ func NewRouteTable(routes ...RouteDefinition) (RouteTable, error) {
 		}
 
 		if _, exists := seenKeys[route.Key]; exists {
+			a := newContractAsserter("route_table.new")
+			_ = a.That(context.Background(), false, "route table must not contain duplicate Key entries",
+				"route_key", route.Key,
+				"definition_key", route.DefinitionKey,
+				"target", route.Target,
+			)
+
 			return RouteTable{}, fmt.Errorf("%w: key %q", ErrDuplicateRouteDefinition, route.Key)
 		}
 

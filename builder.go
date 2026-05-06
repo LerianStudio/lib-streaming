@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/LerianStudio/lib-commons/v5/commons/assert"
 	"github.com/LerianStudio/lib-commons/v5/commons/circuitbreaker"
 	"github.com/LerianStudio/lib-commons/v5/commons/log"
 	"github.com/LerianStudio/lib-commons/v5/commons/opentelemetry/metrics"
@@ -17,6 +18,12 @@ import (
 	"github.com/LerianStudio/lib-streaming/internal/producer"
 	"github.com/LerianStudio/lib-streaming/internal/transport"
 )
+
+// builderAsserterComponent is the component label every Builder asserter
+// emits. Mirrors internal/producer.asserterComponent so dashboards can group
+// invariant violations from Builder construction-time and Producer runtime
+// under one component axis.
+const builderAsserterComponent = "streaming"
 
 // TransportAdapter is the outbound transport port. Adapter implementations
 // translate the library's TransportMessage into the concrete broker / SDK
@@ -495,12 +502,32 @@ func (b *Builder) buildTargetSpecs(ctx context.Context) ([]producer.TargetSpec, 
 
 	for _, target := range b.targets {
 		if target.Name == "" {
+			// Empty target name. Fire the trident so the bootstrap
+			// invariant violation surfaces on dashboards before the
+			// public sentinel is returned. Use a redacted name token in
+			// structured fields — empty is the failure value, so the
+			// "name" field carries that fact, not the name itself.
+			a := b.newAsserter("builder.target_name_shape")
+			_ = a.That(ctx, false, "target name must be non-empty",
+				"violation", "empty",
+			)
+
 			rollback()
 
 			return nil, fmt.Errorf("%w: target name required", ErrMissingTarget)
 		}
 
 		if contract.ContainsCredentialLikeMaterial(target.Name) {
+			// Credential-like material in target name. DO NOT echo the
+			// offending name into structured fields — it is the very
+			// material we are protecting log streams from. Operators
+			// triage by violation+sequence position; the actual name
+			// stays in the wrapped sentinel returned to the caller.
+			a := b.newAsserter("builder.target_name_no_credential")
+			_ = a.That(ctx, false, "target name must not carry credential-like material",
+				"violation", "credential_like",
+			)
+
 			rollback()
 
 			return nil, fmt.Errorf("%w: credential-like target material is not allowed", ErrMissingTarget)
@@ -515,6 +542,21 @@ func (b *Builder) buildTargetSpecs(ctx context.Context) ([]producer.TargetSpec, 
 		// applied to RouteDefinition fields so the validation surface is
 		// symmetric across routes and targets.
 		if contract.HasControlChar(target.Name) || len(target.Name) > contract.MaxEventIDBytes {
+			// DO NOT echo target.Name into structured fields — that is
+			// precisely the log-injection vector we are closing. Use
+			// length + violation kind as the operator-actionable signal.
+			violation := "oversize"
+			if contract.HasControlChar(target.Name) {
+				violation = "control_char"
+			}
+
+			a := b.newAsserter("builder.target_name_shape")
+			_ = a.That(ctx, false, "target name must be free of control characters and within size cap",
+				"violation", violation,
+				"name_len", len(target.Name),
+				"max_bytes", contract.MaxEventIDBytes,
+			)
+
 			rollback()
 
 			return nil, fmt.Errorf("%w: target name carries control characters or exceeds size cap (max %d bytes)",
@@ -522,6 +564,16 @@ func (b *Builder) buildTargetSpecs(ctx context.Context) ([]producer.TargetSpec, 
 		}
 
 		if _, dup := seen[target.Name]; dup {
+			// Duplicate name reached this branch only AFTER passing
+			// control-char/credential checks above, so echoing it back
+			// in the structured field is safe (sanitized at construction
+			// time by the prior gates).
+			a := b.newAsserter("builder.target_name_unique")
+			_ = a.That(ctx, false, "target name must be unique within Builder",
+				"violation", "duplicate",
+				"target", target.Name,
+			)
+
 			rollback()
 
 			return nil, fmt.Errorf("%w: duplicate target %q", ErrInvalidRouteDefinition, target.Name)
@@ -665,6 +717,28 @@ func (b *Builder) resolveLogger() log.Logger {
 	}
 
 	return b.logger
+}
+
+// newAsserter returns a *assert.Asserter scoped to component="streaming"
+// and the supplied per-call-site operation. Mirrors the
+// (*Producer).newAsserter helper in internal/producer so Builder
+// construction-time invariants emit telemetry under the same component
+// axis as the runtime's invariant violations.
+//
+// The asserter emits the observability trident (log + span event +
+// assertion_failed_total) on failure. The metric counter is wired by
+// assert.InitAssertionMetrics, which the consuming service calls once at
+// bootstrap; lib-streaming does NOT own bootstrap and does NOT call
+// InitAssertionMetrics itself. Without the consumer hook, the log + span-
+// event layers still fire but the metric counter stays at zero.
+//
+// Nil-receiver safe. context.Background() is intentional here — Builder
+// asserter lifetime is per-call-site, shorter than the caller's ctx, and
+// each NotNil/That call site passes its own ctx which takes precedence.
+func (b *Builder) newAsserter(operation string) *assert.Asserter {
+	logger := b.resolveLogger()
+
+	return assert.New(context.Background(), logger, builderAsserterComponent, operation)
 }
 
 func (b *Builder) buildDefaultKafkaAdapter(ctx context.Context, target TargetConfig, logger log.Logger) (TransportAdapter, error) {

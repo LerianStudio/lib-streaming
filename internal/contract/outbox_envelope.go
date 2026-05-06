@@ -1,6 +1,7 @@
 package contract
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -91,7 +92,21 @@ func (e OutboxEnvelope) Validate() error {
 //   - Destination.Validate (URL parse, SSRF, DNS resolution).
 func (e OutboxEnvelope) ValidateShape() error {
 	if e.Version != OutboxEnvelopeVersion {
-		return fmt.Errorf("streaming: unsupported outbox envelope version %d", e.Version)
+		// Schema-evolution canary. Version mismatch during a rolling
+		// deploy is the load-bearing operator-actionable signal here.
+		// Fire the trident with violation="version_mismatch" so dashboards
+		// distinguish this from kind/transport mismatches; replace the
+		// bare fmt.Errorf with the canonical ErrInvalidOutboxEnvelope
+		// sentinel so callers can errors.Is consistently with every
+		// other envelope failure.
+		a := newContractAsserter("outbox_envelope.validate_shape")
+		_ = a.That(context.Background(), false, "outbox envelope version must match library version",
+			"violation", "version_mismatch",
+			"got_version", e.Version,
+			"want_version", OutboxEnvelopeVersion,
+		)
+
+		return fmt.Errorf("%w: unsupported outbox envelope version %d", ErrInvalidOutboxEnvelope, e.Version)
 	}
 
 	if e.RouteKey == "" {
@@ -115,6 +130,20 @@ func (e OutboxEnvelope) ValidateShape() error {
 	}
 
 	if e.Destination.Kind != e.Transport {
+		// Last gate before outbox replay dispatches to a target adapter.
+		// State-corruption guard for tampered/drifted persisted rows
+		// — without the trident, dashboards cannot distinguish kind/
+		// transport mismatch from version mismatch (both wrap
+		// ErrInvalidOutboxEnvelope).
+		a := newContractAsserter("outbox_envelope.validate_shape")
+		_ = a.That(context.Background(), false, "outbox envelope destination kind must match transport",
+			"violation", "kind_transport_mismatch",
+			"route_key", e.RouteKey,
+			"target", e.Target,
+			"transport", string(e.Transport),
+			"destination_kind", string(e.Destination.Kind),
+		)
+
 		return fmt.Errorf("%w: destination kind %q does not match envelope transport %q", ErrInvalidOutboxEnvelope, e.Destination.Kind, e.Transport)
 	}
 
