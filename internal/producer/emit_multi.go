@@ -67,7 +67,7 @@ func (p *Producer) emitMulti(ctx context.Context, request contract.EmitRequest) 
 
 	// Caller-side validation — same gate as single-target Emit. Preflight
 	// rejections never produce a span and do not enter route fan-out.
-	if err := p.preFlightWithPayload(event, true); err != nil {
+	if err := p.preFlightWithPayload(ctx, event, true); err != nil {
 		p.metrics.recordEmitted(ctx, topic, outcomeCallerError)
 		return err
 	}
@@ -160,6 +160,22 @@ func (p *Producer) enforceRoutePayloadCap(ctx context.Context, event Event, topi
 	if !capped || len(event.Payload) <= minCap {
 		return nil
 	}
+
+	// Caller bug: payload exceeds the smallest required-route cap. Fire
+	// the trident so dashboards distinguish "blew SQS 256 KiB" from "blew
+	// Kafka 1 MiB" without parsing error strings. payload_bytes and
+	// min_cap_bytes are the operator-actionable signals; resource_type +
+	// event_type + topic give the per-event correlation key. Standardized
+	// op-label mirrors preflight.payload_size for symmetry across single-
+	// vs multi-target sites.
+	a := p.newAsserter("emit_multi.payload_size")
+	_ = a.That(ctx, false, "payload size must not exceed smallest required-route cap",
+		"payload_bytes", len(event.Payload),
+		"min_cap_bytes", minCap,
+		"resource_type", event.ResourceType,
+		"event_type", event.EventType,
+		"topic", topic,
+	)
 
 	p.metrics.recordEmitted(ctx, topic, outcomeCallerError)
 

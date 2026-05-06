@@ -55,6 +55,11 @@ func TestEvent_Topic(t *testing.T) {
 			want:          "lerian.streaming.ledger.closed.v10",
 		},
 		{
+			// Empty schema version is the documented default — Topic
+			// returns the base form silently. NewEventDefinition
+			// normalizes empty to "1.0.0" upstream, so this branch
+			// only exposes raw Event{} usage in tests/benchmarks. No
+			// asserter trident fires for the empty-schema case (T8).
 			name:          "empty schema version yields base form",
 			resourceType:  "transaction",
 			eventType:     "created",
@@ -62,6 +67,15 @@ func TestEvent_Topic(t *testing.T) {
 			want:          "lerian.streaming.transaction.created",
 		},
 		{
+			// Malformed non-empty schema version falls through to the
+			// base topic — the public Topic() contract is preserved.
+			// The construction-time gate in NewEventDefinition catches
+			// this earlier so a properly-cataloged event never reaches
+			// Topic() with malformed semver; callers building Event
+			// structs directly (tests, benchmarks) see the base form.
+			// Topic() is a zero-allocation hot-path helper and does NOT
+			// fire the asserter trident — see NewEventDefinition's
+			// operation="event_definition.schema_version" instead.
 			name:          "invalid semver falls through to base form",
 			resourceType:  "transaction",
 			eventType:     "created",

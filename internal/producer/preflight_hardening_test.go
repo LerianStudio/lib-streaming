@@ -212,7 +212,7 @@ func TestProducer_EmitPreFlight_HeaderSanitization_AcceptsAtLimits(t *testing.T)
 	e.Subject = strings.Repeat("j", maxSubjectBytes)
 	(&e).ApplyDefaults()
 
-	if err := p.preFlightWithPayload(e, true); err != nil {
+	if err := p.preFlightWithPayload(context.Background(), e, true); err != nil {
 		t.Errorf("preFlight at-limit fields err = %v; want nil", err)
 	}
 }

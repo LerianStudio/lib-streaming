@@ -37,7 +37,37 @@ func (p *Producer) publishRouteDLQ(
 	cause error,
 	firstAttempt time.Time,
 ) (bool, error) {
-	if p == nil || rt == nil || rt.adapter == nil {
+	if p == nil {
+		// Receiver-nil DX guard: nil *Producer cannot fire its own
+		// asserter usefully. Match the package contract.
+		return false, nil
+	}
+
+	if rt == nil || rt.adapter == nil {
+		// State-corruption invariant violation. dispatchRoute reaches
+		// publishRouteDLQ AFTER asserting rt and rt.adapter are non-
+		// nil (see dispatchRoute's rt-nil assertion in emit_multi.go).
+		// Reaching here with either nil
+		// means a corrupted runtime — and (false, nil) here is
+		// indistinguishable from "no DLQ destination configured" by
+		// the caller's outcome classifier, which is exactly the
+		// silent-failure mode we want surfaced. Fire the trident,
+		// then preserve the (false, nil) so the dispatch outcome
+		// reporting stays unchanged.
+		a := p.newAsserter("publish_dlq_route.guard")
+		_ = a.NotNil(ctx, rt, "target runtime must be non-nil at publishRouteDLQ",
+			"producer_id", p.producerID,
+			"route_key", route.Key,
+		)
+
+		if rt != nil {
+			_ = a.NotNil(ctx, rt.adapter, "target adapter must be non-nil at publishRouteDLQ",
+				"producer_id", p.producerID,
+				"route_key", route.Key,
+				"target", rt.name,
+			)
+		}
+
 		return false, nil
 	}
 

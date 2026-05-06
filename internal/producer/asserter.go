@@ -13,6 +13,13 @@ import (
 // dashboard axis consistent with the streaming_* metric cardinality
 // discipline: operation is bounded by call-site count; tenant_id MUST NOT
 // be added.
+//
+// The `*AssertionError` heap allocation on the failure path is intentionally
+// accepted — firing rate is bounded by bug rate, not request rate. The
+// asserter is in additive mode (assert AND error) at construction-time call
+// sites; at hot-path call sites, it is on a guarded branch that is
+// unreachable in steady-state. See ring:using-assert Section 8 "additive
+// mode" and Section 10 anti-pattern #7.
 const asserterComponent = "streaming"
 
 // newAsserter returns a *assert.Asserter scoped to component="streaming" and
@@ -43,5 +50,23 @@ func (p *Producer) newAsserter(operation string) *assert.Asserter {
 	// passes its own ctx, which takes precedence. Using context.Background()
 	// here decouples asserter construction from any specific request ctx —
 	// asserter lifetime is per call site and shorter than the caller's ctx.
+	return assert.New(context.Background(), logger, asserterComponent, operation)
+}
+
+// newAsserterForLogger constructs an *assert.Asserter for the supplied
+// logger + operation. Used by package-internal call sites that fire the
+// trident BEFORE a *Producer has been fully constructed (e.g.
+// validateRoutesAgainstTargets at producer_multi.go:90, which runs before
+// the *Producer struct literal). Component is fixed at "streaming" so the
+// telemetry axis stays consistent with (*Producer).newAsserter.
+//
+// Nil logger collapses to log.NewNop() so the metric layer still fires
+// (after the consuming service initializes assertion metrics) but the log
+// layer stays silent until a logger is wired.
+func newAsserterForLogger(logger log.Logger, operation string) *assert.Asserter {
+	if logger == nil {
+		logger = log.NewNop()
+	}
+
 	return assert.New(context.Background(), logger, asserterComponent, operation)
 }

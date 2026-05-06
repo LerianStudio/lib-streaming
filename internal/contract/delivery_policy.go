@@ -1,6 +1,9 @@
 package contract
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+)
 
 // DirectMode controls whether a resolved emit attempts a direct broker publish.
 type DirectMode string
@@ -118,6 +121,18 @@ func (p DeliveryPolicy) Validate() error {
 	}
 
 	if p.Enabled && p.Direct == DirectModeSkip && p.Outbox != OutboxModeAlways {
+		// Sole production guard against silent-no-op deployments. A
+		// policy with Direct=skip + Outbox != always has no delivery
+		// path — events would be silently dropped on every Emit. Fire
+		// the trident so the misconfiguration alerts on dashboards.
+		a := newContractAsserter("delivery_policy.validate")
+		_ = a.That(context.Background(), false, "delivery policy with direct=skip requires outbox=always",
+			"violation", "direct_skip_requires_outbox_always",
+			"direct", string(p.Direct),
+			"outbox", string(p.Outbox),
+			"enabled", p.Enabled,
+		)
+
 		return fmt.Errorf("%w: direct=skip requires outbox=always", ErrInvalidDeliveryPolicy)
 	}
 

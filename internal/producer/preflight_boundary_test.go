@@ -87,7 +87,7 @@ func TestProducer_EmitPreFlight_PayloadAtExactBoundary(t *testing.T) {
 			event.Payload = json.RawMessage(payload)
 			(&event).ApplyDefaults()
 
-			err := p.preFlightWithPayload(event, true)
+			err := p.preFlightWithPayload(context.Background(), event, true)
 
 			if tt.wantErr == nil {
 				if err != nil {

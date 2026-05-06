@@ -115,7 +115,37 @@ func resolveCBRecoveryInterval(cbTimeout time.Duration) time.Duration {
 // window in which gobreaker transitions could fire without the listener
 // observing them, breaking the mirror's correctness.
 func (p *Producer) startCBRecoveryLoop() {
-	if p == nil || isNilInterface(p.cbManager) || len(p.targets) == 0 {
+	if p == nil {
+		// Receiver-nil DX guard. Match the rest of the package: nil
+		// receiver returns silently. A nil receiver cannot fire its
+		// own asserter (newAsserter is nil-safe but produces no
+		// useful telemetry), so silence is correct here.
+		return
+	}
+
+	if len(p.targets) == 0 {
+		// Legacy single-target path has no entries in p.targets and
+		// does not use this loop. Documented "no-op" configuration —
+		// not an invariant violation. Returning silently here is
+		// correct; firing an asserter would create false-positive
+		// metric noise on every startup of single-target services.
+		return
+	}
+
+	if isNilInterface(p.cbManager) {
+		// Post-construction invariant: NewProducerMulti always
+		// initializes p.cbManager (producer_multi.go:99-107). Reaching
+		// here with a nil manager means the *Producer was hand-built
+		// bypassing NewProducerMulti, exactly the case we want
+		// surfaced on dashboards. Fire the trident so the misbuilt
+		// Producer alerts, then early-return to keep the public
+		// contract (Emit/Close/Healthy still work).
+		a := p.newAsserter("cb_recovery.start")
+		_ = a.NotNil(context.Background(), p.cbManager,
+			"producer cb manager must be initialized before starting CB recovery",
+			"producer_id", p.producerID,
+		)
+
 		return
 	}
 
@@ -205,8 +235,21 @@ func (p *Producer) pokeAllTargetCBs() {
 		return
 	}
 
-	for _, rt := range p.targets {
+	for name, rt := range p.targets {
 		if rt == nil {
+			// State-corruption invariant violation. NewProducerMulti
+			// guarantees every entry is non-nil. A stuck-OPEN breaker
+			// for that slot would never recover without this loop —
+			// silently skipping it would mean recovery permanently
+			// stalls for that target. Fire the trident so the silent
+			// skip becomes a loud signal, then preserve the silent
+			// continue so a corrupted slot does not cascade.
+			a := p.newAsserter("cb_recovery.poke_all_targets")
+			_ = a.NotNil(context.Background(), rt, "targets map entry must be non-nil during CB poke",
+				"producer_id", p.producerID,
+				"target", name,
+			)
+
 			continue
 		}
 

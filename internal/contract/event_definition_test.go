@@ -103,8 +103,10 @@ func TestEventDefinition_New_RejectsInvalidShape(t *testing.T) {
 
 // TestEventDefinition_Topic_AppendsVersionSuffixForMajorV2Plus locks the
 // contract documented on (*Event).Topic: SchemaVersion major >= 2 appends
-// ".v<major>" to the base topic; majors < 2 and non-semver strings fall
-// through to the base form.
+// ".v<major>" to the base topic; majors < 2 fall through to the base
+// form. Non-semver SchemaVersion is rejected at construction time by
+// NewEventDefinition (see TestEventDefinition_New_RejectsMalformedSchemaVersion)
+// so it never reaches Topic() through the catalog path.
 func TestEventDefinition_Topic_AppendsVersionSuffixForMajorV2Plus(t *testing.T) {
 	t.Parallel()
 
@@ -133,11 +135,6 @@ func TestEventDefinition_Topic_AppendsVersionSuffixForMajorV2Plus(t *testing.T) 
 			schemaVersion: "0.9.0",
 			want:          "lerian.streaming.payment.authorized",
 		},
-		{
-			name:          "non-semver falls through to base form",
-			schemaVersion: "not-a-semver",
-			want:          "lerian.streaming.payment.authorized",
-		},
 	}
 
 	for _, tt := range tests {
@@ -158,5 +155,41 @@ func TestEventDefinition_Topic_AppendsVersionSuffixForMajorV2Plus(t *testing.T) 
 				t.Errorf("Topic() = %q; want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestEventDefinition_New_RejectsMalformedSchemaVersion pins the
+// construction-time semver gate at operation="event_definition.schema_version".
+// A non-empty unparseable SchemaVersion fails NewEventDefinition with
+// ErrInvalidEventDefinition wrapping ErrInvalidSchemaVersion AND fires the
+// asserter trident with violation="schema_parse_failed". This catches the
+// silent-routing-drift failure mode at bootstrap rather than at runtime
+// (where Topic() now silently returns base form, by design).
+//
+// We do NOT call t.Parallel() because this test swaps the package-default
+// asserter logger via setContractAsserterLogger; the swap is a global
+// pointer flip and concurrent tests would observe whichever logger is
+// current. Mirror event_topic_assert_test.go's discipline.
+func TestEventDefinition_New_RejectsMalformedSchemaVersion(t *testing.T) {
+	cap := newCaptureContractLogger()
+	prev := setContractAsserterLogger(cap)
+	t.Cleanup(func() { setContractAsserterLogger(prev) })
+
+	_, err := NewEventDefinition(EventDefinition{
+		Key:           "payment.authorized",
+		ResourceType:  "payment",
+		EventType:     "authorized",
+		SchemaVersion: "two-point-oh",
+	})
+
+	if !errors.Is(err, ErrInvalidEventDefinition) {
+		t.Fatalf("NewEventDefinition() error = %v; want errors.Is(ErrInvalidEventDefinition)", err)
+	}
+	if !errors.Is(err, ErrInvalidSchemaVersion) {
+		t.Fatalf("NewEventDefinition() error = %v; want errors.Is(ErrInvalidSchemaVersion)", err)
+	}
+
+	if !cap.containsMessage("ASSERTION FAILED") {
+		t.Fatal("expected asserter trident to fire on malformed SchemaVersion at NewEventDefinition")
 	}
 }

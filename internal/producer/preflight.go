@@ -1,6 +1,7 @@
 package producer
 
 import (
+	"context"
 	"encoding/json"
 )
 
@@ -24,7 +25,13 @@ import (
 // Returns one of the caller sentinel errors (ErrSystemEventsNotAllowed,
 // ErrMissingResourceType, ErrMissingEventType, ErrMissingTenantID,
 // ErrMissingSource, ErrInvalid*, ErrPayloadTooLarge, ErrNotJSON).
-func (p *Producer) preFlightWithPayload(event Event, validatePayload bool) error {
+//
+// ctx is used by the asserter trident on payload-cap rejection so a caller
+// bug surfaces on dashboards under operation="preflight.payload_size".
+// Public Producer.Emit signatures pass their own ctx; outbox replay
+// passes the dispatcher's ctx; benchmark/property tests pass
+// context.Background() at construction.
+func (p *Producer) preFlightWithPayload(ctx context.Context, event Event, validatePayload bool) error {
 	// SystemEvent capability gate — runs FIRST so an opt-in violation is
 	// rejected before any other validation can mask it. A service that
 	// sets SystemEvent=true without WithAllowSystemEvents would otherwise
@@ -74,6 +81,18 @@ func (p *Producer) preFlightWithPayload(event Event, validatePayload bool) error
 	// circuits the slightly more expensive json.Valid scan.
 	if validatePayload {
 		if len(event.Payload) > maxPayloadBytes {
+			// Caller bug — payload exceeds the single-target 1 MiB cap.
+			// Pair the trident with the multi-target site at
+			// emit_multi.payload_size so dashboards see a symmetric signal
+			// across single vs multi callers.
+			a := p.newAsserter("preflight.payload_size")
+			_ = a.That(ctx, false, "payload size must not exceed single-target cap",
+				"payload_bytes", len(event.Payload),
+				"max_bytes", maxPayloadBytes,
+				"resource_type", event.ResourceType,
+				"event_type", event.EventType,
+			)
+
 			return ErrPayloadTooLarge
 		}
 

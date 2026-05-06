@@ -63,17 +63,17 @@ func TestOutboxEnvelope_Validate_RejectsInvalidShape(t *testing.T) {
 		{
 			name:    "version zero",
 			mutate:  func(e *OutboxEnvelope) { e.Version = 0 },
-			wantSub: nil, // version error is a plain fmt.Errorf, not a sentinel
+			wantSub: ErrInvalidOutboxEnvelope, // T7 wraps ErrInvalidOutboxEnvelope; previously a bare fmt.Errorf.
 		},
 		{
 			name:    "version two (future)",
 			mutate:  func(e *OutboxEnvelope) { e.Version = 2 },
-			wantSub: nil,
+			wantSub: ErrInvalidOutboxEnvelope,
 		},
 		{
 			name:    "version three (future)",
 			mutate:  func(e *OutboxEnvelope) { e.Version = 3 },
-			wantSub: nil,
+			wantSub: ErrInvalidOutboxEnvelope,
 		},
 		{
 			name:    "empty route key",

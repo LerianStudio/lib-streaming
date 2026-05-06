@@ -98,7 +98,7 @@ func (p *Producer) handleOutboxRow(ctx context.Context, row *outbox.OutboxEvent)
 		return fmt.Errorf("streaming: invalid outbox envelope row %s: %w", row.ID, err)
 	}
 
-	if err := p.preFlightWithPayload(envelope.Event, true); err != nil {
+	if err := p.preFlightWithPayload(ctx, envelope.Event, true); err != nil {
 		return fmt.Errorf("streaming: outbox replay preflight rejected row %s: %w", row.ID, err)
 	}
 

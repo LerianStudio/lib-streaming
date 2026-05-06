@@ -55,7 +55,7 @@ type MultiProducerConfig struct {
 // Constructor failures close every adapter that was successfully created so
 // no socket leaks under partial-init failures.
 func NewProducerMulti(
-	_ context.Context,
+	ctx context.Context,
 	mpc MultiProducerConfig,
 	policyOverrides map[string]contract.DeliveryPolicyOverride,
 	targets []TargetSpec,
@@ -87,7 +87,7 @@ func NewProducerMulti(
 		return nil, err
 	}
 
-	if err := validateRoutesAgainstTargets(routes, targets, resolvedOpts.catalog); err != nil {
+	if err := validateRoutesAgainstTargets(ctx, logger, routes, targets, resolvedOpts.catalog); err != nil {
 		return nil, err
 	}
 
@@ -139,6 +139,23 @@ func NewProducerMulti(
 		}
 
 		if spec.Adapter.Kind() != spec.Kind {
+			// Construction-time mirror of the runtime invariant in
+			// dispatchRoute's route-kind assertion (see emit_multi.go).
+			// The runtime mirror is "unreachable under normal flow" — and
+			// IS observed today. The construction-time predecessor that
+			// would catch the bug at bootstrap was silent until this
+			// asserter landed. p.producerID is populated on the struct
+			// literal above this loop, so we surface it on the trident
+			// alongside spec.Name for replica correlation.
+			a := p.newAsserter("producer_multi.adapter_kind_match")
+			_ = a.That(ctx, false,
+				"target adapter kind must match TargetSpec kind",
+				"producer_id", p.producerID,
+				"target", spec.Name,
+				"spec_kind", string(spec.Kind),
+				"adapter_kind", string(spec.Adapter.Kind()),
+			)
+
 			rollbackTargetAdapters(p)
 
 			_ = spec.Adapter.Close(context.Background())
@@ -207,7 +224,18 @@ func NewProducerMulti(
 // the route's destination kind, AND every catalog definition has at least
 // one route. Catches misconfigurations at construction time so callers see
 // a precise wiring error before the first Emit.
-func validateRoutesAgainstTargets(routes contract.RouteTable, targets []TargetSpec, catalog contract.Catalog) error {
+//
+// ctx and logger are used by the asserter trident so each construction-time
+// failure branch fires a loud signal alongside its runtime mirror (see
+// dispatchRoute's rt-nil and route-kind-check assertions in emit_multi.go).
+// Without these tridents, the construction-time predecessors of the
+// runtime invariants were silent — operators only saw telemetry on the
+// unreachable runtime path.
+//
+// Each branch fires under a distinct operation label so dashboards can
+// distinguish "unknown target", "unknown definition", "kind mismatch",
+// and "orphan definition" without parsing wrapped sentinels.
+func validateRoutesAgainstTargets(ctx context.Context, logger log.Logger, routes contract.RouteTable, targets []TargetSpec, catalog contract.Catalog) error {
 	targetByName := make(map[string]contract.TransportKind, len(targets))
 	for _, spec := range targets {
 		targetByName[spec.Name] = spec.Kind
@@ -216,15 +244,36 @@ func validateRoutesAgainstTargets(routes contract.RouteTable, targets []TargetSp
 	for _, route := range routes.Definitions() {
 		kind, ok := targetByName[route.Target]
 		if !ok {
+			a := newAsserterForLogger(logger, "producer_multi.validate_routes_target_unknown")
+			_ = a.That(ctx, false, "route target must reference a registered target",
+				"route_key", route.Key,
+				"target", route.Target,
+			)
+
 			return fmt.Errorf("%w: route %q references unknown target %q", contract.ErrInvalidRouteDefinition, route.Key, route.Target)
 		}
 
 		if kind != route.Destination.Kind {
+			a := newAsserterForLogger(logger, "producer_multi.validate_routes_kind_mismatch")
+			_ = a.That(ctx, false, "route destination kind must match target adapter kind",
+				"route_key", route.Key,
+				"target", route.Target,
+				"route_kind", string(route.Destination.Kind),
+				"target_kind", string(kind),
+			)
+
 			return fmt.Errorf("%w: route %q destination kind %q does not match target %q transport %q",
 				contract.ErrInvalidRouteDefinition, route.Key, route.Destination.Kind, route.Target, kind)
 		}
 
 		if _, err := catalog.Require(route.DefinitionKey); err != nil {
+			a := newAsserterForLogger(logger, "producer_multi.validate_routes_unknown_definition")
+			_ = a.That(ctx, false, "route DefinitionKey must reference a catalog entry",
+				"route_key", route.Key,
+				"target", route.Target,
+				"definition_key", route.DefinitionKey,
+			)
+
 			return fmt.Errorf("%w: %w", contract.ErrInvalidRouteDefinition, err)
 		}
 	}
@@ -234,6 +283,11 @@ func validateRoutesAgainstTargets(routes contract.RouteTable, targets []TargetSp
 	// that key. Catching at construction is far better.
 	for _, def := range catalog.Definitions() {
 		if len(routes.Routes(def.Key)) == 0 {
+			a := newAsserterForLogger(logger, "producer_multi.validate_routes_orphan_definition")
+			_ = a.That(ctx, false, "catalog entry must have at least one route",
+				"definition_key", def.Key,
+			)
+
 			return fmt.Errorf("%w: definition %q has no routes", contract.ErrNoRoutesConfigured, def.Key)
 		}
 	}

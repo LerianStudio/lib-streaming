@@ -310,8 +310,10 @@ func BenchmarkPreFlight(b *testing.B) {
 	event := sampleEvent()
 	(&event).ApplyDefaults()
 
+	ctx := context.Background()
+
 	for b.Loop() {
-		if err := p.preFlightWithPayload(event, true); err != nil {
+		if err := p.preFlightWithPayload(ctx, event, true); err != nil {
 			b.Fatalf("preFlight err = %v", err)
 		}
 	}

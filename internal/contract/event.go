@@ -103,6 +103,14 @@ const topicPrefix = "lerian.streaming."
 // canonical Go ecosystem library for semver classification. Input is accepted
 // both with and without a leading "v" — we normalize to the "v"-prefixed form
 // before delegating (golang.org/x/mod/semver requires the "v" prefix).
+//
+// Topic() is a zero-allocation hot-path helper and does NOT fire the
+// asserter trident on malformed SchemaVersion. The construction-time
+// gate in NewEventDefinition is responsible for rejecting unparseable
+// SchemaVersion values before they ever reach a runtime emit; reaching
+// Topic() with malformed semver means the caller built an Event struct
+// directly (bypassing the catalog), which is a different failure surface
+// covered by the producer's preflight chain.
 func (e *Event) Topic() string {
 	if e == nil {
 		return ""
@@ -197,8 +205,28 @@ func (e *Event) ApplyDefaults() {
 // a duplicate test-only copy that could (and did) drift from this canonical
 // version.
 func ParseMajorVersion(v string) int {
+	major, _ := parseMajorVersionStrict(v)
+	return major
+}
+
+// parseMajorVersion is the lowercase intra-package alias; production code in
+// this package and the contract-pkg fuzz test reference it directly.
+func parseMajorVersion(v string) int {
+	return ParseMajorVersion(v)
+}
+
+// parseMajorVersionStrict is the parse-aware variant. Returns (major, true)
+// when v is a valid semver (or empty — treated as the documented default),
+// and (0, false) when v is non-empty but unparseable. The construction-time
+// SchemaVersion gate in NewEventDefinition uses the boolean to distinguish
+// "valid major=0" (or empty default) from "parse failed" — a distinction
+// the bare ParseMajorVersion intentionally collapses for hot-path callers.
+func parseMajorVersionStrict(v string) (int, bool) {
 	if v == "" {
-		return 0
+		// Empty is the documented default; ApplyDefaults / NewEventDefinition
+		// normalize it to "1.0.0" upstream. Treat as "valid; major=0" so
+		// the caller sees ok=true and topic falls through to base form.
+		return 0, true
 	}
 
 	// Fast path for the overwhelmingly-common production case: first-major
@@ -207,7 +235,7 @@ func ParseMajorVersion(v string) int {
 	// majority of events flowing through Topic() hit this branch. Bypassing
 	// semver.Major here saves a full semver parse per Emit.
 	if v == defaultSchemaVersion || v == "v"+defaultSchemaVersion || v == "1" || v == "v1" {
-		return 1
+		return 1, true
 	}
 
 	// semver.Major requires a leading "v". Normalize by re-prefixing.
@@ -216,20 +244,14 @@ func ParseMajorVersion(v string) int {
 
 	major := semver.Major(canonical)
 	if major == "" {
-		return 0
+		return 0, false
 	}
 
 	// semver.Major returns "vN" on success; strip the "v" and parse.
 	n, err := strconv.Atoi(strings.TrimPrefix(major, "v"))
 	if err != nil || n < 0 {
-		return 0
+		return 0, false
 	}
 
-	return n
-}
-
-// parseMajorVersion is the lowercase intra-package alias; production code in
-// this package and the contract-pkg fuzz test reference it directly.
-func parseMajorVersion(v string) int {
-	return ParseMajorVersion(v)
+	return n, true
 }
