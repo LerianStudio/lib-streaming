@@ -35,7 +35,8 @@ Architectural constraints and design decisions for the `lib-streaming` codebase.
 - `Emitter` is exactly the three-method interface: `Emit(ctx, EmitRequest) error`, `Close() error`, and `Healthy(ctx) error`.
 - The only supported emitter implementations are root `*Producer`, `NoopEmitter`, and `streamingtest.MockEmitter`.
 - `streaming.NewBuilder()` is the single public construction entry point. Disabled-feature-flag environments use `streaming.NewNoopEmitter()` instead of constructing a Builder.
-- The Builder requires a non-empty `Catalog`, a non-empty `Routes` table, and at least one `Target`. Build returns an error when any of these are missing.
+- The Builder requires a non-empty `Source(...)` (CloudEvents `ce-source`), a non-empty `Catalog(...)`, a non-empty `Routes(...)` table, and at least one `Target(...)`. Build returns a distinct sentinel error when any of these are missing — there are no inferred defaults.
+- The Builder exposes per-target circuit-breaker tuning through `CBFailureRatio`, `CBMinRequests`, and `CBTimeout` setters. Zero values fall back to lib-commons HTTP presets (`0.5`, `10`, `30s`). `CBTimeout` also drives the CB recovery loop's tick interval (`clamped(cbTimeout/4, [500ms, 5s])`).
 - Passing nil factories/managers for optional observability and circuit-breaker dependencies must degrade safely to documented fallbacks.
 - `WithOutboxRepository` and `WithOutboxWriter` are mutually exclusive; last call wins.
 - Service methods must depend on `streaming.Emitter`, not concrete `*streaming.Producer`, unless they need lifecycle or relay registration.
@@ -44,6 +45,7 @@ Architectural constraints and design decisions for the `lib-streaming` codebase.
 - **RabbitMQ via the streaming Builder is events-only** — past-tense business facts for third-party / SaaS subscribers. Internal command queues remain on `github.com/LerianStudio/lib-commons/v5/commons/rabbitmq`. Producer-only ownership applies even when the destination is AMQP.
 - **Built-in non-Kafka adapters** (`internal/transport/sqs`, `internal/transport/rabbitmq`, `internal/transport/eventbridge`) MUST NOT depend on the corresponding SDK module. Each adapter exposes a small caller-supplied interface so callers own their SDK lifecycle. Optional `Ping(ctx) error` is the only health affordance the library uses.
 - **Per-target circuit breakers** each carry an isolated `targetRuntime.state` mirror; the shared CB state-change listener resolves notifications to the matching `targetRuntime`. `streaming_circuit_state` is a single-dimension gauge tracking the primary target only (the first registered target); per-target observability flows through traces and structured logs.
+- **Target names** are validated at `Build`. Empty names, names containing control characters, names exceeding `MaxEventIDBytes` (256), and credential-like material are rejected with the documented sentinel. The cap is symmetric with route-field validation. Target names are surfaced into operator logs by the per-target `StateChangeListener`, so this validation closes a log-injection vector amplified by the CB recovery loop.
 - **`BuildManifest(descriptor, catalog, routes)`** is the single manifest entry point. Routes are populated when the route table has entries; an empty `RouteTable` produces a catalog-only document with `ManifestDocument.Routes` omitted via `omitempty`.
 
 ## 3. Required Libraries
@@ -149,6 +151,15 @@ Architectural constraints and design decisions for the `lib-streaming` codebase.
 - Unhealthy checks return `*HealthError` with state `Healthy`, `Degraded`, or `Down`.
 - Broker ping inside health checks must be bounded to 500ms.
 - Degraded means broker unavailable but outbox is viable; down means both broker and fallback are unavailable.
+
+### Background CB recovery goroutine
+
+- Each `*Producer` MUST spawn exactly one CB recovery goroutine via `runtime.SafeGoWithContextAndComponent` with `component="streaming"` and a static `goroutine_name="cb_recovery_loop"` (static label keeps panic-metric cardinality bounded).
+- The loop ticks at `clamped(cbTimeout/4, [500ms, 5s])` and calls `manager.GetState` on every registered target so gobreaker's lazy OPEN→HALF-OPEN expiry transition fires deterministically. Without this loop, an emit-only service whose breaker tripped OPEN would stay degraded forever because the hot-path early-out skips `cb.Execute`.
+- The interval is intentionally NOT directly customizable. The `CBTimeout` value is the public knob; the derived envelope is the contract.
+- Lifecycle must be coupled to the Producer: started after target/listener registration in `NewProducerMulti`, exits when `Close`/`CloseContext` closes the producer's stop channel.
+- Panic policy is `runtime.KeepRunning` — a panicking `GetState` is a real bug, not noise to swallow.
+- The recovery goroutine is the only background goroutine the library spawns per `*Producer`. Do not add more without an explicit architecture decision.
 
 ## 12. Error Handling Patterns
 

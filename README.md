@@ -286,9 +286,23 @@ doc, err := streaming.BuildManifest(descriptor, catalog, routeTable)
 
 The manifest version is exposed as `streaming.ManifestVersion`. Routes are deterministically ordered (definition key, then route key) so the JSON document is byte-stable across builds.
 
+`(*Producer).Descriptor(base PublisherDescriptor)` returns the validated descriptor with the per-process `ProducerID` populated. Use it to feed `BuildManifest` or to stamp identity into custom DLQ metadata without re-validating the descriptor surface manually.
+
 **SECURITY**: the manifest exposes event taxonomy, schema versions, service metadata, and producer IDs. Callers MUST wrap the handler in their app's auth middleware before mounting it publicly. The library does not enforce authentication.
 
 ## Operational Guidance
+
+### Circuit-breaker tuning
+
+The Builder exposes three setters that control per-target circuit-breaker behavior. Zero values fall back to lib-commons HTTP presets:
+
+| Setter | Default | Effect |
+|--------|---------|--------|
+| `CBFailureRatio(float64)` | `0.5` | Failure ratio that trips OPEN once `CBMinRequests` is reached |
+| `CBMinRequests(int)` | `10` | Minimum request count in the rolling window before the breaker can trip |
+| `CBTimeout(time.Duration)` | `30s` | OPEN-state dwell time AND the source for the CB recovery loop's tick interval |
+
+The CB recovery goroutine runs at `clamped(cbTimeout/4, [500ms, 5s])` and calls the manager's `GetState` on every target each tick so gobreaker's lazy OPEN→HALF-OPEN transition fires deterministically. Maximum recovery latency after broker recovery is bounded at `CBTimeout + 5s + one probe round-trip`. Shorter `CBTimeout` values tighten that envelope at the cost of more aggressive trip behavior — choose by failure-budget, not by recovery time alone.
 
 ### Per-target observability
 
@@ -370,14 +384,16 @@ go doc github.com/LerianStudio/lib-streaming
 
 Key public API areas:
 
-- **Builder** — `NewBuilder`, `TargetConfig`, `RouteDefinition`, `RouteTable`, `Destination`, `TransportKind`, `RouteRequirement`, transport helpers.
-- **Emitters** — `Emitter`, `Producer`, `NoopEmitter`, and `streamingtest.MockEmitter`.
-- **Catalogs** — `Catalog`, `EventDefinition`, and duplicate-contract validation.
-- **Requests** — `EmitRequest`, request validation, payload rules, tenant/subject metadata.
-- **Delivery Policies** — direct publish, outbox fallback, DLQ routing, and overrides.
-- **Outbox** — `OutboxEnvelope`, `OutboxWriter`, transactional writer support, relay registration.
-- **Manifest** — `BuildManifest` and `NewStreamingHandler` for publisher introspection.
-- **Errors** — sentinels, `EmitError`, `MultiEmitError`, error classes, `HealthError`, and `IsCallerError`.
+- **Builder** — `NewBuilder`, `Source`, `Catalog`, `Routes`, `Target`, `TargetExtra`, `RegisterTransport`, `CBFailureRatio`, `CBMinRequests`, `CBTimeout`, `CloseTimeout`, `Logger`, `MetricsFactory`, `Tracer`, `CircuitBreakerManager`, `OutboxRepository`, `OutboxWriter`, `TLSConfig`, `SASL`, `AllowPlaintextSASL`, `AllowSystemEvents`, `PartitionKey`, `SQSTarget`, `RabbitMQTarget`, `EventBridgeTarget`, `Build`.
+- **Routes & destinations** — `TargetConfig`, `RouteDefinition`, `RouteTable`, `Destination`, `TransportKind`, `RouteRequirement`, `KafkaTopic`, `SQSQueueURL`, `RabbitMQRoute`, `EventBridgeBus`.
+- **Transport port** — `TransportAdapter`, `TransportMessage`, `TransportHeader`, `TransportAdapterOptions`, `TransportAdapterFactory`, `PartitionKeyFunc`, plus the built-in client interfaces (`SQSPublisherClient`, `RabbitMQPublisher`, `EventBridgePutEventsClient`).
+- **Emitters** — `Emitter`, `Producer` (including `Descriptor`, `RegisterOutboxRelay`, `Run`, `RunContext`, `CloseContext`), `NoopEmitter`, and `streamingtest.MockEmitter`.
+- **Catalogs** — `Catalog`, `EventDefinition`, `NewCatalog`, `NewEventDefinition`, and duplicate-contract validation.
+- **Requests** — `EmitRequest`, `NewEmitRequest`, payload rules, tenant/subject metadata.
+- **Delivery Policies** — `DefaultDeliveryPolicy`, `ResolveDeliveryPolicy`, `DirectMode`, `OutboxMode`, `DLQMode`, `DeliveryPolicy`, `DeliveryPolicyOverride`.
+- **Outbox** — `OutboxEnvelope` (with `Validate` / `ValidateShape`), `OutboxWriter`, `WithOutboxTx`, `StreamingOutboxEventType`, transactional writer support, relay registration.
+- **Manifest** — `BuildManifest`, `NewStreamingHandler`, `NewPublisherDescriptor`, `ManifestDocument`, `ManifestEvent`, `ManifestRoute`, `ManifestVersion`.
+- **Errors** — sentinels, `EmitError`, `MultiEmitError`, `RouteError`, error classes, `HealthError`, and `IsCallerError`.
 
 ## Contributing
 
