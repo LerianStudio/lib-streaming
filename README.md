@@ -103,6 +103,10 @@ for _, warning := range warnings {
 
 runtime.InitPanicMetrics(metricsFactory)
 assert.InitAssertionMetrics(metricsFactory)
+// Scrubs panic value strings and truncates stack traces before they hit
+// log fields, span events, and ErrorReporter payloads — guards against
+// PII leakage from arbitrary panic arguments and OTel attribute bloat.
+runtime.SetProductionMode(cfg.Env == "production")
 
 catalog, err := streaming.NewCatalog(streaming.EventDefinition{
     Key:          "transaction.created",
