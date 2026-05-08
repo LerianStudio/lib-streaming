@@ -1,0 +1,84 @@
+# Pull Request Labeler configuration
+#
+# Labels are aligned with the pr_title_scopes in pr-validation.yml.
+
+producer:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'producer*.go'
+          - 'cb_*.go'
+
+publish:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'publish*.go'
+          - 'classify*.go'
+          - 'sanitize*.go'
+
+outbox:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'outbox_*.go'
+
+metrics:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'metrics*.go'
+
+health:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'health*.go'
+
+lifecycle:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'lifecycle*.go'
+          - 'commons_app*.go'
+
+streaming:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'streaming*.go'
+          - 'options*.go'
+          - 'event*.go'
+          - 'cloudevents*.go'
+          - 'emit*.go'
+
+examples:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'example_*.go'
+
+scripts:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'scripts/**/*'
+          - 'Makefile'
+
+config:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'config*.go'
+          - '.golangci.yml'
+
+ci:
+  - changed-files:
+      - any-glob-to-any-file: '.github/workflows/**/*'
+
+docs:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/*.md'
+          - 'docs/**/*'
+
+tests:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/*_test.go'
+
+deps:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'go.mod'
+          - 'go.sum'
