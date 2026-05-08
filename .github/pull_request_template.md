@@ -1,27 +1,56 @@
-# Pull Request Checklist
+<table border="0" cellspacing="0" cellpadding="0">
+  <tr>
+    <td><img src="https://github.com/LerianStudio.png" width="72" alt="Lerian" /></td>
+    <td><h1>lib-streaming</h1></td>
+  </tr>
+</table>
 
-## Pull Request Type
-[//]: # (Check the appropriate box for the type of pull request.)
+---
 
-- [ ] Feature
-- [ ] Fix
-- [ ] Refactor
-- [ ] Pipeline
-- [ ] Tests
-- [ ] Documentation
+## Description
 
-## Checklist
-Please check each item after it's completed.
+<!-- Summarize what this PR changes and why. Mention the affected surface
+     (producer, publish, outbox, metrics, health, lifecycle, streaming). -->
 
-- [ ] I have tested these changes locally.
-- [ ] I have updated the documentation accordingly.
-- [ ] I have added necessary comments to the code, especially in complex areas.
-- [ ] I have ensured that my changes adhere to the project's coding standards.
-- [ ] I have checked for any potential security issues.
-- [ ] I have ensured that all tests pass.
-- [ ] I have updated the version appropriately (if applicable).
-- [ ] I have confirmed this code is ready for review.
+## Type of Change
 
-## Additional Notes
-[//]: # (Add any additional notes, context, or explanation that could be helpful for reviewers.)
-## Obs: Please, always remember to target your PR to develop branch instead of main.
+- [ ] `feat`: New feature or capability
+- [ ] `fix`: Bug fix
+- [ ] `perf`: Performance improvement
+- [ ] `refactor`: Internal restructuring with no behavior change
+- [ ] `docs`: Documentation only (README, docs/, llms.txt, inline comments)
+- [ ] `style`: Formatting, whitespace, naming (no logic change)
+- [ ] `test`: Adding or updating tests
+- [ ] `ci`: CI pipeline or workflow changes
+- [ ] `build`: Build system, Dockerfile, Go module dependencies
+- [ ] `chore`: Maintenance, config, tooling
+- [ ] `revert`: Reverts a previous commit
+- [ ] `BREAKING CHANGE`: Consumers must update their integration
+
+## Breaking Changes
+
+<!-- If applicable, describe exactly what breaks (env vars, route paths,
+     persistence schema, public ports/adapters) and how downstream services
+     should migrate. Remove this section if not applicable. -->
+
+None.
+
+## Testing
+
+- [ ] Unit tests pass (`go test -tags=unit ./...`)
+- [ ] Integration tests pass if integration paths are exercised
+- [ ] Lint passes
+
+**Test evidence / Actions run:** <!-- Optional: link to a CI run or screenshot -->
+
+## Architectural Checklist
+
+- [ ] No `panic()` in production paths — uses wrapped errors
+- [ ] Timestamps use `time.Now().UTC()`
+- [ ] Errors wrapped with `%w`
+- [ ] Public API additions documented and covered by tests
+- [ ] No breaking changes to exported types/options without `BREAKING CHANGE`
+
+## Related Issues
+
+Closes #
