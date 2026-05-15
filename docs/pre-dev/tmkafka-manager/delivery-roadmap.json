@@ -1,0 +1,74 @@
+{
+  "version": "1.0.0",
+  "gate": 4,
+  "feature": "tmkafka-manager",
+  "generatedAt": "2026-05-14T12:00:00Z",
+  "dates": {
+    "startDate": "2026-06-29",
+    "endDate": "2026-07-03",
+    "mvpEndDate": "2026-07-03",
+    "totalDuration": "1 week (5 working days + 1 buffer)"
+  },
+  "velocity": {
+    "teamSize": 1,
+    "utilizationRate": 0.9,
+    "humanValidationMultiplier": 1.5,
+    "multiplierSource": "user-confirmed"
+  },
+  "deliveryCadence": {
+    "type": "continuous",
+    "periodDuration": null,
+    "periodStartDate": null
+  },
+  "tasks": [
+    {"id":"T-001","description":"Add core.KafkaConfig struct","aiEstimate":"0.75h","adjusted":"1.125h","calendar":"1.25h","days":0.16,"phase":"development","tauraDays":0,"dependencies":[],"assignee":"Backend","status":"ready","onCriticalPath":true},
+    {"id":"T-002","description":"Extend MessagingConfig + helpers","aiEstimate":"0.5h","adjusted":"0.75h","calendar":"0.83h","days":0.10,"phase":"development","tauraDays":0,"dependencies":["T-001"],"assignee":"Backend","status":"ready","onCriticalPath":true},
+    {"id":"T-003","description":"Bootstrap kafka/ package (doc.go + types.go)","aiEstimate":"0.5h","adjusted":"0.75h","calendar":"0.83h","days":0.10,"phase":"development","tauraDays":0,"dependencies":[],"assignee":"Backend","status":"ready","onCriticalPath":true},
+    {"id":"T-004","description":"Options API (Option + 6 WithXxx)","aiEstimate":"1.0h","adjusted":"1.5h","calendar":"1.67h","days":0.21,"phase":"development","tauraDays":0,"dependencies":["T-003"],"assignee":"Backend","status":"ready","onCriticalPath":true},
+    {"id":"T-005","description":"NewManager constructor + lifecycle skeleton","aiEstimate":"1.0h","adjusted":"1.5h","calendar":"1.67h","days":0.21,"phase":"development","tauraDays":0,"dependencies":["T-003","T-004"],"assignee":"Backend","status":"ready","onCriticalPath":true},
+    {"id":"T-006","description":"buildKgoClient with SCRAM rotating callback","aiEstimate":"1.5h","adjusted":"2.25h","calendar":"2.5h","days":0.31,"phase":"development","tauraDays":0,"dependencies":["T-001","T-002","T-005"],"assignee":"Backend","status":"ready","onCriticalPath":true},
+    {"id":"T-007","description":"GetClient hot path + slow path (double-check)","aiEstimate":"2.0h","adjusted":"3.0h","calendar":"3.33h","days":0.42,"phase":"development","tauraDays":0,"dependencies":["T-005","T-006","T-009"],"assignee":"Backend","status":"ready","onCriticalPath":true},
+    {"id":"T-008","description":"CloseConnection + CloseAll (Flush-before-Close)","aiEstimate":"1.5h","adjusted":"2.25h","calendar":"2.5h","days":0.31,"phase":"development","tauraDays":0,"dependencies":["T-005"],"assignee":"Backend","status":"ready","onCriticalPath":false},
+    {"id":"T-009","description":"Error sentinels (ErrKafkaConfigMissing + reuse)","aiEstimate":"0.5h","adjusted":"0.75h","calendar":"0.83h","days":0.10,"phase":"development","tauraDays":0,"dependencies":[],"assignee":"Backend","status":"ready","onCriticalPath":false},
+    {"id":"T-010","description":"Revalidation goroutine (30s tick + fingerprint)","aiEstimate":"2.0h","adjusted":"3.0h","calendar":"3.33h","days":0.42,"phase":"development","tauraDays":0,"dependencies":["T-007","T-008"],"assignee":"Backend","status":"ready","onCriticalPath":true},
+    {"id":"T-011","description":"LRU eviction wrapper","aiEstimate":"1.0h","adjusted":"1.5h","calendar":"1.67h","days":0.21,"phase":"development","tauraDays":0,"dependencies":["T-007","T-008"],"assignee":"Backend","status":"ready","onCriticalPath":false},
+    {"id":"T-012","description":"Metrics + kotel hooks + OTel View docs","aiEstimate":"1.5h","adjusted":"2.25h","calendar":"2.5h","days":0.31,"phase":"development","tauraDays":0,"dependencies":["T-005","T-007","T-008","T-010","T-011"],"assignee":"Backend","status":"ready","onCriticalPath":false},
+    {"id":"T-013","description":"event.WithKafka option + dispatcher field","aiEstimate":"0.5h","adjusted":"0.75h","calendar":"0.83h","days":0.10,"phase":"development","tauraDays":0,"dependencies":["T-005"],"assignee":"Backend","status":"ready","onCriticalPath":false},
+    {"id":"T-014","description":"removeTenant cascade extension","aiEstimate":"0.5h","adjusted":"0.75h","calendar":"0.83h","days":0.10,"phase":"development","tauraDays":0,"dependencies":["T-013"],"assignee":"Backend","status":"ready","onCriticalPath":false},
+    {"id":"T-015","description":"Unit tests (U-1 through U-16)","aiEstimate":"2.5h","adjusted":"3.75h","calendar":"4.17h","days":0.52,"phase":"quality","tauraDays":0,"dependencies":["T-005","T-006","T-007","T-008","T-009","T-010","T-011","T-012"],"assignee":"Backend","status":"ready","onCriticalPath":false},
+    {"id":"T-016","description":"Integration tests I-1 through I-4 (testcontainers-redpanda)","aiEstimate":"2.5h","adjusted":"3.75h","calendar":"4.17h","days":0.52,"phase":"quality","tauraDays":0,"dependencies":["T-007","T-008","T-010","T-011"],"assignee":"Backend","status":"ready","onCriticalPath":true},
+    {"id":"T-017","description":"Integration tests I-5 through I-8","aiEstimate":"2.0h","adjusted":"3.0h","calendar":"3.33h","days":0.42,"phase":"quality","tauraDays":0,"dependencies":["T-013","T-014","T-016"],"assignee":"Backend","status":"ready","onCriticalPath":true},
+    {"id":"T-018","description":"README.md + doc.go polish + lint","aiEstimate":"1.0h","adjusted":"1.5h","calendar":"1.67h","days":0.21,"phase":"delivery","tauraDays":0,"dependencies":["T-015","T-017"],"assignee":"Backend","status":"ready","onCriticalPath":true}
+  ],
+  "milestones": [
+    {"name":"Day 1 — Schema + skeleton","type":"milestone","startDate":"2026-06-29","targetDate":"2026-06-29","taskIds":["T-001","T-002","T-003","T-004","T-005"],"deliverable":"Schema landed; kafka/ package skeleton compiles; NewManager constructs Manager; unit tests U-1, U-2 green","spillOvers":[]},
+    {"name":"Day 2 — Core hot path + close","type":"milestone","startDate":"2026-06-30","targetDate":"2026-06-30","taskIds":["T-006","T-007","T-008","T-009"],"deliverable":"GetClient returns per-tenant *kgo.Client via SCRAM callback; CloseConnection/CloseAll honor Flush-before-Close; U-3 through U-15 green","spillOvers":[]},
+    {"name":"Day 3 — Background workers + observability","type":"milestone","startDate":"2026-07-01","targetDate":"2026-07-01","taskIds":["T-010","T-011","T-012"],"deliverable":"Revalidation + LRU eviction working; metrics emit without tenant_id label; U-16 green","spillOvers":[]},
+    {"name":"Day 4 — Dispatcher + integration tests (start)","type":"milestone","startDate":"2026-07-02","targetDate":"2026-07-02","taskIds":["T-013","T-014","T-016"],"deliverable":"event.WithKafka + removeTenant cascade; I-1, I-2 green (multi-tenant produce, cred rotation)","spillOvers":[]},
+    {"name":"Day 5 — Tests + docs + PR ready","type":"milestone","startDate":"2026-07-03","targetDate":"2026-07-03","taskIds":["T-015","T-017","T-018"],"deliverable":"Full unit + integration suite green; README + doc.go polished; make test, make test-integration, golangci-lint clean; PR ready to merge","spillOvers":[]},
+    {"name":"Day 6 (buffer) — Review feedback + merge","type":"milestone","startDate":"2026-07-06","targetDate":"2026-07-06","taskIds":[],"deliverable":"Address Gate 8 (code review) findings if any; merge into main; semver minor bump; release tag","spillOvers":[]}
+  ],
+  "criticalPath": {
+    "taskIds": ["T-001","T-002","T-003","T-005","T-006","T-007","T-010","T-016","T-017","T-018"],
+    "totalDuration": "5 working days",
+    "minimumProjectDuration": "5 working days"
+  },
+  "risks": [
+    {"taskIds":["T-006"],"level":"medium","impact":"SCRAM rotating-callback is new API to this codebase; misuse could leak stale creds or fail to rotate","mitigation":"Unit test the callback in isolation before downstream tasks consume it; confirmed API shape in research-external.md; tested in I-2 integration"},
+    {"taskIds":["T-007"],"level":"medium","impact":"Double-check locking is historically the highest bug-density pattern in tmrabbitmq; race conditions could cause duplicate client creation or stale cache","mitigation":"Direct mirror of tmrabbitmq.Manager.GetConnection (battle-tested); race detector + N=10 in unit tests; goleak check"},
+    {"taskIds":["T-010"],"level":"medium","impact":"Revalidation goroutine racing with GetClient/CloseConnection could deadlock or corrupt cache","mitigation":"Same lock + WaitGroup pattern as tmrabbitmq.revalidatePoolSettings; revalidation context cancel cascades correctly tested in U-10 + I-8"},
+    {"taskIds":["T-016"],"level":"medium","impact":"testcontainers-redpanda with SCRAM is new to lib-commons; image config issues could delay integration tests","mitigation":"Pinned image v23.3.3; reference existing commons/streaming integration test setup; Day 6 buffer absorbs delay if needed"}
+  ],
+  "cycleCapacity": {
+    "grossDays": 5,
+    "bugBufferDays": 0.8,
+    "availableDays": 4.2,
+    "allocatedDays": 4.64,
+    "slackDays": -0.44
+  },
+  "contingencyBuffer": {
+    "percentage": 17,
+    "days": 1
+  },
+  "confidenceScore": 91
+}

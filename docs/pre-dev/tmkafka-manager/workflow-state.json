@@ -1,0 +1,59 @@
+{
+  "track": "small",
+  "feature": "tmkafka-manager",
+  "currentGate": "COMPLETE",
+  "gates": {
+    "0": "DONE",
+    "1": "DONE",
+    "1.5": "SKIP",
+    "2": "DONE",
+    "3": "DONE",
+    "4": "DONE"
+  },
+  "topology": {
+    "primary_repo": "/Users/jeffersonrodrigues/workspace/lib-streaming",
+    "primary_module": "github.com/LerianStudio/lib-streaming",
+    "secondary_repo": "/Users/jeffersonrodrigues/workspace/lib-commons",
+    "secondary_module": "github.com/LerianStudio/lib-commons/v5",
+    "language": "go",
+    "goVersion": "1.25.9",
+    "type": "library",
+    "branch_primary": "feat/tmkafka-manager",
+    "branch_secondary": "feat/kafka-config-schema",
+    "hasUI": false,
+    "uiLibrary": null,
+    "styling": null,
+    "authLib": null,
+    "licenseLib": null,
+    "precedentPackage": "commons/tenant-manager/rabbitmq (in lib-commons)",
+    "newPackagePrimary": "lib-streaming/kafka",
+    "newPackageSecondary": "commons/tenant-manager/core (schema addition only)",
+    "existingTestInfra": ["testcontainers", "toxiproxy"],
+    "newExternalDeps": []
+  },
+  "inputs": {
+    "hasUI": false,
+    "authRequired": false,
+    "licenseRequired": false,
+    "uiLibrary": null,
+    "styling": null
+  },
+  "smallTrackExceptions": {
+    "twoRepoSplit": "Per D14 (locked 2026-05-14), Phase 1 spans two repos: lib-streaming (primary, hosts the kafka package) and lib-commons (secondary, hosts KafkaConfig schema + EventDispatcher interface hook). No new external dependencies — franz-go is already in both repos."
+  },
+  "sourceBrief": "https://alfarrabio.lerian.net/jeff/lib-streaming-mt-brief.html",
+  "lockedDecisions": {
+    "saslMechanism": "SCRAM-SHA-256",
+    "topicPrefix": "<tenant>.lerian.streaming.<service>.<event> (4-part with service segment)",
+    "minBrokerVersion": "Redpanda v24.2+ / Apache Kafka 4.0+ (KIP-848)",
+    "outboxModel": "per-tenant via core.GetPGContext",
+    "metricsCardinality": "no tenant_id label",
+    "repoTarget": "lib-streaming/kafka/ (primary), lib-commons schema (secondary) — per D14",
+    "consumerGroupNaming": "<tenant>.<service>[.<event-type>|.<origin>].consumer (D8)",
+    "consumerModes": "A (self) / B1 (cross-service) / B2 (event-type) — all coexist (D2)",
+    "deliverySemantics": "at-least-once + dedup via eventId, retry 7 attempts ~32h, DLQ topic, HMAC-SHA256 signature, FIFO per tenant (D11)",
+    "subscriptionStateMachine": "PENDING/ACTIVE/SUSPENDED/DELETING/DELETED (D12)",
+    "resourceVersion": "UUIDv7 in MongoDB streaming_subscriptions.version field (D13)"
+  },
+  "migrationNote": "These docs were originally generated in lib-commons. Migrated to lib-streaming on 2026-05-14 per D14. The lib-commons location may keep a NOTE.md pointer for discoverability."
+}
