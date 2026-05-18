@@ -1,5 +1,16 @@
 # Lib-streaming Changelog
 
+## [1.4.0](https://github.com/LerianStudio/lib-streaming/releases/tag/v1.4.0)
+
+- Improvements:
+  - Refactor contract to use `lib-observability` for sensitive field redaction.
+
+Contributors: @fredcamaral, @lerian-studio.
+
+[Compare changes](https://github.com/LerianStudio/lib-streaming/compare/v1.3.1...v1.4.0)
+
+---
+
 ## [1.3.0](https://github.com/LerianStudio/lib-streaming/releases/tag/v1.3.0)
 
 - Features:
