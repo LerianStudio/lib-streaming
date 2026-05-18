@@ -4,7 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/LerianStudio/lib-commons/v5/commons/runtime"
+	"github.com/LerianStudio/lib-commons/v5/commons/circuitbreaker"
+	"github.com/LerianStudio/lib-observability/runtime"
 )
 
 // Background circuit-breaker recovery goroutine.
@@ -12,9 +13,9 @@ import (
 // Why this exists: dispatchRoute (emit_multi.go) takes a hot-path early-out
 // at the rt.state.Load() == flagCBOpen check. That early-out is load-bearing
 // for tail latency under sustained outage — Emit returns within microseconds
-// instead of paying the full cb.Execute lock + dispatch cost when the answer
+// instead of paying the full breaker execution lock + dispatch cost when the answer
 // is already known to be "outbox absorb." But the early-out has a downside:
-// while the mirror reads OPEN, cb.Execute is NEVER invoked for that target,
+// while the mirror reads OPEN, breaker execution is NEVER invoked for that target,
 // which means gobreaker.currentState (the only place the lazy
 // OPEN→HALF-OPEN expiry transition fires) is NEVER called, which means the
 // StateChangeListener that mirrors transitions onto rt.state is NEVER
@@ -22,7 +23,7 @@ import (
 // after the broker recovers.
 //
 // In production, services usually have other code paths (admin endpoints,
-// health checks, sibling work) that call cb.Execute on the same breaker,
+// health checks, sibling work) that call breaker execution on the same breaker,
 // breaking the deadlock by chance. But "by chance" is a fragile contract.
 // This loop guarantees that every CB sees a State() poke at a bounded
 // interval — independent of any service-side traffic — so OPEN→HALF-OPEN
@@ -217,9 +218,11 @@ func (p *Producer) cbRecoveryLoop(_ context.Context) {
 	}
 }
 
-// pokeAllTargetCBs calls manager.GetState on every registered target.
-// Lock-free over p.targets (read-only after construction); per-target
-// GetState is internally synchronized by the lib-commons CB manager.
+// pokeAllTargetCBs calls manager.GetState on every registered no-tenant target
+// breaker. When the manager supports tenant-aware breakers, it also pokes the
+// producer-owned tenant breaker keys recorded during Emit. Lock-free over
+// p.targets (read-only after construction); per-breaker GetState is internally
+// synchronized by the lib-commons CB manager.
 //
 // We deliberately poke EVERY target, not just OPEN ones — gating on
 // rt.state.Load() == flagCBOpen would re-introduce the same
@@ -235,21 +238,14 @@ func (p *Producer) pokeAllTargetCBs() {
 		return
 	}
 
+	if !isNilInterface(p.tenantCBManager) {
+		p.pokeTenantAwareCBs()
+		return
+	}
+
 	for name, rt := range p.targets {
 		if rt == nil {
-			// State-corruption invariant violation. NewProducerMulti
-			// guarantees every entry is non-nil. A stuck-OPEN breaker
-			// for that slot would never recover without this loop —
-			// silently skipping it would mean recovery permanently
-			// stalls for that target. Fire the trident so the silent
-			// skip becomes a loud signal, then preserve the silent
-			// continue so a corrupted slot does not cascade.
-			a := p.newAsserter("cb_recovery.poke_all_targets")
-			_ = a.NotNil(context.Background(), rt, "targets map entry must be non-nil during CB poke",
-				"producer_id", p.producerID,
-				"target", name,
-			)
-
+			p.assertNilTargetDuringCBPoke(name)
 			continue
 		}
 
@@ -259,4 +255,40 @@ func (p *Producer) pokeAllTargetCBs() {
 		// streamingStateListener.OnStateChange.
 		_ = p.cbManager.GetState(rt.cbServiceName)
 	}
+}
+
+func (p *Producer) pokeTenantAwareCBs() {
+	for name, rt := range p.targets {
+		if rt == nil {
+			p.assertNilTargetDuringCBPoke(name)
+			continue
+		}
+
+		_ = p.cbManager.GetState(rt.cbServiceName)
+	}
+
+	p.tenantCBKeys.Range(func(key, _ any) bool {
+		cbKey, ok := key.(circuitbreaker.TenantBreakerKey)
+		if !ok || cbKey.TenantID == "" || cbKey.ServiceName == "" {
+			return true
+		}
+
+		_ = p.tenantCBManager.GetStateForTenant(cbKey.TenantID, cbKey.ServiceName)
+
+		return true
+	})
+}
+
+func (p *Producer) assertNilTargetDuringCBPoke(name string) {
+	// State-corruption invariant violation. NewProducerMulti guarantees every
+	// entry is non-nil. A stuck-OPEN breaker for that slot would never recover
+	// without this loop — silently skipping it would mean recovery permanently
+	// stalls for that target. Fire the trident so the silent skip becomes loud,
+	// then preserve the silent-continue behavior so one corrupted slot does not
+	// cascade.
+	a := p.newAsserter("cb_recovery.poke_all_targets")
+	_ = a.NotNil(context.Background(), (*targetRuntime)(nil), "targets map entry must be non-nil during CB poke",
+		"producer_id", p.producerID,
+		"target", name,
+	)
 }

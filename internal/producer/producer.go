@@ -13,7 +13,7 @@ import (
 
 	"github.com/LerianStudio/lib-commons/v5/commons"
 	"github.com/LerianStudio/lib-commons/v5/commons/circuitbreaker"
-	"github.com/LerianStudio/lib-commons/v5/commons/log"
+	"github.com/LerianStudio/lib-observability/log"
 	"github.com/LerianStudio/lib-streaming/internal/contract"
 )
 
@@ -45,6 +45,25 @@ type Producer struct {
 	// Producers can share a manager so the caller has a process-wide view
 	// of breaker state.
 	cbManager circuitbreaker.Manager
+
+	// tenantCBManager is the tenant-aware view of cbManager when the supplied
+	// implementation supports lib-commons v5.2 TenantAwareManager. Non-system
+	// events use this path so one tenant's broker/auth outage does not open the
+	// breaker for neighboring tenants on the same pod. Nil means fallback to the
+	// legacy process-wide target breaker surface for compatibility with custom
+	// Manager implementations.
+	tenantCBManager circuitbreaker.TenantAwareManager
+
+	// cbConfig is the per-target circuit-breaker configuration reused when a
+	// tenant-specific breaker is lazily registered on first Emit for that
+	// (tenant, target) pair.
+	cbConfig circuitbreaker.Config
+
+	// tenantCBKeys tracks tenant-scoped breakers registered by this Producer.
+	// The shared lib-commons manager may hold breakers for other Producers, so
+	// the recovery loop must use this producer-owned bounded set instead of
+	// walking the manager's full process-wide inventory every tick.
+	tenantCBKeys sync.Map // circuitbreaker.TenantBreakerKey -> struct{}
 
 	// tracer is the OTEL tracer used for the streaming.emit span. Never
 	// nil after NewProducer — falls back to otel.Tracer("streaming") when

@@ -94,8 +94,10 @@
 // # Multi-transport routing
 //
 // A single Emit can fan out to N targets in parallel. Per-target circuit
-// breakers isolate failures; required routes drive the aggregate Emit
-// outcome; optional routes are best-effort.
+// breakers isolate target failures; with a lib-commons TenantAwareManager,
+// non-system events use tenant-scoped breakers for each target so one
+// tenant's outage does not reject neighboring tenants. Required routes drive
+// the aggregate Emit outcome; optional routes are best-effort.
 //
 //   - Target: a named transport runtime (e.g. "kafka-primary", "sqs-shadow"),
 //     each with its own circuit breaker.
@@ -379,8 +381,10 @@
 // # Per-target observability
 //
 // streaming_circuit_state is a single-dimension gauge that tracks the
-// primary target's circuit state only (the first registered target in the
-// Builder). Per-target circuit observability is delivered through traces
+// primary target's no-tenant compatibility circuit state only (the first
+// registered target in the Builder). Tenant-scoped circuit state is surfaced
+// by lib-commons circuit-breaker metrics/logs with bounded tenant_hash
+// attribution. Per-target circuit observability is delivered through traces
 // and logs, not separate metric series, to keep label cardinality bounded:
 //
 //   - Span events: per-target CB state changes are recorded as span events

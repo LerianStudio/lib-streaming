@@ -3,8 +3,8 @@ package producer
 import (
 	"context"
 
-	"github.com/LerianStudio/lib-commons/v5/commons/assert"
-	"github.com/LerianStudio/lib-commons/v5/commons/log"
+	"github.com/LerianStudio/lib-observability/assert"
+	"github.com/LerianStudio/lib-observability/log"
 )
 
 // asserterComponent is the component label every streaming asserter carries.

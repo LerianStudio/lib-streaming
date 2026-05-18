@@ -7,8 +7,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/LerianStudio/lib-commons/v5/commons/log"
 	"github.com/LerianStudio/lib-commons/v5/commons/outbox"
+	"github.com/LerianStudio/lib-observability/log"
 
 	"github.com/LerianStudio/lib-streaming/internal/contract"
 	"github.com/LerianStudio/lib-streaming/internal/transport/fake"
@@ -197,6 +197,11 @@ func TestNewProducerMulti_PerTargetCircuitBreakerIsolation(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = p.Close() })
 
+	// Manually flip secondary's CB state mirror to OPEN. This test exercises
+	// the legacy no-tenant mirror branch; tenant-aware breaker isolation has
+	// dedicated coverage below.
+	p.tenantCBManager = nil
+
 	// Manually flip secondary's CB state mirror to OPEN. The dispatch
 	// path reads the mirror BEFORE invoking the breaker; this lets us
 	// assert per-target isolation without driving the CB itself through
@@ -256,6 +261,8 @@ func TestNewProducerMulti_OutboxFallbackOnCircuitOpenWritesV2Envelope(t *testing
 		t.Fatalf("NewProducerMulti() error = %v", err)
 	}
 	t.Cleanup(func() { _ = p.Close() })
+
+	p.tenantCBManager = nil
 
 	rt := p.targets["primary"]
 	rt.state.Store(flagCBOpen)

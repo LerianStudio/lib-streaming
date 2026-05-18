@@ -44,14 +44,14 @@ Architectural constraints and design decisions for the `lib-streaming` codebase.
 - **Routes** are immutable after `NewRouteTable` construction. Every catalog `EventDefinition` MUST resolve to at least one registered route, and every route's `Target` MUST match a registered target whose adapter `Kind` matches the route's `Destination.Kind`.
 - **RabbitMQ via the streaming Builder is events-only** — past-tense business facts for third-party / SaaS subscribers. Internal command queues remain on `github.com/LerianStudio/lib-commons/v5/commons/rabbitmq`. Producer-only ownership applies even when the destination is AMQP.
 - **Built-in non-Kafka adapters** (`internal/transport/sqs`, `internal/transport/rabbitmq`, `internal/transport/eventbridge`) MUST NOT depend on the corresponding SDK module. Each adapter exposes a small caller-supplied interface so callers own their SDK lifecycle. Optional `Ping(ctx) error` is the only health affordance the library uses.
-- **Per-target circuit breakers** each carry an isolated `targetRuntime.state` mirror; the shared CB state-change listener resolves notifications to the matching `targetRuntime`. `streaming_circuit_state` is a single-dimension gauge tracking the primary target only (the first registered target); per-target observability flows through traces and structured logs.
+- **Per-target tenant-aware circuit breakers** isolate broker failures by target and, when the configured manager satisfies lib-commons `TenantAwareManager`, by `(tenant, target)` for non-system events. System events and custom managers that only satisfy the legacy `Manager` interface use the no-tenant compatibility breaker. `targetRuntime.state` mirrors only the no-tenant breaker; tenant-scoped state is read from the manager and observed through lib-commons `tenant_hash` CB metrics/logs. `streaming_circuit_state` is a single-dimension gauge tracking the primary target's no-tenant breaker only.
 - **Target names** are validated at `Build`. Empty names, names containing control characters, names exceeding `MaxEventIDBytes` (256), and credential-like material are rejected with the documented sentinel. The cap is symmetric with route-field validation. Target names are surfaced into operator logs by the per-target `StateChangeListener`, so this validation closes a log-injection vector amplified by the CB recovery loop.
 - **`BuildManifest(descriptor, catalog, routes)`** is the single manifest entry point. Routes are populated when the route table has entries; an empty `RouteTable` produces a catalog-only document with `ManifestDocument.Routes` omitted via `omitempty`.
 
 ## 3. Required Libraries
 
 - Module path: `github.com/LerianStudio/lib-streaming` (bare path; no `/vN` suffix while on v0/v1 per Go's semantic-import-versioning rules).
-- Go version: `1.25.9` as declared in `go.mod`.
+- Go version: `1.26.2` as declared in `go.mod`.
 - Commons: use `github.com/LerianStudio/lib-commons/v5` primitives where they are the Lerian standard.
 - Assertions: use `github.com/LerianStudio/lib-commons/v5/commons/assert` for post-construction internal invariants.
 - Panic observability: consuming services must initialize `commons/runtime` panic metrics and call `runtime.SetProductionMode` to scrub panic values before telemetry; this library must not add naked goroutines or unobservable recovery paths.
@@ -155,7 +155,7 @@ Architectural constraints and design decisions for the `lib-streaming` codebase.
 ### Background CB recovery goroutine
 
 - Each `*Producer` MUST spawn exactly one CB recovery goroutine via `runtime.SafeGoWithContextAndComponent` with `component="streaming"` and a static `goroutine_name="cb_recovery_loop"` (static label keeps panic-metric cardinality bounded).
-- The loop ticks at `clamped(cbTimeout/4, [500ms, 5s])` and calls `manager.GetState` on every registered target so gobreaker's lazy OPEN→HALF-OPEN expiry transition fires deterministically. Without this loop, an emit-only service whose breaker tripped OPEN would stay degraded forever because the hot-path early-out skips `cb.Execute`.
+- The loop ticks at `clamped(cbTimeout/4, [500ms, 5s])`. With `TenantAwareManager`, it calls `manager.GetState` on every no-tenant target breaker and `GetStateForTenant` on Producer-owned `(tenant, target)` breaker keys recorded during Emit; otherwise it calls `manager.GetState` on every registered target. This makes gobreaker's lazy OPEN→HALF-OPEN expiry transition fire deterministically. Without this loop, an emit-only service whose breaker tripped OPEN could stay degraded forever because the hot-path early-out skips breaker execution.
 - The interval is intentionally NOT directly customizable. The `CBTimeout` value is the public knob; the derived envelope is the contract.
 - Lifecycle must be coupled to the Producer: started after target/listener registration in `NewProducerMulti`, exits when `Close`/`CloseContext` closes the producer's stop channel.
 - Panic policy is `runtime.KeepRunning` — a panicking `GetState` is a real bug, not noise to swallow.

@@ -13,8 +13,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/LerianStudio/lib-commons/v5/commons/circuitbreaker"
-	"github.com/LerianStudio/lib-commons/v5/commons/log"
 	"github.com/LerianStudio/lib-commons/v5/commons/outbox"
+	"github.com/LerianStudio/lib-observability/log"
 )
 
 // --- Group 1.1: WithAllowSystemEvents opt-in ----------------------------------

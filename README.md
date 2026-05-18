@@ -9,14 +9,14 @@
 
 # lib-streaming
 
-**lib-streaming** is Lerian Studio's producer-only event publication library for CloudEvents-framed domain events. It gives Go services a catalog-driven `Emitter` API with multi-transport routing across Kafka, SQS, RabbitMQ, and EventBridge, per-target circuit breakers, route-aware outbox fallback, per-route DLQ, and observability contracts designed for financial infrastructure.
+**lib-streaming** is Lerian Studio's producer-only event publication library for CloudEvents-framed domain events. It gives Go services a catalog-driven `Emitter` API with multi-transport routing across Kafka, SQS, RabbitMQ, and EventBridge, per-target tenant-aware circuit breakers, route-aware outbox fallback, per-route DLQ, and observability contracts designed for financial infrastructure.
 
 Producer-only means this library publishes business facts. It does not consume Kafka streams, and it does not replace `github.com/LerianStudio/lib-commons/v5/commons/rabbitmq`, which remains the internal command-queue primitive.
 
 | | |
 |---|---|
 | **Module** | `github.com/LerianStudio/lib-streaming` |
-| **Go** | `1.25.9` |
+| **Go** | `1.26.2` |
 | **License** | Elastic License 2.0. See [LICENSE](./LICENSE) |
 
 ## Why lib-streaming?
@@ -25,8 +25,8 @@ Producer-only means this library publishes business facts. It does not consume K
 |---|---|
 | **Contract-First Events** | Services publish catalog-keyed events; resource, event type, schema version, content type, and default delivery policy live in immutable event definitions |
 | **CloudEvents Native** | Every message uses CloudEvents 1.0 binary-mode metadata with raw JSON payloads |
-| **Multi-Transport** | One Emit fans out to Kafka, SQS, RabbitMQ, and EventBridge in parallel; per-target circuit breakers, all-or-error semantics for required routes, best-effort for optional |
-| **Broker Resilience** | Per-target circuit breakers prevent hot-looping on broker failures and route through outbox fallback when configured. A background recovery goroutine per Producer auto-heals stuck-OPEN breakers within `CBTimeout + 5s` of broker recovery, even for emit-only services with no other CB traffic |
+| **Multi-Transport** | One Emit fans out to Kafka, SQS, RabbitMQ, and EventBridge in parallel; per-target tenant-aware circuit breakers, all-or-error semantics for required routes, best-effort for optional |
+| **Broker Resilience** | Per-target circuit breakers prevent hot-looping on broker failures and route through outbox fallback when configured. With lib-commons `TenantAwareManager`, non-system events get isolated `(tenant, target)` breakers so one tenant's outage does not reject neighbors. A background recovery goroutine per Producer auto-heals stuck-OPEN breakers within `CBTimeout + 5s` of broker recovery, even for emit-only services with no other CB traffic |
 | **Reliable Replay** | Route-aware outbox envelopes persist target name, transport, destination, policy, and event payload for deterministic replay |
 | **Forensic DLQs** | Routable failures land in the route's DLQ with structured headers for source topic, error class, retry count, failure time, and producer identity |
 | **Testing Ergonomics** | `streamingtest.MockEmitter` gives services a concurrency-safe test double with assertion helpers and wait support |
@@ -80,7 +80,7 @@ Producer-only means this library publishes business facts. It does not consume K
 
 ### Prerequisites
 
-- [Go 1.25.9+](https://go.dev/dl/)
+- [Go 1.26.2+](https://go.dev/dl/)
 - Redpanda or Kafka for direct publish and integration tests
 - Docker for testcontainers-backed integration tests
 
@@ -199,7 +199,7 @@ When `STREAMING_ENABLED=false` or the broker list is empty, callers should use `
 
 ## Multi-Transport Routing
 
-A single Emit can fan out to N targets in parallel. Per-target circuit breakers isolate failures; required routes drive the aggregate Emit outcome; optional routes are best-effort.
+A single Emit can fan out to N targets in parallel. Per-target circuit breakers isolate target failures; when the configured manager supports lib-commons `TenantAwareManager`, non-system events use tenant-scoped breakers for each target so tenant A's outage does not reject tenant B. Required routes drive the aggregate Emit outcome; optional routes are best-effort.
 
 ### Concepts
 
@@ -306,11 +306,11 @@ The Builder exposes three setters that control per-target circuit-breaker behavi
 | `CBMinRequests(int)` | `10` | Minimum request count in the rolling window before the breaker can trip |
 | `CBTimeout(time.Duration)` | `30s` | OPEN-state dwell time AND the source for the CB recovery loop's tick interval |
 
-The CB recovery goroutine runs at `clamped(cbTimeout/4, [500ms, 5s])` and calls the manager's `GetState` on every target each tick so gobreaker's lazy OPEN→HALF-OPEN transition fires deterministically. Maximum recovery latency after broker recovery is bounded at `CBTimeout + 5s + one probe round-trip`. Shorter `CBTimeout` values tighten that envelope at the cost of more aggressive trip behavior — choose by failure-budget, not by recovery time alone.
+The CB recovery goroutine runs at `clamped(cbTimeout/4, [500ms, 5s])`. With a tenant-aware manager it calls `GetState` on every no-tenant target breaker and `GetStateForTenant` for every Producer-owned `(tenant, target)` breaker key recorded during Emit; otherwise it calls `GetState` on every target. This makes gobreaker's lazy OPEN→HALF-OPEN transition fire deterministically without scanning unrelated manager inventory. Maximum recovery latency after broker recovery is bounded at `CBTimeout + 5s + one probe round-trip`. Shorter `CBTimeout` values tighten that envelope at the cost of more aggressive trip behavior — choose by failure-budget, not by recovery time alone.
 
 ### Per-target observability
 
-`streaming_circuit_state` is a single-dimension gauge tracking the **primary target only** (the first registered target). Per-target circuit-state changes are emitted through traces and logs to keep metric label cardinality bounded:
+`streaming_circuit_state` is a single-dimension gauge tracking the **primary target's no-tenant compatibility breaker only** (the first registered target). Tenant-scoped breaker state is intentionally not projected onto this gauge because the metric has no tenant dimension; use lib-commons circuit-breaker metrics/logs, which expose bounded `tenant_hash`, for per-tenant dashboards. Per-target circuit-state changes are emitted through traces and logs to keep metric label cardinality bounded:
 
 - **Span events** on the active emit span carry `target.name` and `target.cb_state` attributes. Trace-based metrics derived from these attributes give per-target dashboards without exploding the gauge series.
 - **Structured log fields**: every CB-related log line includes `target=<name>`. Log-based metric extraction (Loki / CloudWatch metric filters / GCP log metrics) is the supported path for per-target alerting.

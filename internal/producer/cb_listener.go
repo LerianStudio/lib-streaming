@@ -2,11 +2,13 @@ package producer
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 
-	"github.com/LerianStudio/lib-commons/v5/commons/assert"
 	"github.com/LerianStudio/lib-commons/v5/commons/circuitbreaker"
-	"github.com/LerianStudio/lib-commons/v5/commons/log"
-	"github.com/LerianStudio/lib-commons/v5/commons/runtime"
+	"github.com/LerianStudio/lib-observability/assert"
+	"github.com/LerianStudio/lib-observability/log"
+	"github.com/LerianStudio/lib-observability/runtime"
 )
 
 // streamingStateListener satisfies circuitbreaker.StateChangeListener for a
@@ -85,6 +87,31 @@ func (l *streamingStateListener) OnStateChange(
 	from circuitbreaker.State,
 	to circuitbreaker.State,
 ) {
+	l.onStateChange(ctx, "", serviceName, from, to)
+}
+
+// OnTenantStateChange is invoked by a lib-commons TenantAwareManager. It
+// observes both tenant-scoped breakers and the no-tenant compatibility scope.
+// Only no-tenant transitions update rt.state because a single per-target atomic
+// cannot represent N tenant-specific breaker states without reintroducing the
+// noisy-neighbor coupling this path exists to remove.
+func (l *streamingStateListener) OnTenantStateChange(
+	ctx context.Context,
+	tenantID string,
+	serviceName string,
+	from circuitbreaker.State,
+	to circuitbreaker.State,
+) {
+	l.onStateChange(ctx, tenantID, serviceName, from, to)
+}
+
+func (l *streamingStateListener) onStateChange(
+	ctx context.Context,
+	tenantID string,
+	serviceName string,
+	from circuitbreaker.State,
+	to circuitbreaker.State,
+) {
 	if l == nil {
 		// Receiver-nil DX guard: a nil listener pointer cannot fire an
 		// asserter (the fallback logger lives on the receiver). Returning
@@ -136,6 +163,7 @@ func (l *streamingStateListener) OnStateChange(
 	// dashboards that key on it.
 	producerIDField := log.String("producer_id", l.producer.producerID)
 	targetField := log.String("target", targetRT.name)
+	tenantHashField := log.String("tenant_hash", hashTenantIDForLog(tenantID))
 
 	if !recognized {
 		// Unknown state shouldn't happen for a registered breaker; log a
@@ -146,6 +174,7 @@ func (l *streamingStateListener) OnStateChange(
 		l.producer.logger.Log(ctx, log.LevelWarn, "streaming: circuit state unknown",
 			producerIDField,
 			targetField,
+			tenantHashField,
 			log.String("service", serviceName),
 			log.String("from", string(from)),
 			log.String("to", string(to)),
@@ -154,17 +183,22 @@ func (l *streamingStateListener) OnStateChange(
 		return
 	}
 
-	// Single-mirror update. The atomic.Store happens BEFORE the log call
-	// so a logger panic inside RecoverAndLogWithContext cannot lose the
-	// state update — a TRD R5 invariant pinned by
-	// TestProducer_CBListener_PanicSafe.
-	targetRT.state.Store(flag)
+	if tenantID == "" {
+		// Single-mirror update. The atomic.Store happens BEFORE the log call
+		// so a logger panic inside RecoverAndLogWithContext cannot lose the
+		// state update — a TRD R5 invariant pinned by
+		// TestProducer_CBListener_PanicSafe.
+		targetRT.state.Store(flag)
 
-	// Cardinality discipline: only the primary target drives the
-	// single-dimension streaming_circuit_state gauge. Per-target state
-	// remains observable via rt.state and structured logs.
-	if targetRT.name == l.producer.primaryTargetName {
-		l.producer.metrics.recordCircuitState(ctx, flag)
+		// Cardinality discipline: only the primary target drives the
+		// single-dimension streaming_circuit_state gauge. Per-target state
+		// remains observable via rt.state and structured logs. Tenant-scoped
+		// breaker state is intentionally excluded from this gauge because the
+		// metric has no tenant label; lib-commons emits tenant_hash-labelled
+		// circuit-breaker metrics for that surface.
+		if targetRT.name == l.producer.primaryTargetName {
+			l.producer.metrics.recordCircuitState(ctx, flag)
+		}
 	}
 
 	level := log.LevelInfo
@@ -185,10 +219,21 @@ func (l *streamingStateListener) OnStateChange(
 	l.producer.logger.Log(ctx, level, msg,
 		producerIDField,
 		targetField,
+		tenantHashField,
 		log.String("service", serviceName),
 		log.String("from", string(from)),
 		log.String("to", string(to)),
 	)
+}
+
+func hashTenantIDForLog(tenantID string) string {
+	if tenantID == "" {
+		return ""
+	}
+
+	sum := sha256.Sum256([]byte(tenantID))
+
+	return hex.EncodeToString(sum[:8])
 }
 
 // stateToFlag maps the circuitbreaker.State enum to the int32 flag values

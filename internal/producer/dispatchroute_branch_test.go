@@ -7,7 +7,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/LerianStudio/lib-commons/v5/commons/log"
+	"github.com/LerianStudio/lib-observability/log"
 	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"
 
@@ -147,6 +147,10 @@ func TestDispatchRoute_BranchMatrix(t *testing.T) {
 				}
 			},
 			setup: func(_ *testing.T, p *Producer, _ *fake.Adapter) {
+				// This case exercises the legacy no-tenant mirror branch. The
+				// tenant-aware path has separate regression coverage because it
+				// must not let one tenant's OPEN state poison another tenant.
+				p.tenantCBManager = nil
 				// Force the per-target state mirror to OPEN. The
 				// dispatch hot path consults rt.state.Load() before
 				// the underlying breaker's Execute path.
@@ -168,6 +172,7 @@ func TestDispatchRoute_BranchMatrix(t *testing.T) {
 				}
 			},
 			setup: func(_ *testing.T, p *Producer, _ *fake.Adapter) {
+				p.tenantCBManager = nil
 				p.targets["primary"].state.Store(flagCBOpen)
 			},
 			outboxWriter: &captureRouteOutboxWriter{},

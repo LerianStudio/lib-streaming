@@ -17,8 +17,8 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	"github.com/LerianStudio/lib-commons/v5/commons/circuitbreaker"
-	"github.com/LerianStudio/lib-commons/v5/commons/log"
-	libMetrics "github.com/LerianStudio/lib-commons/v5/commons/opentelemetry/metrics"
+	"github.com/LerianStudio/lib-observability/log"
+	libMetrics "github.com/LerianStudio/lib-observability/metrics"
 )
 
 // --- Shared T6 helpers. ---
@@ -561,6 +561,7 @@ func TestMetrics_OutboxRouted_RecordsCounter(t *testing.T) {
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	p := asProducer(t, emitter)
+	p.tenantCBManager = nil
 
 	// Force the per-target breaker mirror to OPEN. dispatchRoute reads
 	// rt.state before invoking rt.cb.Execute, so flipping the primary
@@ -635,6 +636,7 @@ func TestMetrics_CircuitOpen_NoOutbox_RecordsCircuitOpenOutcome(t *testing.T) {
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	p := asProducer(t, emitter)
+	p.tenantCBManager = nil
 	p.setTargetState("primary", flagCBOpen)
 
 	err = emitter.Emit(context.Background(), sampleRequest())

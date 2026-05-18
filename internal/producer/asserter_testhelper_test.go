@@ -5,7 +5,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/LerianStudio/lib-commons/v5/commons/log"
+	"github.com/LerianStudio/lib-observability/log"
 )
 
 // captureLogger is a minimal log.Logger that records every Log call so tests

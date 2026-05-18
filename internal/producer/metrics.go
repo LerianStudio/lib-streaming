@@ -4,8 +4,8 @@ import (
 	"context"
 	"sync"
 
-	"github.com/LerianStudio/lib-commons/v5/commons/log"
-	"github.com/LerianStudio/lib-commons/v5/commons/opentelemetry/metrics"
+	"github.com/LerianStudio/lib-observability/log"
+	"github.com/LerianStudio/lib-observability/metrics"
 )
 
 // Outcome label values. The "outcome" label on streaming metrics is a closed

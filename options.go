@@ -5,9 +5,9 @@ import (
 	"time"
 
 	"github.com/LerianStudio/lib-commons/v5/commons/circuitbreaker"
-	"github.com/LerianStudio/lib-commons/v5/commons/log"
-	"github.com/LerianStudio/lib-commons/v5/commons/opentelemetry/metrics"
 	"github.com/LerianStudio/lib-commons/v5/commons/outbox"
+	"github.com/LerianStudio/lib-observability/log"
+	"github.com/LerianStudio/lib-observability/metrics"
 	"github.com/twmb/franz-go/pkg/sasl"
 	"go.opentelemetry.io/otel/trace"
 
@@ -28,7 +28,9 @@ func WithMetricsFactory(f *metrics.MetricsFactory) EmitterOption {
 // WithTracer overrides the tracer used for streaming emit spans.
 func WithTracer(t trace.Tracer) EmitterOption { return producer.WithTracer(t) }
 
-// WithCircuitBreakerManager lets the caller share a process-level breaker manager.
+// WithCircuitBreakerManager lets the caller share a process-level breaker
+// manager. When the manager also satisfies circuitbreaker.TenantAwareManager,
+// non-system events use tenant-scoped breakers keyed by Event.TenantID.
 func WithCircuitBreakerManager(m circuitbreaker.Manager) EmitterOption {
 	return producer.WithCircuitBreakerManager(m)
 }

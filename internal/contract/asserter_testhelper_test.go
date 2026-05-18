@@ -2,7 +2,7 @@
 
 package contract
 
-import "github.com/LerianStudio/lib-commons/v5/commons/log"
+import "github.com/LerianStudio/lib-observability/log"
 
 // setContractAsserterLogger overrides the package-default logger that
 // backs every contract-package asserter. Returns the previous logger so

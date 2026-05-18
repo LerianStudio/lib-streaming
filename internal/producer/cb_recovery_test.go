@@ -35,7 +35,7 @@ import (
 	"time"
 
 	"github.com/LerianStudio/lib-commons/v5/commons/circuitbreaker"
-	"github.com/LerianStudio/lib-commons/v5/commons/log"
+	"github.com/LerianStudio/lib-observability/log"
 
 	"github.com/LerianStudio/lib-streaming/internal/contract"
 	"github.com/LerianStudio/lib-streaming/internal/transport/fake"

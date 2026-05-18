@@ -9,7 +9,7 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 
 	"github.com/LerianStudio/lib-commons/v5/commons/circuitbreaker"
-	"github.com/LerianStudio/lib-commons/v5/commons/log"
+	"github.com/LerianStudio/lib-observability/log"
 	"github.com/LerianStudio/lib-streaming/internal/contract"
 	"github.com/LerianStudio/lib-streaming/internal/transport"
 	"github.com/LerianStudio/lib-streaming/internal/transport/kafka"
@@ -106,8 +106,12 @@ func NewProducerMulti(
 		cbManager = mgr
 	}
 
+	tenantCBManager, _ := cbManager.(circuitbreaker.TenantAwareManager)
+
 	p := &Producer{
 		cbManager:          cbManager,
+		tenantCBManager:    tenantCBManager,
+		cbConfig:           cbCfg,
 		tracer:             resolveTracer(resolvedOpts.tracer),
 		logger:             logger,
 		metrics:            newStreamingMetrics(resolvedOpts.metricsFactory, logger),
@@ -172,6 +176,11 @@ func NewProducerMulti(
 			return nil, fmt.Errorf("streaming: register circuit breaker %q: %w", serviceName, err)
 		}
 
+		if isNilInterface(cb) {
+			rollbackTargetAdapters(p)
+			return nil, fmt.Errorf("%w: circuit breaker %q is nil", contract.ErrNilProducer, serviceName)
+		}
+
 		rt := &targetRuntime{
 			name:          spec.Name,
 			kind:          spec.Kind,
@@ -206,7 +215,12 @@ func NewProducerMulti(
 	// right per-target mirror (or ignore foreign traffic). Use a single
 	// shared listener across targets; it filters by service name
 	// internally.
-	p.cbManager.RegisterStateChangeListener(&streamingStateListener{producer: p})
+	listener := &streamingStateListener{producer: p}
+	if !isNilInterface(p.tenantCBManager) {
+		p.tenantCBManager.RegisterTenantStateChangeListener(listener)
+	} else {
+		p.cbManager.RegisterStateChangeListener(listener)
+	}
 
 	// Background CB recovery goroutine: starts AFTER listener registration
 	// so any transitions fired by the very first GetState poke are

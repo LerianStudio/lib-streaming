@@ -36,10 +36,11 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/LerianStudio/lib-commons/v5/commons/log"
+	"github.com/LerianStudio/lib-commons/v5/commons/circuitbreaker"
 	"github.com/LerianStudio/lib-commons/v5/commons/outbox"
 	outboxpg "github.com/LerianStudio/lib-commons/v5/commons/outbox/postgres"
 	libPostgres "github.com/LerianStudio/lib-commons/v5/commons/postgres"
+	"github.com/LerianStudio/lib-observability/log"
 	"github.com/LerianStudio/lib-streaming/internal/contract"
 )
 
@@ -819,8 +820,8 @@ CREATE TABLE IF NOT EXISTS outbox_events (
 	stopTimeout := 5 * time.Second
 	require.NoError(t, rpContainer.Stop(ctx, &stopTimeout), "redpanda Stop")
 
-	// Force the mirrored CB state to OPEN so emitAttempt takes the
-	// outbox fallback branch deterministically. Without this, the test
+	// Force the legacy no-tenant mirrored CB state to OPEN so emitAttempt takes
+	// the outbox fallback branch deterministically. Without this, the test
 	// depends on an extremely narrow race window: gobreaker's Execute
 	// allowing a call through while the flag is still OPEN. Setting the
 	// flag directly matches what the state-change listener does in
@@ -839,8 +840,11 @@ CREATE TABLE IF NOT EXISTS outbox_events (
 	// breaker flips, which inflates the test by 30s+ for no additional
 	// assurance. The outbox-fallback BEHAVIOUR under a real broker partition
 	// is what this test verifies; the breaker-trip MECHANICS are covered by
-	// the CB unit tests and chaos_test.go. Trade-off chosen deliberately.
+	// the CB unit tests and chaos_test.go. Tenant-aware outbox fallback is
+	// covered in unit tests; this integration test pins the repository write
+	// path and therefore intentionally uses the legacy mirror branch.
 	p.setTargetState("primary", flagCBOpen)
+	p.tenantCBManager = nil
 
 	// Emit events with the flag forced OPEN. Each call now hits the
 	// outbox fallback inside emitAttempt and returns nil.
@@ -1051,9 +1055,11 @@ func TestIntegration_CircuitBreaker_TripsOrganically(t *testing.T) {
 	}
 	baselineCancel()
 
-	// Confirm the per-target state mirror is still CLOSED — baseline succeeded.
-	require.Equal(t, int32(flagCBClosed), p.targetState("primary"),
-		"baseline should leave breaker CLOSED")
+	serviceName := p.targets["primary"].cbServiceName
+
+	// Confirm the tenant-scoped breaker is still CLOSED — baseline succeeded.
+	require.Equal(t, circuitbreaker.StateClosed, p.tenantCBManager.GetStateForTenant("tenant-cb-organic", serviceName),
+		"baseline should leave tenant breaker CLOSED")
 
 	// Stop the broker. Short timeout so the test doesn't stall on
 	// graceful shutdown.
@@ -1061,8 +1067,8 @@ func TestIntegration_CircuitBreaker_TripsOrganically(t *testing.T) {
 	require.NoError(t, rpContainer.Stop(context.Background(), &stopTimeout),
 		"redpanda Stop")
 
-	// Emit enough events post-stop that publishDirect's failures feed
-	// the breaker past the ratio threshold. Each Emit blocks up to
+	// Emit enough events post-stop that publishDirect's failures feed the
+	// tenant-scoped breaker past the ratio threshold. Each Emit blocks up to
 	// RecordDeliveryTimeout (2s) before surfacing the failure, so we
 	// give the loop a generous ceiling and break early when the flag
 	// flips.
@@ -1074,18 +1080,18 @@ func TestIntegration_CircuitBreaker_TripsOrganically(t *testing.T) {
 		// Emit returns an error (ErrCircuitOpen eventually, or the
 		// underlying broker-unreachable error before the trip). We
 		// don't assert on the specific shape — the load-bearing
-		// invariant is the flag transition below.
+		// invariant is the tenant-scoped state transition below.
 		_ = p.Emit(emitCtx, eventToRequest(healthyEvent(i+100)))
 		emitCancel()
 
-		if p.targetState("primary") == flagCBOpen {
+		if p.tenantCBManager.GetStateForTenant("tenant-cb-organic", serviceName) == circuitbreaker.StateOpen {
 			observedOpen = true
 			break
 		}
 	}
 
 	require.True(t, observedOpen,
-		"primary target state never transitioned to OPEN after broker stop; "+
+		"tenant-scoped primary target state never transitioned to OPEN after broker stop; "+
 			"organic trip path is broken")
 
 	// Post-trip Emit should fail-fast with ErrCircuitOpen (no outbox

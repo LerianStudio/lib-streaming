@@ -13,7 +13,7 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 
 	"github.com/LerianStudio/lib-commons/v5/commons/circuitbreaker"
-	"github.com/LerianStudio/lib-commons/v5/commons/log"
+	"github.com/LerianStudio/lib-observability/log"
 )
 
 // --- Fake circuitbreaker.Manager + CircuitBreaker for deterministic CB
@@ -128,8 +128,15 @@ func (f *fakeCBManager) GetOrCreate(name string, _ circuitbreaker.Config) (circu
 	return b, nil
 }
 
-func (f *fakeCBManager) Execute(_ string, _ func() (any, error)) (any, error) {
-	return nil, errors.New("fakeCBManager.Execute unused in tests")
+func (f *fakeCBManager) Execute(name string, fn func() (any, error)) (any, error) {
+	f.mu.Lock()
+	breaker, ok := f.breakers[name]
+	f.mu.Unlock()
+	if !ok {
+		return nil, errors.New("fakeCBManager.Execute breaker not found")
+	}
+
+	return breaker.Execute(fn)
 }
 
 func (f *fakeCBManager) GetState(name string) circuitbreaker.State {

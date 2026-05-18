@@ -286,7 +286,7 @@ func (p *Producer) dispatchRoute(
 	// corruption invariant violation — fire the trident so the break is
 	// visible on dashboards, then short-circuit with the documented
 	// ErrNilProducer cause so the public contract stays unchanged.
-	if rt.cb == nil || rt.adapter == nil {
+	if isNilInterface(rt.cb) || isNilInterface(rt.adapter) {
 		a := p.newAsserter("emit_multi.dispatch_route")
 		_ = a.NotNil(ctx, rt.cb, "target circuit breaker must be initialized post-construction",
 			"producer_id", p.producerID,
@@ -407,7 +407,9 @@ func (p *Producer) dispatchRoute(
 		return outcome
 	}
 
-	// Pre-CB circuit-state mirror check. A subsequent cb.Execute may
+	cbScope := circuitBreakerScopeForEvent(event)
+
+	// Pre-CB circuit-state mirror check. A subsequent CB manager execution may
 	// short-circuit with gobreaker.ErrOpenState if the breaker flipped
 	// between this check and the Execute call; the Execute branch below
 	// handles that race by routing to the same fallback path.
@@ -420,7 +422,7 @@ func (p *Producer) dispatchRoute(
 	// this assignment, the deferred recordEmitted/recordEmitDuration
 	// would log a still-empty outcome.state for every route that exits
 	// through these branches.
-	if rt.state.Load() == flagCBOpen {
+	if p.isRouteCircuitOpen(rt, cbScope) {
 		outcome = p.handleRouteCircuitOpen(ctx, span, event, topic, definitionKey, route, routePolicy, outcome)
 		return outcome
 	}
@@ -433,7 +435,7 @@ func (p *Producer) dispatchRoute(
 		return outcome
 	}
 
-	outcome = p.executeRoutePublish(ctx, span, rt, event, topic, definitionKey, route, routePolicy, message, outcome)
+	outcome = p.executeRoutePublish(ctx, span, rt, cbScope, event, topic, definitionKey, route, routePolicy, message, outcome)
 
 	return outcome
 }
@@ -446,6 +448,7 @@ func (p *Producer) executeRoutePublish(
 	ctx context.Context,
 	span trace.Span,
 	rt *targetRuntime,
+	cbScope circuitBreakerScope,
 	event Event,
 	topic string,
 	definitionKey string,
@@ -456,13 +459,22 @@ func (p *Producer) executeRoutePublish(
 ) routeOutcome {
 	firstAttempt := time.Now().UTC()
 
-	_, execErr := rt.cb.Execute(func() (any, error) {
+	_, execErr := p.executeWithCircuitBreaker(ctx, rt, cbScope, func() (any, error) {
 		if p.closed.Load() {
 			return nil, ErrEmitterClosed
 		}
 
 		return nil, rt.adapter.Publish(ctx, message)
 	})
+	if execErr != nil && errors.Is(execErr, ErrNilProducer) {
+		outcome.state = outcomeFailed
+		outcome.class = rt.adapter.Classify(execErr)
+		outcome.cause = execErr
+		span.RecordError(execErr)
+
+		return outcome
+	}
+
 	if execErr == nil {
 		outcome.state = outcomeProduced
 

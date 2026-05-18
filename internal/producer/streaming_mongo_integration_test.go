@@ -19,10 +19,10 @@ import (
 	mongooptions "go.mongodb.org/mongo-driver/mongo/options"
 	"go.opentelemetry.io/otel/trace/noop"
 
-	"github.com/LerianStudio/lib-commons/v5/commons/log"
 	libMongo "github.com/LerianStudio/lib-commons/v5/commons/mongo"
 	"github.com/LerianStudio/lib-commons/v5/commons/outbox"
 	outboxmongo "github.com/LerianStudio/lib-commons/v5/commons/outbox/mongo"
+	"github.com/LerianStudio/lib-observability/log"
 )
 
 // mongoImage pins the MongoDB container image used by the Mongo-backed outbox
@@ -215,6 +215,10 @@ func TestIntegration_MongoOutboxReplay(t *testing.T) {
 
 	const tenantID = "tenant-outbox-mongo-it"
 	tenantCtx := outbox.ContextWithTenantID(ctx, tenantID)
+	// This test verifies Mongo-backed outbox replay, not tenant breaker
+	// mechanics. Force the legacy no-tenant mirror branch so the outbox write
+	// path is deterministic without stopping the broker.
+	p.tenantCBManager = nil
 	p.setTargetState("primary", flagCBOpen)
 
 	payload := json.RawMessage(`{"post":"mongo-replay"}`)
@@ -289,7 +293,6 @@ func TestIntegration_MongoOutboxTransactionAtomicity(t *testing.T) {
 		}
 	})
 
-	p.setTargetState("primary", flagCBOpen)
 	database, err := mongoClient.Database(ctx)
 	require.NoError(t, err, "mongoClient.Database")
 	businessCollection := database.Collection("business_atomicity")
@@ -300,6 +303,11 @@ func TestIntegration_MongoOutboxTransactionAtomicity(t *testing.T) {
 	const tenantID = "tenant-outbox-mongo-tx"
 	tenantCtx := outbox.ContextWithTenantID(ctx, tenantID)
 	rollbackSentinel := errors.New("rollback sentinel")
+	// This test verifies Mongo transaction coupling for outbox writes. Use the
+	// legacy no-tenant mirror branch so Emit writes the outbox row synchronously
+	// inside the caller's transaction.
+	p.tenantCBManager = nil
+	p.setTargetState("primary", flagCBOpen)
 
 	rollbackSession, err := driverClient.StartSession()
 	require.NoError(t, err)
