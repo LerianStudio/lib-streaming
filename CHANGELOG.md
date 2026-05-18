@@ -1,8 +1,19 @@
-# Changelog
+# Lib-streaming Changelog
 
-All notable changes to `lib-streaming` are documented here. The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## [1.2.0](https://github.com/LerianStudio/lib-streaming/releases/tag/v1.2.0)
 
-The module path is `github.com/LerianStudio/lib-streaming` (bare; no `/vN` suffix while on v0/v1 per Go's semantic-import-versioning rules). A `/v2` path-major suffix enters only when the first v2.0.0 breaking release is cut.
+- **Features**
+  - Add tenant CB isolation to streaming.
+
+- **Fixes**
+  - Allow `develop` as a source branch for PRs targeting `main`.
+  - Align workflows with shared workflows `v1.28.5` boilerplate.
+
+Contributors: @bedatty, @fredcamaral
+
+[Compare changes](https://github.com/LerianStudio/lib-streaming/compare/v1.1.0...v1.2.0)
+
+---
 
 ## [Unreleased]
 
@@ -42,3 +53,4 @@ The module path is `github.com/LerianStudio/lib-streaming` (bare; no `/vN` suffi
 
 - The new CB recovery goroutine is intentionally not directly customizable. The interval is derived from the configured `CBTimeout` and clamped to `[500ms, 5s]`. If your service has reason to override this envelope, raise an issue with the use case before adding a `WithCBRecoveryInterval(...)` option — every additional knob on the public API surface ages.
 - The recovery goroutine emits no dedicated metric. Its health is observable through (a) `assertion_failed_total{component="streaming",operation="cb_recovery.start"}` for invariant violations at start, (b) `panic_recovered_total{component="streaming",goroutine_name="cb_recovery_loop"}` if `GetState` panics after consuming services initialize panic metrics with `runtime.InitPanicMetrics(...)`, and (c) lib-commons' own circuit-breaker transition logs (INFO/ERROR per OPEN↔HALF-OPEN↔CLOSED move). A "stuck loop with no panics and no transitions" failure mode would be silent on dashboards — consider this when alerting.
+
