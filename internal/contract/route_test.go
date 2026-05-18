@@ -513,6 +513,10 @@ func TestDestinationValidate_RejectsSecuritySensitiveTopology(t *testing.T) {
 			destination: Destination{Kind: TransportCustom, Name: "custom", Attributes: map[string]string{"authorization": "Bearer redacted"}},
 		},
 		{
+			name:        "PII attribute key from lib-observability defaults",
+			destination: Destination{Kind: TransportCustom, Name: "custom", Attributes: map[string]string{"account_number": "redacted"}},
+		},
+		{
 			name:        "dotted headers authorization attribute key",
 			destination: Destination{Kind: TransportCustom, Name: "custom", Attributes: map[string]string{"headers.Authorization": "redacted"}},
 		},

@@ -5,37 +5,39 @@ import (
 	"regexp"
 	"strings"
 
-	commonsSanitize "github.com/LerianStudio/lib-commons/v5/commons/security/sanitize"
+	"github.com/LerianStudio/lib-observability/constants"
+	"github.com/LerianStudio/lib-observability/redaction"
 )
 
-// redactedMarker is the canonical lib-commons replacement string substituted
-// for credentials. Keeping the marker sourced from lib-commons preserves a
-// single operator-facing redaction contract across Lerian packages while this
-// package retains its broker-URL-specific redaction logic.
-const redactedMarker = commonsSanitize.SecretRedactionMarker
+var streamingSensitiveFieldExtras = []string{
+	"signature",
+	"accesskeyid",
+	"aws_access_key_id",
+	"aws_secret_access_key",
+	"aws_session_token",
+	"awsacceskeyid",
+	"awsaccesskeyid",
+	"awssecretaccesskey",
+	"awssessiontoken",
+	"secretaccesskey",
+	"sessiontoken",
+	"x-amz-credential",
+	"x-amz-security-token",
+	"x-amz-signature",
+	"xamzcredential",
+	"xamzsecuritytoken",
+	"xamzsignature",
+}
 
 // urlPattern matches scheme://rest-of-URL sequences. Kept intentionally simple
 // to mirror github.com/LerianStudio/lib-commons/v5/commons/rabbitmq/rabbitmq.go:129. Credential redaction is applied
 // per-match via url.Parse and a fallback regex.
 var urlPattern = regexp.MustCompile(`[a-zA-Z][a-zA-Z0-9+.-]*://[^\s]+`)
 
-// kvCredentialPattern targets credential-shaped key/value pairs that may
-// appear in config dumps or error messages outside of URLs. Case-insensitive;
-// value stops at whitespace or common separators.
-//
-// The covered key set is the canonical Lerian secret-redaction list:
-//   - password / passwd / pass — broker auth, DB connection strings
-//   - secret / client_secret  — OAuth client secrets, app secrets
-//   - token / bearer          — JWTs, OAuth bearer tokens
-//   - apikey / api_key / api-key — API keys (multiple separator forms)
-//   - auth / authorization    — generic auth headers
-//
-// New keys MAY be added without breaking the operator contract (the marker
-// stays "****"). REMOVING a key requires a CHANGELOG entry — log streams
-// downstream may depend on these patterns being redacted.
-var kvCredentialPattern = regexp.MustCompile(
-	`(?i)\b(password|passwd|pass|secret|client[_-]?secret|token|bearer|apikey|api[_-]?key|auth|authorization|aws[_-]?access[_-]?key[_-]?id|aws[_-]?secret[_-]?access[_-]?key|aws[_-]?session[_-]?token|x-amz-security-token|x-amz-credential|x-amz-signature|awsaccesskeyid|signature)=[^\s,;&]+`,
-)
+// keyValuePattern finds key=value fragments in URL queries, config dumps, and
+// broker/client errors. Sensitivity is decided by lib-observability/redaction,
+// not by a package-local secret taxonomy.
+var keyValuePattern = regexp.MustCompile(`(?i)\b([a-z][a-z0-9._-]*)([[:space:]]*=[[:space:]]*)([^\s,;&]+)`)
 
 var authHeaderCredentialPattern = regexp.MustCompile(`(?i)\b(authorization|auth)([[:space:]]*:[[:space:]]*)([a-z][a-z0-9._~+/-]*)([[:space:]]+)[^\s,;&]+`)
 
@@ -43,11 +45,12 @@ var authKeyValueCredentialPattern = regexp.MustCompile(`(?i)\b(authorization|aut
 
 var bareAWSAccessKeyIDPattern = regexp.MustCompile(`\b(AKIA|ASIA)[0-9A-Z]{16}\b`)
 
-// sanitizeBrokerURL strips credentials from broker URLs and "password=" /
-// "pass=" key-value pairs. Returns the sanitized message.
+// sanitizeBrokerURL strips credentials from broker URLs and sensitive key-value
+// pairs. Returns the sanitized message.
 //
-// Mirrors the regex-driven strategy of github.com/LerianStudio/lib-commons/v5/commons/rabbitmq/rabbitmq.go:129
-// (URL pattern) and the redaction token from github.com/LerianStudio/lib-commons/v5/commons/rabbitmq/rabbitmq.go:124.
+// Keeps URL parsing local because broker errors often embed malformed URL-like
+// fragments, but delegates field sensitivity and the replacement marker to
+// lib-observability.
 // Safe to call on empty strings and messages without credentials.
 func sanitizeBrokerURL(s string) string {
 	if s == "" {
@@ -67,7 +70,7 @@ func sanitizeBrokerURL(s string) string {
 			return match
 		}
 
-		return parts[1] + parts[2] + parts[3] + parts[4] + redactedMarker
+		return parts[1] + parts[2] + parts[3] + parts[4] + constants.ObfuscatedValue
 	})
 
 	// Redact Authorization/Auth key-value forms with space-separated schemes.
@@ -79,22 +82,23 @@ func sanitizeBrokerURL(s string) string {
 			return match
 		}
 
-		return parts[1] + parts[2] + redactedMarker
+		return parts[1] + parts[2] + constants.ObfuscatedValue
 	})
 
-	// Redact bare "password=..." / "pass=..." KV pairs.
-	s = kvCredentialPattern.ReplaceAllStringFunc(s, func(match string) string {
-		eq := strings.Index(match, "=")
-		if eq < 0 {
+	// Redact sensitive key-value pairs according to the centralized
+	// lib-observability field taxonomy, including PII and financial identifiers.
+	s = keyValuePattern.ReplaceAllStringFunc(s, func(match string) string {
+		parts := keyValuePattern.FindStringSubmatch(match)
+		if len(parts) != 4 || !isSensitiveKeyValueFieldName(parts[1]) {
 			return match
 		}
 
-		return match[:eq+1] + redactedMarker
+		return parts[1] + parts[2] + constants.ObfuscatedValue
 	})
 
 	// Redact bare AWS access key IDs even when they are not attached to a field
 	// name (for example, broker/client libraries sometimes echo only the ID).
-	s = bareAWSAccessKeyIDPattern.ReplaceAllString(s, redactedMarker)
+	s = bareAWSAccessKeyIDPattern.ReplaceAllString(s, constants.ObfuscatedValue)
 
 	return s
 }
@@ -105,8 +109,8 @@ func SanitizeBrokerURL(s string) string {
 
 // redactURLCandidate applies URL-aware redaction to a single URL-shaped token.
 // Uses a manual authority split so the redacted marker is emitted verbatim
-// (url.URL.String() percent-escapes the userinfo, which would turn "****"
-// into "%2A%2A%2A%2A"). url.Parse is used only to detect whether the
+// (url.URL.String() percent-escapes the userinfo marker). url.Parse is used
+// only to detect whether the
 // candidate contains a password; the replacement is string-level.
 func redactURLCandidate(candidate string) string {
 	// Trim trailing punctuation that is not part of the URL.
@@ -170,8 +174,16 @@ func fallbackRedact(token string) string {
 
 	userinfo := rest[:atIndex]
 	if strings.Contains(userinfo, ":") {
-		return token[:schemeSep+3] + redactedMarker + ":" + redactedMarker + tail
+		return token[:schemeSep+3] + constants.ObfuscatedValue + ":" + constants.ObfuscatedValue + tail
 	}
 
-	return token[:schemeSep+3] + redactedMarker + tail
+	return token[:schemeSep+3] + constants.ObfuscatedValue + tail
+}
+
+func isSensitiveFieldName(fieldName string) bool {
+	return redaction.IsSensitiveField(fieldName, streamingSensitiveFieldExtras...)
+}
+
+func isSensitiveKeyValueFieldName(fieldName string) bool {
+	return strings.EqualFold(strings.TrimSpace(fieldName), "pass") || isSensitiveFieldName(fieldName)
 }

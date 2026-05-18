@@ -11,7 +11,6 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/LerianStudio/lib-commons/v5/commons/security"
 	"github.com/LerianStudio/lib-commons/v5/commons/security/ssrf"
 	"github.com/LerianStudio/lib-observability/assert"
 	"github.com/LerianStudio/lib-observability/log"
@@ -592,8 +591,9 @@ func validateRouteHeaderFields(route RouteDefinition) error {
 
 var (
 	routeKeyPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*(\.[a-z0-9][a-z0-9-]*)+$`)
-	// Matches credential-looking assignments such as "password=...", "x-amz-signature:", and "api_key =". Covered by route/sanitize tests.
-	credentialAssignmentPattern = regexp.MustCompile(`(?i)(^|[^a-z0-9])(password|secret|token|signature|credential|api[_-]?key|apiKey|x[_-]?amz[_-]?(signature|credential|security[_-]?token)|AWSAccessKeyId|aws[_-]?(session[_-]?token|secret[_-]?access[_-]?key|access[_-]?key[_-]?id)|access[_-]?key|secretAccessKey|clientSecret|authorization|auth)[[:space:]]*[:=]`)
+	// Matches assignment-like fields; sensitivity of the captured key is decided
+	// by lib-observability/redaction plus streaming-specific extras.
+	sensitiveAssignmentPattern = regexp.MustCompile(`(?i)(^|[^a-z0-9])([a-z][a-z0-9._-]*)([[:space:]]*[:=])`)
 	// Matches inline auth schemes such as "Bearer abc" or "Basic abc". Covered by route/sanitize tests.
 	authSchemeCredentialPattern = regexp.MustCompile(`(?i)(^|[^a-z0-9])(bearer|basic|token)[[:space:]:=]+[a-z0-9._~+/=-]+`)
 	// Matches AWS access key IDs (AKIA/ASIA + 16 uppercase base32-ish chars). Covered by route/sanitize tests.
@@ -614,34 +614,6 @@ var (
 	jwtBarePattern = regexp.MustCompile(`\beyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b`)
 )
 
-var compoundSensitiveFieldContextTokens = map[string]struct{}{
-	"auth":    {},
-	"header":  {},
-	"headers": {},
-	"proxy":   {},
-	"x":       {},
-}
-
-var compoundCredentialTokens = [...]string{
-	"apikey",
-	"awsaccesskeyid",
-	"accesskeyid",
-	"secretaccesskey",
-	"xamzcredential",
-	"xamzsecuritytoken",
-	"xamzsignature",
-	"awsacceskeyid",
-	"awsaccesskeyid",
-	"awssessiontoken",
-	"awssecretaccesskey",
-	"clientsecret",
-	"signature",
-	"accesskey",
-	"password",
-	"secret",
-	"token",
-}
-
 // ContainsCredentialLikeMaterial reports whether value carries explicit
 // credential material or a credential-shaped key. Plain business words such as
 // "authorization" and "tokenization" are intentionally allowed when they are
@@ -651,7 +623,7 @@ func ContainsCredentialLikeMaterial(value string) bool {
 }
 
 func containsCredentialLikeMaterial(value string) bool {
-	if credentialAssignmentPattern.MatchString(value) || authSchemeCredentialPattern.MatchString(value) || awsAccessKeyIDPattern.MatchString(value) {
+	if containsSensitiveAssignment(value) || authSchemeCredentialPattern.MatchString(value) || awsAccessKeyIDPattern.MatchString(value) {
 		return true
 	}
 
@@ -672,9 +644,13 @@ func containsCredentialLikeMaterial(value string) bool {
 		return true
 	}
 
-	compact := compactCredentialToken(value)
-	for _, token := range compoundCredentialTokens {
-		if compact == token {
+	return false
+}
+
+func containsSensitiveAssignment(value string) bool {
+	matches := sensitiveAssignmentPattern.FindAllStringSubmatch(value, -1)
+	for _, match := range matches {
+		if len(match) >= 3 && isSensitiveKeyValueFieldName(match[2]) {
 			return true
 		}
 	}
@@ -692,33 +668,18 @@ func isCredentialLikeFieldName(value string) bool {
 		return false
 	}
 
-	if !strings.ContainsAny(trimmed, "._-") && security.IsSensitiveField(trimmed) {
-		return true
-	}
-
 	components := splitRouteFieldName(trimmed)
-	if len(components) < 2 {
-		return false
+	if isSensitiveFieldName(trimmed) {
+		return !isAllowedBusinessSensitivePhrase(components)
 	}
-
-	hasSensitiveComponent := false
-	hasHeaderContext := false
 
 	for _, component := range components {
-		if component == "" {
-			continue
-		}
-
-		if security.IsSensitiveField(component) {
-			hasSensitiveComponent = true
-		}
-
-		if _, ok := compoundSensitiveFieldContextTokens[strings.ToLower(component)]; ok {
-			hasHeaderContext = true
+		if isSensitiveFieldName(component) {
+			return true
 		}
 	}
 
-	return hasSensitiveComponent && hasHeaderContext
+	return false
 }
 
 func splitRouteFieldName(value string) []string {
@@ -727,17 +688,40 @@ func splitRouteFieldName(value string) []string {
 	})
 }
 
-func compactCredentialToken(value string) string {
-	var builder strings.Builder
-	builder.Grow(len(value))
+func isAllowedBusinessSensitivePhrase(components []string) bool {
+	if len(components) < 3 {
+		return false
+	}
 
-	for _, r := range value {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
-			builder.WriteRune(r)
+	hasAllowedBusinessToken := false
+	for _, component := range components {
+		lower := strings.ToLower(component)
+		if isCredentialContextComponent(lower) {
+			return false
+		}
+
+		if !isSensitiveFieldName(component) {
+			continue
+		}
+
+		switch lower {
+		case "authorization", "token":
+			hasAllowedBusinessToken = true
+		default:
+			return false
 		}
 	}
 
-	return strings.ToLower(builder.String())
+	return hasAllowedBusinessToken
+}
+
+func isCredentialContextComponent(component string) bool {
+	switch component {
+	case "auth", "header", "headers", "proxy", "x", "aws", "amz", "access", "session", "security":
+		return true
+	default:
+		return false
+	}
 }
 
 var tenantTopologyTokens = [...]string{
