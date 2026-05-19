@@ -673,10 +673,8 @@ func isCredentialLikeFieldName(value string) bool {
 		return !isAllowedBusinessSensitivePhrase(components)
 	}
 
-	for _, component := range components {
-		if isSensitiveFieldName(component) {
-			return true
-		}
+	if slices.ContainsFunc(components, isSensitiveFieldName) {
+		return true
 	}
 
 	return false
@@ -694,6 +692,7 @@ func isAllowedBusinessSensitivePhrase(components []string) bool {
 	}
 
 	hasAllowedBusinessToken := false
+
 	for _, component := range components {
 		lower := strings.ToLower(component)
 		if isCredentialContextComponent(lower) {

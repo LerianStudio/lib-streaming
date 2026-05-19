@@ -6,7 +6,7 @@ This file provides repository-specific guidance for coding agents working on `li
 
 - Module: `github.com/LerianStudio/lib-streaming`
 - Language: Go
-- Go version: `1.26.2` (see `go.mod`)
+- Go version: `1.26.3` (see `go.mod`)
 - Current API version: 1.0.0 (module path carries no `/vN` suffix — Go's semantic-import-versioning rule forbids a path-major suffix at major versions 0 and 1. A `/v2` suffix only enters when the first true breaking release is cut. See `CHANGELOG.md` for tagged history.)
 - Layout: public root facade at the repository root (`package streaming`) with implementation in internal packages (`internal/contract`, `internal/config`, `internal/manifest`, `internal/cloudevents`, `internal/emitter`, `internal/producer`, `internal/transport`). Public test helpers live in `streamingtest`. Scaffolding (`docs/`, `.github/`, `scripts/`) stays in subdirectories.
 

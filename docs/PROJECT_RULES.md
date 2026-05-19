@@ -51,7 +51,7 @@ Architectural constraints and design decisions for the `lib-streaming` codebase.
 ## 3. Required Libraries
 
 - Module path: `github.com/LerianStudio/lib-streaming` (bare path; no `/vN` suffix while on v0/v1 per Go's semantic-import-versioning rules).
-- Go version: `1.26.2` as declared in `go.mod`.
+- Go version: `1.26.3` as declared in `go.mod`.
 - Commons: use `github.com/LerianStudio/lib-commons/v5` primitives where they are the Lerian standard.
 - Assertions: use `github.com/LerianStudio/lib-commons/v5/commons/assert` for post-construction internal invariants.
 - Panic observability: consuming services must initialize `commons/runtime` panic metrics and call `runtime.SetProductionMode` to scrub panic values before telemetry; this library must not add naked goroutines or unobservable recovery paths.

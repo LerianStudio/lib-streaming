@@ -16,7 +16,7 @@ Producer-only means this library publishes business facts. It does not consume K
 | | |
 |---|---|
 | **Module** | `github.com/LerianStudio/lib-streaming` |
-| **Go** | `1.26.2` |
+| **Go** | `1.26.3` |
 | **License** | Elastic License 2.0. See [LICENSE](./LICENSE) |
 
 ## Why lib-streaming?
@@ -80,7 +80,7 @@ Producer-only means this library publishes business facts. It does not consume K
 
 ### Prerequisites
 
-- [Go 1.26.2+](https://go.dev/dl/)
+- [Go 1.26.3+](https://go.dev/dl/)
 - Redpanda or Kafka for direct publish and integration tests
 - Docker for testcontainers-backed integration tests
 
