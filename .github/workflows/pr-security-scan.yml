@@ -20,7 +20,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6.0.2
       - name: Fail if container manifests appear while Docker scan is disabled
         run: |
           set -euo pipefail

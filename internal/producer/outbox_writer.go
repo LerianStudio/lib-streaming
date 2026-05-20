@@ -23,11 +23,10 @@ type OutboxWriter interface {
 // ambient SQL transaction.
 //
 // MongoDB transactions do not flow through this interface. With the
-// lib-commons/outbox/mongo repository, callers must invoke Emit with a
-// go.mongodb.org/mongo-driver/mongo.SessionContext from the v1 driver; the
-// regular Write(ctx, ...) path carries that session-bound context into the
-// repository and joins the MongoDB transaction there. Driver v2 session
-// contexts are a different type and are not joined by the v1 repository path.
+// lib-commons/outbox/mongo repository, callers must invoke Emit with the
+// context passed to mongo.Session.WithTransaction or mongo.NewSessionContext;
+// the regular Write(ctx, ...) path carries that session-bound context into the
+// repository and joins the MongoDB transaction there.
 type TransactionalOutboxWriter interface {
 	OutboxWriter
 	WriteWithTx(ctx context.Context, tx *sql.Tx, envelope OutboxEnvelope) error

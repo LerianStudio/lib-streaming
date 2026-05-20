@@ -14,9 +14,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	tcmongo "github.com/testcontainers/testcontainers-go/modules/mongodb"
-	"go.mongodb.org/mongo-driver/bson"
-	mongodriver "go.mongodb.org/mongo-driver/mongo"
-	mongooptions "go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	mongodriver "go.mongodb.org/mongo-driver/v2/mongo"
+	mongooptions "go.mongodb.org/mongo-driver/v2/mongo/options"
 	"go.opentelemetry.io/otel/trace/noop"
 
 	libMongo "github.com/LerianStudio/lib-commons/v5/commons/mongo"
@@ -85,7 +85,7 @@ func waitForMongoPrimary(t *testing.T, uri string) {
 
 	for time.Now().Before(deadline) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		client, err := mongodriver.Connect(ctx, mongooptions.Client().ApplyURI(uri))
+		client, err := mongodriver.Connect(mongooptions.Client().ApplyURI(uri))
 		if err == nil {
 			var hello struct {
 				IsWritablePrimary bool `bson:"isWritablePrimary"`
@@ -267,9 +267,9 @@ func TestIntegration_MongoOutboxReplay(t *testing.T) {
 }
 
 // TestIntegration_MongoOutboxTransactionAtomicity proves that MongoDB-backed
-// outbox writes join the caller's v1 mongo.SessionContext transaction through
-// the normal Write(ctx, ...) path. Commit persists both the business write and
-// the outbox row; rollback persists neither.
+// outbox writes join the caller's MongoDB session transaction through the
+// normal Write(ctx, ...) path. Commit persists both the business write and the
+// outbox row; rollback persists neither.
 func TestIntegration_MongoOutboxTransactionAtomicity(t *testing.T) {
 	mongoClient, repo, collectionName := newMongoOutboxRepo(t)
 	if repo == nil {
@@ -313,7 +313,7 @@ func TestIntegration_MongoOutboxTransactionAtomicity(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { rollbackSession.EndSession(context.Background()) })
 
-	_, err = rollbackSession.WithTransaction(tenantCtx, func(sessionCtx mongodriver.SessionContext) (any, error) {
+	_, err = rollbackSession.WithTransaction(tenantCtx, func(sessionCtx context.Context) (any, error) {
 		_, insertErr := businessCollection.InsertOne(sessionCtx, bson.M{"_id": "rollback", "tenant_id": tenantID})
 		if insertErr != nil {
 			return nil, insertErr
@@ -346,7 +346,7 @@ func TestIntegration_MongoOutboxTransactionAtomicity(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { commitSession.EndSession(context.Background()) })
 
-	_, err = commitSession.WithTransaction(tenantCtx, func(sessionCtx mongodriver.SessionContext) (any, error) {
+	_, err = commitSession.WithTransaction(tenantCtx, func(sessionCtx context.Context) (any, error) {
 		_, insertErr := businessCollection.InsertOne(sessionCtx, bson.M{"_id": "commit", "tenant_id": tenantID})
 		if insertErr != nil {
 			return nil, insertErr
