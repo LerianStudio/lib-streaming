@@ -4,24 +4,36 @@ on:
   push:
     branches: [main, release-candidate, develop]
     paths-ignore:
-      - '.github/**'
       - '**.md'
       - 'docs/**'
       - 'LICENSE'
       - '.gitignore'
-      - '.golangci.yml'
-      - '.golangci.yaml'
 
 permissions:
-  id-token: write
-  contents: write
-  issues: write
-  pull-requests: write
-  packages: read
+  contents: read
 
 jobs:
+  pre-release-validation:
+    name: Pre-release validation
+    permissions:
+      contents: read
+      packages: read
+    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/go-pr-analysis.yml@v1.30.0
+    with:
+      go_version: "1.26.3"
+      golangci_lint_version: "v2.12.2"
+      fail_on_coverage_threshold: true
+      go_private_modules: "github.com/LerianStudio/*"
+    secrets: inherit
+
   release:
+    needs: pre-release-validation
+    permissions:
+      id-token: write
+      contents: write
+      issues: write
+      pull-requests: write
+      packages: read
     uses: LerianStudio/github-actions-shared-workflows/.github/workflows/release.yml@v1.30.0
     with:
       enable_changelog: ${{ github.ref == 'refs/heads/main' }}
-    secrets: inherit

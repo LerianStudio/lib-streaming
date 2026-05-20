@@ -193,6 +193,7 @@ func TestMetrics_LazyInit_NilFactory_NoPanic_WarnsOnce(t *testing.T) {
 		m.recordDLQFailed(ctx, "topic.a")
 		m.recordOutboxRouted(ctx, "topic.a", "circuit_open")
 		m.recordCircuitState(ctx, flagCBOpen)
+		m.recordCBRecoveryLiveness(ctx, true)
 	}
 
 	warnCount := 0
@@ -223,6 +224,7 @@ func TestMetrics_LazyInit_NilReceiver_NoPanic(t *testing.T) {
 	m.recordDLQFailed(ctx, "t")
 	m.recordOutboxRouted(ctx, "t", "circuit_open")
 	m.recordCircuitState(ctx, flagCBClosed)
+	m.recordCBRecoveryLiveness(ctx, false)
 
 	// If we reached here without panic the test is green.
 }
@@ -747,6 +749,38 @@ func TestMetrics_CircuitState_UnknownStateDoesNotRecord(t *testing.T) {
 		vals := gaugeInt64Values(t, m)
 		if len(vals) > 0 {
 			t.Errorf("unknown state wrote gauge values %v; want none", vals)
+		}
+	}
+}
+
+func TestMetrics_CBRecoveryLivenessGauge(t *testing.T) {
+	factory, snapshot := newManualMeterSetup(t)
+	m := newStreamingMetrics(factory, log.NewNop())
+
+	m.recordCBRecoveryLiveness(context.Background(), true)
+	rm := snapshot()
+
+	metric, ok := findMetric(rm, metricNameCBRecoveryLiveness)
+	if !ok {
+		t.Fatalf("metric %q not found", metricNameCBRecoveryLiveness)
+	}
+
+	vals := gaugeInt64Values(t, metric)
+	if len(vals) == 0 || vals[0] != 1 {
+		t.Fatalf("liveness values = %v; want first value 1", vals)
+	}
+
+	m.recordCBRecoveryLiveness(context.Background(), false)
+	rm = snapshot()
+	metric, _ = findMetric(rm, metricNameCBRecoveryLiveness)
+	vals = gaugeInt64Values(t, metric)
+	if len(vals) == 0 || vals[0] != 0 {
+		t.Fatalf("liveness values after dead = %v; want first value 0", vals)
+	}
+
+	for _, attrs := range extractAttributeSets(metric) {
+		if len(attrs) != 0 {
+			t.Fatalf("liveness metric labels = %v; want none", attrs)
 		}
 	}
 }

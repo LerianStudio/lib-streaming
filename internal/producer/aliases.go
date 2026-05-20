@@ -1,6 +1,12 @@
 package producer
 
 import (
+	"context"
+	"fmt"
+	"sort"
+	"strings"
+
+	"github.com/LerianStudio/lib-observability/tracing"
 	"github.com/twmb/franz-go/pkg/kgo"
 
 	"github.com/LerianStudio/lib-streaming/internal/cloudevents"
@@ -158,4 +164,36 @@ func buildCloudEventsHeaders(event Event) []kgo.RecordHeader {
 // select gate, so re-aliasing the byte slice is safe.
 func buildCloudEventsTransportHeaders(event Event) []transport.Header {
 	return cloudevents.BuildTransportHeaders(event)
+}
+
+func buildTransportHeaders(ctx context.Context, event Event) []transport.Header {
+	headers := buildCloudEventsTransportHeaders(event)
+
+	queueHeaders := tracing.PrepareQueueHeaders(ctx, nil)
+	if len(queueHeaders) == 0 {
+		return headers
+	}
+
+	keys := make([]string, 0, len(queueHeaders))
+	for key := range queueHeaders {
+		keys = append(keys, key)
+	}
+
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		headerKey := strings.ToLower(key)
+		value := queueHeaders[key]
+
+		switch typed := value.(type) {
+		case string:
+			headers = append(headers, transport.Header{Key: headerKey, Value: []byte(typed)})
+		case []byte:
+			headers = append(headers, transport.Header{Key: headerKey, Value: append([]byte(nil), typed...)})
+		default:
+			headers = append(headers, transport.Header{Key: headerKey, Value: fmt.Append(nil, typed)})
+		}
+	}
+
+	return headers
 }

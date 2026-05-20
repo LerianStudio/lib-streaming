@@ -36,13 +36,13 @@ func newConfigAsserter(operation string) *assert.Asserter {
 // Config is the full runtime configuration for a Producer. Every field maps
 // to a STREAMING_* environment variable consumed by LoadConfig.
 //
-// When Enabled is false (or Brokers is empty), New returns a NoopEmitter —
-// calls succeed silently. This is the fail-safe for services that cannot
-// reach a broker in their current environment.
+// When Enabled is false, New returns a NoopEmitter — calls succeed silently.
+// Enabled configs with an empty broker list fail validation with
+// ErrMissingBrokers so operator mistakes do not silently disable publishing.
 type Config struct {
 	// Enabled is the master kill switch. Default: false.
 	Enabled bool
-	// Brokers is the Redpanda bootstrap list. Default: ["localhost:9092"].
+	// Brokers is the Redpanda bootstrap list. Default: empty.
 	// Required when Enabled=true.
 	Brokers []string
 	// ClientID is the Kafka client.id used for broker-side diagnostics.
@@ -83,7 +83,6 @@ type Config struct {
 // Default values used by LoadConfig when an environment variable is unset.
 // Exported-looking constants but unexported — callers go through LoadConfig.
 const (
-	defaultBroker                = "localhost:9092"
 	defaultBatchLingerMs         = 5
 	defaultBatchMaxBytes         = 1_048_576
 	defaultMaxBufferedRecords    = 10_000
@@ -126,12 +125,58 @@ var validAcks = map[string]struct{}{
 // without a nil check.
 //
 // Errors: ErrMissingBrokers, ErrMissingSource, ErrInvalidCompression,
-// ErrInvalidAcks. Each wraps with fmt.Errorf so callers can errors.Is.
+// ErrInvalidAcks, ErrInvalidConfigField. Each wraps with fmt.Errorf where
+// context is added so callers can errors.Is.
 func LoadConfig() (Config, []string, error) {
 	warnings := make([]string, 0)
 
-	brokers := splitCSV(commons.GetenvOrDefault("STREAMING_BROKERS", defaultBroker))
+	brokers := splitCSV(commons.GetenvOrDefault("STREAMING_BROKERS", ""))
 	enabled := commons.GetenvBoolOrDefault("STREAMING_ENABLED", false)
+
+	batchLingerMs, err := getenvIntOrDefaultStrict("STREAMING_BATCH_LINGER_MS", defaultBatchLingerMs, enabled)
+	if err != nil {
+		return Config{}, warnings, err
+	}
+
+	batchMaxBytes, err := getenvIntOrDefaultStrict("STREAMING_BATCH_MAX_BYTES", defaultBatchMaxBytes, enabled)
+	if err != nil {
+		return Config{}, warnings, err
+	}
+
+	maxBufferedRecords, err := getenvIntOrDefaultStrict("STREAMING_MAX_BUFFERED_RECORDS", defaultMaxBufferedRecords, enabled)
+	if err != nil {
+		return Config{}, warnings, err
+	}
+
+	recordRetries, err := getenvIntOrDefaultStrict("STREAMING_RECORD_RETRIES", defaultRecordRetries, enabled)
+	if err != nil {
+		return Config{}, warnings, err
+	}
+
+	recordDeliveryTimeoutS, err := getenvIntOrDefaultStrict("STREAMING_RECORD_DELIVERY_TIMEOUT_S", int(defaultRecordDeliveryTimeout.Seconds()), enabled)
+	if err != nil {
+		return Config{}, warnings, err
+	}
+
+	cbFailureRatio, err := getenvFloat64OrDefaultStrict("STREAMING_CB_FAILURE_RATIO", defaultCBFailureRatio, enabled)
+	if err != nil {
+		return Config{}, warnings, err
+	}
+
+	cbMinRequests, err := getenvIntOrDefaultStrict("STREAMING_CB_MIN_REQUESTS", defaultCBMinRequests, enabled)
+	if err != nil {
+		return Config{}, warnings, err
+	}
+
+	cbTimeoutS, err := getenvIntOrDefaultStrict("STREAMING_CB_TIMEOUT_S", int(defaultCBTimeout.Seconds()), enabled)
+	if err != nil {
+		return Config{}, warnings, err
+	}
+
+	closeTimeoutS, err := getenvIntOrDefaultStrict("STREAMING_CLOSE_TIMEOUT_S", int(defaultCloseTimeout.Seconds()), enabled)
+	if err != nil {
+		return Config{}, warnings, err
+	}
 
 	policyOverrides, err := parseEventPolicies(commons.GetenvOrDefault("STREAMING_EVENT_POLICIES", ""))
 	if err != nil {
@@ -146,17 +191,17 @@ func LoadConfig() (Config, []string, error) {
 		Enabled:               enabled,
 		Brokers:               brokers,
 		ClientID:              commons.GetenvOrDefault("STREAMING_CLIENT_ID", ""),
-		BatchLingerMs:         int(commons.GetenvIntOrDefault("STREAMING_BATCH_LINGER_MS", int64(defaultBatchLingerMs))),
-		BatchMaxBytes:         int(commons.GetenvIntOrDefault("STREAMING_BATCH_MAX_BYTES", int64(defaultBatchMaxBytes))),
-		MaxBufferedRecords:    int(commons.GetenvIntOrDefault("STREAMING_MAX_BUFFERED_RECORDS", int64(defaultMaxBufferedRecords))),
+		BatchLingerMs:         batchLingerMs,
+		BatchMaxBytes:         batchMaxBytes,
+		MaxBufferedRecords:    maxBufferedRecords,
 		Compression:           commons.GetenvOrDefault("STREAMING_COMPRESSION", defaultCompression),
-		RecordRetries:         int(commons.GetenvIntOrDefault("STREAMING_RECORD_RETRIES", int64(defaultRecordRetries))),
-		RecordDeliveryTimeout: time.Duration(commons.GetenvIntOrDefault("STREAMING_RECORD_DELIVERY_TIMEOUT_S", int64(defaultRecordDeliveryTimeout.Seconds()))) * time.Second,
+		RecordRetries:         recordRetries,
+		RecordDeliveryTimeout: time.Duration(recordDeliveryTimeoutS) * time.Second,
 		RequiredAcks:          commons.GetenvOrDefault("STREAMING_REQUIRED_ACKS", defaultRequiredAcks),
-		CBFailureRatio:        getenvFloat64OrDefault("STREAMING_CB_FAILURE_RATIO", defaultCBFailureRatio),
-		CBMinRequests:         int(commons.GetenvIntOrDefault("STREAMING_CB_MIN_REQUESTS", int64(defaultCBMinRequests))),
-		CBTimeout:             time.Duration(commons.GetenvIntOrDefault("STREAMING_CB_TIMEOUT_S", int64(defaultCBTimeout.Seconds()))) * time.Second,
-		CloseTimeout:          time.Duration(commons.GetenvIntOrDefault("STREAMING_CLOSE_TIMEOUT_S", int64(defaultCloseTimeout.Seconds()))) * time.Second,
+		CBFailureRatio:        cbFailureRatio,
+		CBMinRequests:         cbMinRequests,
+		CBTimeout:             time.Duration(cbTimeoutS) * time.Second,
+		CloseTimeout:          time.Duration(closeTimeoutS) * time.Second,
 		CloudEventsSource:     commons.GetenvOrDefault("STREAMING_CLOUDEVENTS_SOURCE", ""),
 		PolicyOverrides:       policyOverrides,
 	}
@@ -317,21 +362,40 @@ func (c Config) Validate() error {
 	return c.validate()
 }
 
-// getenvFloat64OrDefault returns the parsed float value of os.Getenv(key) or
-// defaultValue if unset / unparseable. Inlined because lib-commons only ships
-// Bool and Int env helpers.
-func getenvFloat64OrDefault(key string, defaultValue float64) float64 {
+func getenvIntOrDefaultStrict(key string, defaultValue int, strict bool) (int, error) {
 	raw := os.Getenv(key)
 	if raw == "" {
-		return defaultValue
+		return defaultValue, nil
+	}
+
+	v, err := strconv.ParseInt(raw, 10, 0)
+	if err != nil {
+		if strict {
+			return 0, fmt.Errorf("%w: %s=%q must be an integer", ErrInvalidConfigField, key, raw)
+		}
+
+		return defaultValue, nil
+	}
+
+	return int(v), nil
+}
+
+func getenvFloat64OrDefaultStrict(key string, defaultValue float64, strict bool) (float64, error) {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return defaultValue, nil
 	}
 
 	v, err := strconv.ParseFloat(raw, 64)
 	if err != nil {
-		return defaultValue
+		if strict {
+			return 0, fmt.Errorf("%w: %s=%q must be a float", ErrInvalidConfigField, key, raw)
+		}
+
+		return defaultValue, nil
 	}
 
-	return v
+	return v, nil
 }
 
 // splitCSV splits a comma-separated broker list and trims whitespace. Empty

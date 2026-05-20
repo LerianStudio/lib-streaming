@@ -68,6 +68,22 @@ type TransportAdapter interface {
 	Classify(err error) contract.ErrorClass
 }
 
+// MessageValidator is an optional adapter capability for deterministic,
+// caller-correctable message checks that must happen before a broker circuit
+// breaker records the publish attempt.
+type MessageValidator interface {
+	ValidateMessage(message TransportMessage) error
+}
+
+// PreparedMessageAdapter is an optional transport capability for adapters that
+// perform expensive deterministic preparation before publish. The producer uses
+// it to run caller-correctable validation before the circuit breaker without
+// repeating the same serialization/allocation work inside Publish.
+type PreparedMessageAdapter interface {
+	PrepareMessage(message TransportMessage) (any, error)
+	PublishPrepared(ctx context.Context, prepared any) error
+}
+
 // CloneMessage returns a deep copy of message.
 func CloneMessage(message TransportMessage) TransportMessage {
 	message.Payload = append([]byte(nil), message.Payload...)

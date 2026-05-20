@@ -23,7 +23,7 @@ import (
 func TestValidateRoutesAgainstTargets_KindMismatch_FiresAssertion(t *testing.T) {
 	t.Parallel()
 
-	cap := newCaptureLogger()
+	logger := newCaptureLogger()
 	ctx := context.Background()
 
 	// Target reports Kafka kind; route declares an SQS destination —
@@ -64,7 +64,7 @@ func TestValidateRoutesAgainstTargets_KindMismatch_FiresAssertion(t *testing.T) 
 		[]TargetSpec{{Name: "primary", Kind: TransportKafkaLike, Adapter: primary}},
 		routes,
 		catalog,
-		WithLogger(cap),
+		WithLogger(logger),
 		WithCatalog(catalog),
 	)
 
@@ -72,7 +72,7 @@ func TestValidateRoutesAgainstTargets_KindMismatch_FiresAssertion(t *testing.T) 
 		t.Fatalf("NewProducerMulti() error = %v; want errors.Is(ErrInvalidRouteDefinition)", err)
 	}
 
-	if !cap.containsMessage("ASSERTION FAILED") {
+	if !logger.containsAssertionFailure() {
 		t.Fatal("expected asserter trident to fire on validateRoutesAgainstTargets kind mismatch")
 	}
 }

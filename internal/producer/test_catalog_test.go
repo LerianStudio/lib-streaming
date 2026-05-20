@@ -1,3 +1,4 @@
+//nolint:unused // Shared fixtures are consumed by unit/integration/chaos build-tagged tests.
 package producer
 
 import (

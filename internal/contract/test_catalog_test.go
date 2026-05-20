@@ -6,6 +6,7 @@ package contract
 
 import "encoding/json"
 
+//nolint:unused // Shared fixture is consumed by build-tagged contract tests.
 func sampleEvent() Event {
 	return Event{
 		TenantID:      "t-abc",

@@ -10,7 +10,9 @@ import (
 	"sort"
 	"strings"
 	"sync/atomic"
+	"time"
 
+	"github.com/LerianStudio/lib-commons/v5/commons/backoff"
 	"github.com/LerianStudio/lib-commons/v5/commons/security/ssrf"
 	"github.com/LerianStudio/lib-observability/assert"
 	"github.com/LerianStudio/lib-observability/log"
@@ -101,11 +103,15 @@ func (d Destination) Normalize() Destination {
 
 // Validate reports malformed destination shape.
 func (d Destination) Validate() error {
+	return d.validate(nil)
+}
+
+func (d Destination) validate(sqsValidationCache map[string]error) error {
 	if !isValidTransportKind(d.Kind) {
 		return fmt.Errorf("%w: kind=%q", ErrInvalidDestination, d.Kind)
 	}
 
-	if err := validateDestinationShape(d); err != nil {
+	if err := validateDestinationShape(d, sqsValidationCache); err != nil {
 		return err
 	}
 
@@ -135,6 +141,57 @@ type RouteDefinition struct {
 
 // NewRouteDefinition validates, normalizes, and defensively copies a route.
 func NewRouteDefinition(route RouteDefinition) (RouteDefinition, error) {
+	return newRouteDefinition(route, nil)
+}
+
+// RouteTable is an immutable, deterministically ordered registry of routes
+// keyed by catalog definition key.
+type RouteTable struct {
+	definitions  []RouteDefinition
+	byDefinition map[string][]RouteDefinition
+}
+
+// NewRouteTable validates routes, rejects duplicate route keys, and stores
+// routes in deterministic definition-key/key order.
+func NewRouteTable(routes ...RouteDefinition) (RouteTable, error) {
+	if len(routes) == 0 {
+		return RouteTable{}, ErrNoRoutesConfigured
+	}
+
+	ordered := make([]RouteDefinition, 0, len(routes))
+	seenKeys := make(map[string]struct{}, len(routes))
+	sqsValidationCache := make(map[string]error)
+
+	for _, raw := range routes {
+		route, err := newRouteDefinition(raw, sqsValidationCache)
+		if err != nil {
+			return RouteTable{}, err
+		}
+
+		if _, exists := seenKeys[route.Key]; exists {
+			a := newContractAsserter("route_table.new")
+			_ = a.That(context.Background(), false, "route table must not contain duplicate Key entries",
+				"route_key", route.Key,
+				"definition_key", route.DefinitionKey,
+				"target", route.Target,
+			)
+
+			return RouteTable{}, fmt.Errorf("%w: key %q", ErrDuplicateRouteDefinition, route.Key)
+		}
+
+		seenKeys[route.Key] = struct{}{}
+		ordered = append(ordered, cloneRouteDefinition(route))
+	}
+
+	sortRouteDefinitions(ordered)
+
+	return RouteTable{
+		definitions:  ordered,
+		byDefinition: buildRoutesByDefinition(ordered),
+	}, nil
+}
+
+func newRouteDefinition(route RouteDefinition, sqsValidationCache map[string]error) (RouteDefinition, error) {
 	if route.Key == "" {
 		return RouteDefinition{}, fmt.Errorf("%w: key required", ErrInvalidRouteDefinition)
 	}
@@ -161,7 +218,7 @@ func NewRouteDefinition(route RouteDefinition) (RouteDefinition, error) {
 	}
 
 	route.Destination = route.Destination.Normalize()
-	if err := route.Destination.Validate(); err != nil {
+	if err := route.Destination.validate(sqsValidationCache); err != nil {
 		return RouteDefinition{}, fmt.Errorf("%w: %w", ErrInvalidRouteDefinition, err)
 	}
 
@@ -171,23 +228,11 @@ func NewRouteDefinition(route RouteDefinition) (RouteDefinition, error) {
 
 	if route.DLQ != nil {
 		dlq := route.DLQ.Normalize()
-		if err := dlq.Validate(); err != nil {
+		if err := dlq.validate(sqsValidationCache); err != nil {
 			return RouteDefinition{}, fmt.Errorf("%w: dlq: %w", ErrInvalidRouteDefinition, err)
 		}
 
-		// Cross-transport DLQ guard. publishRouteDLQ uses the source
-		// route's target adapter to deliver the DLQ message; an
-		// adapter only accepts destinations whose Kind matches its own
-		// (e.g. the Kafka adapter rejects an SQS Destination with
-		// ErrInvalidDestination). A mismatched DLQ kind would silently
-		// fail every DLQ delivery for the route — fail closed at
-		// construction with a precise wiring error instead.
 		if dlq.Kind != route.Destination.Kind {
-			// Construction-time invariant: publishRouteDLQ uses the
-			// source route's adapter, so a cross-kind DLQ silently
-			// no-ops every DLQ delivery for the route. Fire the
-			// trident so the rejection becomes a loud signal alongside
-			// the wrapped sentinel.
 			a := newContractAsserter("route.dlq_kind_match")
 			_ = a.That(context.Background(), false, "route DLQ kind must match destination kind",
 				"route_key", route.Key,
@@ -208,52 +253,6 @@ func NewRouteDefinition(route RouteDefinition) (RouteDefinition, error) {
 	}
 
 	return route, nil
-}
-
-// RouteTable is an immutable, deterministically ordered registry of routes
-// keyed by catalog definition key.
-type RouteTable struct {
-	definitions  []RouteDefinition
-	byDefinition map[string][]RouteDefinition
-}
-
-// NewRouteTable validates routes, rejects duplicate route keys, and stores
-// routes in deterministic definition-key/key order.
-func NewRouteTable(routes ...RouteDefinition) (RouteTable, error) {
-	if len(routes) == 0 {
-		return RouteTable{}, ErrNoRoutesConfigured
-	}
-
-	ordered := make([]RouteDefinition, 0, len(routes))
-	seenKeys := make(map[string]struct{}, len(routes))
-
-	for _, raw := range routes {
-		route, err := NewRouteDefinition(raw)
-		if err != nil {
-			return RouteTable{}, err
-		}
-
-		if _, exists := seenKeys[route.Key]; exists {
-			a := newContractAsserter("route_table.new")
-			_ = a.That(context.Background(), false, "route table must not contain duplicate Key entries",
-				"route_key", route.Key,
-				"definition_key", route.DefinitionKey,
-				"target", route.Target,
-			)
-
-			return RouteTable{}, fmt.Errorf("%w: key %q", ErrDuplicateRouteDefinition, route.Key)
-		}
-
-		seenKeys[route.Key] = struct{}{}
-		ordered = append(ordered, cloneRouteDefinition(route))
-	}
-
-	sortRouteDefinitions(ordered)
-
-	return RouteTable{
-		definitions:  ordered,
-		byDefinition: buildRoutesByDefinition(ordered),
-	}, nil
 }
 
 // Routes returns the routes registered for definitionKey in deterministic
@@ -345,12 +344,12 @@ func isValidTransportKind(kind TransportKind) bool {
 	}
 }
 
-func validateDestinationShape(destination Destination) error {
+func validateDestinationShape(destination Destination, sqsValidationCache map[string]error) error {
 	switch destination.Kind {
 	case TransportKafkaLike:
 		return validateKafkaDestinationShape(destination)
 	case TransportSQS:
-		return validateSQSDestinationShape(destination)
+		return validateSQSDestinationShape(destination, sqsValidationCache)
 	case TransportRabbitMQ:
 		return validateRabbitMQDestinationShape(destination)
 	case TransportEventBridge:
@@ -374,12 +373,12 @@ func validateKafkaDestinationShape(destination Destination) error {
 	return nil
 }
 
-func validateSQSDestinationShape(destination Destination) error {
+func validateSQSDestinationShape(destination Destination, sqsValidationCache map[string]error) error {
 	if destination.Name != "" {
 		return fmt.Errorf("%w: sqs name must be empty", ErrInvalidDestination)
 	}
 
-	return validateDestinationURL(destination.Address, true)
+	return validateDestinationURL(destination.Address, true, sqsValidationCache)
 }
 
 func validateRabbitMQDestinationShape(destination Destination) error {
@@ -439,7 +438,7 @@ func validateDestinationSecurity(destination Destination) error {
 		return fmt.Errorf("%w: credential-like destination material is not allowed", ErrInvalidDestination)
 	}
 
-	if err := validateDestinationURL(destination.Address, false); err != nil {
+	if err := validateDestinationURL(destination.Address, false, nil); err != nil {
 		return err
 	}
 
@@ -456,7 +455,7 @@ func validateDestinationSecurity(destination Destination) error {
 	return nil
 }
 
-func validateDestinationURL(raw string, requireQueueURL bool) error {
+func validateDestinationURL(raw string, requireQueueURL bool, sqsValidationCache map[string]error) error {
 	if raw == "" {
 		return nil
 	}
@@ -488,7 +487,7 @@ func validateDestinationURL(raw string, requireQueueURL bool) error {
 	}
 
 	if requireQueueURL {
-		return validateSQSQueueURL(raw, parsed)
+		return validateSQSQueueURL(raw, parsed, sqsValidationCache)
 	}
 
 	if parsed.Scheme == "" {
@@ -516,17 +515,18 @@ func validateDestinationURLQuery(parsed *url.URL) error {
 	return nil
 }
 
-func validateSQSQueueURL(raw string, parsed *url.URL) error {
-	if parsed.Scheme == "" || parsed.Host == "" || parsed.Path == "" {
-		return fmt.Errorf("%w: sqs queue URL must include scheme, host, and path", ErrInvalidDestination)
+func validateSQSQueueURL(raw string, parsed *url.URL, sqsValidationCache map[string]error) error {
+	if err := validateSQSQueueURLShape(parsed); err != nil {
+		return err
 	}
 
-	// SQS queue URLs are validated with DNS pinning at construction time:
+	// SQS queue URLs are resolved at construction time:
 	// ResolveAndValidate performs the same scheme + hostname-blocklist checks
 	// as ValidateURL AND additionally resolves the hostname and rejects the
 	// URL if any returned IP is in a blocked range (loopback, link-local,
-	// private RFC1918, cloud-metadata ranges). This closes the TOCTOU window
-	// between preflight and the SDK's own DNS lookup at publish time.
+	// private RFC1918, cloud-metadata ranges). The host allowlist above keeps
+	// caller-owned SDK wrappers from signing requests to arbitrary public hosts;
+	// DNS validation then catches unsafe resolver answers before bootstrap.
 	//
 	// We discard the *ResolveResult (pinned URL, authority, SNI) — the AWS
 	// SDK owns the connection and will perform its own resolution. Our use
@@ -534,11 +534,134 @@ func validateSQSQueueURL(raw string, parsed *url.URL) error {
 	// not "drive the connection from a pre-pinned IP". One DNS lookup at
 	// NewRouteDefinition / NewRouteTable time is acceptable; routes are
 	// constructed once at bootstrap, not per-Emit.
-	if _, err := ssrf.ResolveAndValidate(context.Background(), raw, ssrf.WithHTTPSOnly()); err != nil {
-		return fmt.Errorf("%w: unsafe sqs queue URL", ErrInvalidDestination)
+	resolveErr, ok := sqsValidationCache[raw]
+	if !ok {
+		resolveErr = resolveAndValidateSQSQueueURL(raw)
+		if sqsValidationCache != nil {
+			sqsValidationCache[raw] = resolveErr
+		}
+	}
+
+	if resolveErr != nil {
+		return fmt.Errorf("%w: unsafe sqs queue URL: %w", ErrInvalidDestination, resolveErr)
 	}
 
 	return nil
+}
+
+// ValidateSQSQueueURLShape performs deterministic SQS queue URL validation
+// without DNS resolution. It is used on transport hot paths where routes have
+// already paid the construction-time DNS/SSRF validation cost, while still
+// rejecting direct adapter destinations with malformed or credential-bearing
+// URLs before any SDK call is made.
+func ValidateSQSQueueURLShape(raw string) error {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("%w: invalid sqs queue URL", ErrInvalidDestination)
+	}
+
+	if parsed.User != nil {
+		return fmt.Errorf("%w: sqs queue URL userinfo is not allowed", ErrInvalidDestination)
+	}
+
+	if parsed.Host != "" && parsed.Scheme == "" {
+		return fmt.Errorf("%w: protocol-relative sqs queue URL is not allowed", ErrInvalidDestination)
+	}
+
+	if containsCredentialLikeMaterial(parsed.Fragment) {
+		return fmt.Errorf("%w: credential-like sqs queue URL fragment is not allowed", ErrInvalidDestination)
+	}
+
+	if err := validateDestinationURLQuery(parsed); err != nil {
+		return err
+	}
+
+	return validateSQSQueueURLShape(parsed)
+}
+
+func validateSQSQueueURLShape(parsed *url.URL) error {
+	if parsed.Scheme != "https" || parsed.Host == "" {
+		return fmt.Errorf("%w: sqs queue URL must include https scheme and host", ErrInvalidDestination)
+	}
+
+	if !isValidSQSQueuePath(parsed.Path) {
+		return fmt.Errorf("%w: sqs queue URL path must include account and queue name", ErrInvalidDestination)
+	}
+
+	if !IsAllowedSQSQueueHost(parsed.Hostname()) {
+		return fmt.Errorf("%w: sqs queue URL host must be an AWS SQS endpoint", ErrInvalidDestination)
+	}
+
+	return nil
+}
+
+func isValidSQSQueuePath(path string) bool {
+	parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
+	return len(parts) == 2 && parts[0] != "" && parts[1] != ""
+}
+
+// IsAllowedSQSQueueHost reports whether host is an AWS SQS endpoint shape this
+// library will publish to. It intentionally rejects arbitrary public hosts even
+// when SSRF DNS validation would consider them routable, because SQS SDK
+// wrappers may sign requests before sending them to the supplied queue URL.
+func IsAllowedSQSQueueHost(host string) bool {
+	host = strings.TrimSuffix(strings.ToLower(host), ".")
+
+	labels := strings.Split(host, ".")
+	if len(labels) < 4 {
+		return false
+	}
+
+	if labels[0] != "sqs" && labels[0] != "sqs-fips" {
+		return false
+	}
+
+	return strings.HasSuffix(host, ".amazonaws.com") ||
+		strings.HasSuffix(host, ".amazonaws.com.cn") ||
+		strings.HasSuffix(host, ".api.aws")
+}
+
+const (
+	sqsDNSValidationAttempts = 3
+	sqsDNSValidationTimeout  = 500 * time.Millisecond
+	sqsDNSValidationBackoff  = 25 * time.Millisecond
+)
+
+var (
+	resolveAndValidateSQSQueueURL = resolveAndValidateSQSQueueURLDefault
+	resolveSQSQueueURLOnce        = resolveSQSQueueURLOnceDefault
+)
+
+func resolveAndValidateSQSQueueURLDefault(raw string) error {
+	var lastErr error
+
+	for attempt := range sqsDNSValidationAttempts {
+		ctx, cancel := context.WithTimeout(context.Background(), sqsDNSValidationTimeout)
+		err := resolveSQSQueueURLOnce(ctx, raw)
+
+		cancel()
+
+		if err == nil {
+			return nil
+		}
+
+		lastErr = err
+
+		if attempt == sqsDNSValidationAttempts-1 {
+			break
+		}
+
+		if err := backoff.WaitContext(context.Background(), backoff.ExponentialWithJitter(sqsDNSValidationBackoff, attempt)); err != nil {
+			return err
+		}
+	}
+
+	return lastErr
+}
+
+func resolveSQSQueueURLOnceDefault(ctx context.Context, raw string) error {
+	_, err := ssrf.ResolveAndValidate(ctx, raw, ssrf.WithHTTPSOnly())
+	return err
 }
 
 func validateDestinationAttributes(attributes map[string]string) error {

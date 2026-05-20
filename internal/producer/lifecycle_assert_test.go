@@ -16,11 +16,11 @@ import (
 func TestSignalStop_NilStopChannel_FiresAssertion(t *testing.T) {
 	t.Parallel()
 
-	cap := newCaptureLogger()
+	logger := newCaptureLogger()
 	// Pre-flip closed so CloseContext takes the "already closed" branch and
 	// still invokes signalStop, which is the site under test.
 	p := &Producer{
-		logger:     cap,
+		logger:     logger,
 		producerID: "test-producer-nil-stop",
 		stop:       nil,
 	}
@@ -39,7 +39,7 @@ func TestSignalStop_NilStopChannel_FiresAssertion(t *testing.T) {
 		t.Fatalf("CloseContext on nil-stop Producer should still return nil; got %v", err)
 	}
 
-	if !cap.containsMessage("ASSERTION FAILED") {
+	if !logger.containsAssertionFailure() {
 		t.Fatal("expected asserter.NotNil to fire on nil stop channel at signalStop")
 	}
 }

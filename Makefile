@@ -46,6 +46,15 @@ endif
 #        make coverage-unit LOW_RESOURCE=1
 #        make coverage-integration LOW_RESOURCE=1
 LOW_RESOURCE ?= 0
+ALLOW_LOW_RESOURCE_CI ?= 0
+
+ifeq ($(CI),true)
+  ifeq ($(LOW_RESOURCE),1)
+    ifneq ($(ALLOW_LOW_RESOURCE_CI),1)
+      $(error LOW_RESOURCE=1 is blocked in CI because it disables race detection; set ALLOW_LOW_RESOURCE_CI=1 only for an explicit constrained-run exception)
+    endif
+  endif
+endif
 
 # Computed flags for low-resource mode
 ifeq ($(LOW_RESOURCE),1)
@@ -81,6 +90,8 @@ endif
 GOTESTSUM_VERSION ?= v1.13.0
 GOSEC_VERSION ?= v2.26.1
 GOLANGCI_LINT_VERSION ?= v2.12.2
+GORELEASER_VERSION ?= v2.12.2
+ENABLE_PERFSPRINT ?= 0
 
 TEST_REPORTS_DIR ?= ./reports
 GOTESTSUM = $(shell command -v gotestsum 2>/dev/null)
@@ -138,7 +149,7 @@ help:
 	@echo "  make lint-fix                    - Run linting with auto-fix on all packages"
 	@echo "  make format                      - Format code in all packages"
 	@echo "  make tidy                        - Clean dependencies"
-	@echo "  make check-tests                 - Verify test coverage for packages"
+	@echo "  make check-tests                 - Verify tagged test package discovery"
 	@echo "  make vet                         - Run go vet on all packages"
 	@echo "  make sec                         - Run security checks using gosec"
 	@echo "  make sec SARIF=1                 - Run security checks with SARIF output"
@@ -279,6 +290,10 @@ test-integration:
 	fi; \
 	if [ -z "$$pkgs" ]; then \
 	  echo "No integration test packages found"; \
+	  if [ "$(ALLOW_NO_INTEGRATION_TESTS)" != "1" ]; then \
+	    echo "Set ALLOW_NO_INTEGRATION_TESTS=1 to acknowledge an intentional integration-free repository"; \
+	    exit 1; \
+	  fi; \
 	else \
 	  echo "Packages: $$pkgs"; \
 	  echo "Running packages sequentially (-p=1) to avoid Docker container conflicts"; \
@@ -350,6 +365,10 @@ test-chaos:
 	fi; \
 	if [ -z "$$pkgs" ]; then \
 	  echo "No chaos test packages found"; \
+	  if [ "$(ALLOW_NO_CHAOS_TESTS)" != "1" ]; then \
+	    echo "Set ALLOW_NO_CHAOS_TESTS=1 to acknowledge an intentional chaos-free repository"; \
+	    exit 1; \
+	  fi; \
 	else \
 	  echo "Packages: $$pkgs"; \
 	  echo "Running packages sequentially (-p=1) to avoid Docker container conflicts"; \
@@ -478,6 +497,10 @@ coverage-integration:
 	fi; \
 	if [ -z "$$pkgs" ]; then \
 	  echo "No integration test packages found"; \
+	  if [ "$(ALLOW_NO_INTEGRATION_TESTS)" != "1" ]; then \
+	    echo "Set ALLOW_NO_INTEGRATION_TESTS=1 to acknowledge an intentional integration-free repository"; \
+	    exit 1; \
+	  fi; \
 	else \
 	  echo "Packages: $$pkgs"; \
 	  echo "Running packages sequentially (-p=1) to avoid Docker container conflicts"; \
@@ -542,13 +565,17 @@ lint:
 	$(call check_command,golangci-lint,"go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)")
 	@out=$$(golangci-lint run ./... 2>&1); \
 	out_err=$$?; \
-	if command -v perfsprint >/dev/null 2>&1; then \
+	if [ "$(ENABLE_PERFSPRINT)" = "1" ]; then \
+	  if ! command -v perfsprint >/dev/null 2>&1; then \
+	    echo "ENABLE_PERFSPRINT=1 requires perfsprint on PATH"; \
+	    exit 1; \
+	  fi; \
 		perf_out=$$(perfsprint ./... 2>&1); \
 		perf_err=$$?; \
 	else \
 		perf_out=""; \
 		perf_err=0; \
-		echo "Note: perfsprint not installed, skipping performance checks (go install github.com/catenacyber/perfsprint@latest)"; \
+		echo "Optional standalone perfsprint check disabled; set ENABLE_PERFSPRINT=1 to require it"; \
 	fi; \
 	echo "$$out"; \
 	if [ -n "$$perf_out" ]; then echo "$$perf_out"; fi; \
@@ -580,14 +607,33 @@ format:
 
 .PHONY: check-tests
 check-tests:
-	$(call print_title,Verifying test coverage for packages)
+	$(call print_title,Verifying tagged test packages and unit coverage)
 	@if [ -f "./scripts/check-tests.sh" ]; then \
 		sh ./scripts/check-tests.sh; \
 	else \
-		echo "Running basic test coverage check..."; \
-		go test -cover ./...; \
+		echo "scripts/check-tests.sh not found; running built-in unit coverage and tag-aware test checks"; \
+		$(MAKE) coverage-unit; \
+		unit_pkgs=$$(go list -tags=unit ./... | tr '\n' ' '); \
+		if [ -z "$$unit_pkgs" ]; then echo "No unit packages found under -tags=unit"; exit 1; fi; \
+		go test -tags=unit -run '^$$' $$unit_pkgs; \
+		integration_dirs=$$(find . -name '*_integration_test.go' -not -path './vendor/*' -exec dirname {} \; 2>/dev/null | sort -u | tr '\n' ' '); \
+		if [ -n "$$integration_dirs" ]; then \
+			integration_pkgs=$$(go list $$integration_dirs 2>/dev/null | tr '\n' ' '); \
+			if [ -z "$$integration_pkgs" ]; then echo "Integration test files found but no packages resolved"; exit 1; fi; \
+			go test -tags=integration -run '^$$' $$integration_pkgs; \
+		else \
+			echo "No integration test files found during tag-aware check"; \
+		fi; \
+		chaos_dirs=$$(find . -name '*chaos_test.go' -not -path './vendor/*' -exec dirname {} \; 2>/dev/null | sort -u | tr '\n' ' '); \
+		if [ -n "$$chaos_dirs" ]; then \
+			chaos_pkgs=$$(go list $$chaos_dirs 2>/dev/null | tr '\n' ' '); \
+			if [ -z "$$chaos_pkgs" ]; then echo "Chaos test files found but no packages resolved"; exit 1; fi; \
+			go test -tags=chaos -run '^$$' $$chaos_pkgs; \
+		else \
+			echo "No chaos test files found during tag-aware check"; \
+		fi; \
 	fi
-	@echo "$(GREEN)$(BOLD)[ok]$(NC) Test coverage verification completed$(GREEN) ✔️$(NC)"
+	@echo "$(GREEN)$(BOLD)[ok]$(NC) Tagged test package verification completed$(GREEN) ✔️$(NC)"
 
 .PHONY: vet
 vet:
@@ -734,6 +780,6 @@ sec:
 .PHONY: goreleaser
 goreleaser:
 	$(call print_title,Creating release snapshot with goreleaser)
-	$(call check_command,goreleaser,"go install github.com/goreleaser/goreleaser@latest")
-	goreleaser release --snapshot --skip=publish --clean
+	$(call check_command,go,"Install Go from https://golang.org/doc/install")
+	go run github.com/goreleaser/goreleaser/v2@$(GORELEASER_VERSION) release --snapshot --skip=publish --clean
 	@echo "$(GREEN)$(BOLD)[ok]$(NC) Release snapshot created successfully$(GREEN) ✔️$(NC)"

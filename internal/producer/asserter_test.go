@@ -37,11 +37,13 @@ func TestNewAsserter_NilProducerDoesNotPanic(t *testing.T) {
 	t.Parallel()
 
 	var p *Producer
+
 	defer func() {
 		if r := recover(); r != nil {
 			t.Fatalf("newAsserter on nil *Producer panicked: %v", r)
 		}
 	}()
+
 	_ = p.newAsserter("unit-test")
 }
 
@@ -64,9 +66,11 @@ func TestNewAsserter_ComponentAndOperation(t *testing.T) {
 	if !errors.As(err, &assertErr) {
 		t.Fatalf("expected *assert.AssertionError, got %T: %v", err, err)
 	}
+
 	if assertErr.Component != "streaming" {
 		t.Errorf("component = %q, want %q", assertErr.Component, "streaming")
 	}
+
 	if assertErr.Operation != "component-check" {
 		t.Errorf("operation = %q, want %q", assertErr.Operation, "component-check")
 	}

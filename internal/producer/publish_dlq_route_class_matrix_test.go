@@ -237,6 +237,49 @@ func TestPublishRouteDLQ_ClassMatrix(t *testing.T) {
 	}
 }
 
+func TestPublishRouteDLQ_DestinationAttributesReachAdapter(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	catalog := sampleCatalog(t)
+	sourceTopic := "lerian.streaming.transaction.created"
+	adapter := newClassifyingFakeAdapter(sourceTopic, errors.New("simulated publish failure"), contract.ClassBrokerUnavailable)
+	dlq := contract.Destination{
+		Kind:       TransportKafkaLike,
+		Name:       sourceTopic + ".dlq",
+		Attributes: map[string]string{"eventbridge.resources": "arn:aws:events:us-east-1:123:rule/dlq"},
+	}
+	route := multiTestRoute("transaction.created.kafka.primary", "transaction.created", "primary", sourceTopic, contract.RouteRequired)
+	route.DLQ = &dlq
+	routes := mustMultiRouteTable(t, route)
+
+	p, err := NewProducerMulti(
+		ctx,
+		MultiProducerConfig{Source: "svc://dlq-attributes"},
+		nil,
+		[]TargetSpec{{Name: "primary", Kind: TransportKafkaLike, Adapter: adapter}},
+		routes,
+		catalog,
+		WithLogger(log.NewNop()),
+	)
+	if err != nil {
+		t.Fatalf("NewProducerMulti() error = %v", err)
+	}
+	t.Cleanup(func() { _ = p.Close() })
+
+	if err := p.Emit(ctx, eventToRequest(sampleEvent())); err == nil {
+		t.Fatal("Emit() error = nil; want source failure")
+	}
+
+	messages := adapter.DLQMessages()
+	if got := len(messages); got != 1 {
+		t.Fatalf("DLQ messages = %d; want 1", got)
+	}
+	if got := messages[0].Attributes["eventbridge.resources"]; got != "arn:aws:events:us-east-1:123:rule/dlq" {
+		t.Fatalf("DLQ message attribute = %q; want DLQ destination attribute", got)
+	}
+}
+
 // failPublishRouteDLQAdapter is a transport adapter where the source
 // publish ALWAYS fails (driving DLQ routing) AND the DLQ destination
 // publish ALSO ALWAYS fails (so we can pin the

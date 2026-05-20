@@ -28,5 +28,3 @@ updates:
     commit-message:
       prefix: "chore"
       include: "scope"
-    ignore:
-      - dependency-name: "LerianStudio/*"

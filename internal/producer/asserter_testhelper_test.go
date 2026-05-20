@@ -2,7 +2,6 @@ package producer
 
 import (
 	"context"
-	"strings"
 	"sync"
 
 	"github.com/LerianStudio/lib-observability/log"
@@ -46,14 +45,13 @@ func (c *captureLogger) WithGroup(_ string) log.Logger  { return c }
 func (c *captureLogger) Enabled(_ log.Level) bool       { return true }
 func (c *captureLogger) Sync(_ context.Context) error   { return nil }
 
-// containsMessage returns true if any captured entry's message contains the
-// supplied substring. Used to verify an asserter-emitted log line fired.
-func (c *captureLogger) containsMessage(needle string) bool {
+// containsAssertionFailure returns true if an asserter-emitted log line fired.
+func (c *captureLogger) containsAssertionFailure() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	for _, e := range c.entries {
-		if strings.Contains(e.Msg, needle) {
+		if e.Msg == "ASSERTION FAILED" {
 			return true
 		}
 	}

@@ -25,8 +25,8 @@ func TestLoadConfig_Defaults(t *testing.T) {
 	if cfg.Enabled {
 		t.Errorf("default Enabled = true; want false")
 	}
-	if len(cfg.Brokers) == 0 || cfg.Brokers[0] != "localhost:9092" {
-		t.Errorf("default Brokers = %v; want [localhost:9092]", cfg.Brokers)
+	if len(cfg.Brokers) != 0 {
+		t.Errorf("default Brokers = %v; want empty", cfg.Brokers)
 	}
 	if cfg.Compression != "lz4" {
 		t.Errorf("default Compression = %q; want lz4", cfg.Compression)
@@ -224,21 +224,59 @@ func TestLoadConfig_CBFailureRatioOverride(t *testing.T) {
 	}
 }
 
-// TestLoadConfig_CBFailureRatioBadValueUsesDefault confirms the float parser
-// falls back to the default when the env var is unparseable.
-func TestLoadConfig_CBFailureRatioBadValueUsesDefault(t *testing.T) {
+// TestLoadConfig_CBFailureRatioBadValueFailsWhenEnabled confirms malformed
+// numeric env vars fail closed instead of silently falling back to defaults.
+func TestLoadConfig_CBFailureRatioBadValueFailsWhenEnabled(t *testing.T) {
 	clearStreamingEnv(t)
 	t.Setenv("STREAMING_ENABLED", "true")
 	t.Setenv("STREAMING_BROKERS", "broker:9092")
 	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.midaz/tx-service")
 	t.Setenv("STREAMING_CB_FAILURE_RATIO", "not-a-float")
 
+	_, _, err := LoadConfig()
+	if !errors.Is(err, ErrInvalidConfigField) {
+		t.Fatalf("LoadConfig() err = %v; want ErrInvalidConfigField", err)
+	}
+}
+
+func TestLoadConfig_MalformedNumericEnvFailsWhenEnabled(t *testing.T) {
+	for _, key := range []string{
+		"STREAMING_BATCH_LINGER_MS",
+		"STREAMING_BATCH_MAX_BYTES",
+		"STREAMING_MAX_BUFFERED_RECORDS",
+		"STREAMING_RECORD_RETRIES",
+		"STREAMING_RECORD_DELIVERY_TIMEOUT_S",
+		"STREAMING_CB_MIN_REQUESTS",
+		"STREAMING_CB_TIMEOUT_S",
+		"STREAMING_CLOSE_TIMEOUT_S",
+	} {
+		t.Run(key, func(t *testing.T) {
+			clearStreamingEnv(t)
+			t.Setenv("STREAMING_ENABLED", "true")
+			t.Setenv("STREAMING_BROKERS", "broker:9092")
+			t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.midaz/tx-service")
+			t.Setenv(key, "not-an-int")
+
+			_, _, err := LoadConfig()
+			if !errors.Is(err, ErrInvalidConfigField) {
+				t.Fatalf("LoadConfig() err = %v; want ErrInvalidConfigField", err)
+			}
+		})
+	}
+}
+
+func TestLoadConfig_MalformedNumericEnvUsesDefaultWhenDisabled(t *testing.T) {
+	clearStreamingEnv(t)
+	t.Setenv("STREAMING_ENABLED", "false")
+	t.Setenv("STREAMING_CB_FAILURE_RATIO", "not-a-float")
+	t.Setenv("STREAMING_BATCH_LINGER_MS", "not-an-int")
+
 	cfg, _, err := LoadConfig()
 	if err != nil {
 		t.Fatalf("LoadConfig() err = %v", err)
 	}
-	if cfg.CBFailureRatio != 0.5 {
-		t.Errorf("CBFailureRatio = %v; want 0.5 (default)", cfg.CBFailureRatio)
+	if cfg.CBFailureRatio != defaultCBFailureRatio || cfg.BatchLingerMs != defaultBatchLingerMs {
+		t.Fatalf("disabled malformed numeric defaults = ratio %v linger %d", cfg.CBFailureRatio, cfg.BatchLingerMs)
 	}
 }
 

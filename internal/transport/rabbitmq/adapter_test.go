@@ -123,6 +123,9 @@ func TestRabbitMQ_Publish_ForwardsExchangeAndRoutingKey(t *testing.T) {
 	if gotTrace, ok := call.headers["x-trace"].(string); !ok || gotTrace != "trc-1" {
 		t.Errorf("headers[x-trace] = %v; want trc-1", call.headers["x-trace"])
 	}
+	if gotTenant, ok := call.headers["X-Tenant-ID"].(string); !ok || gotTenant != "t-1" {
+		t.Errorf("headers[X-Tenant-ID] = %v; want t-1", call.headers["X-Tenant-ID"])
+	}
 }
 
 func TestRabbitMQ_Publish_RejectsKafkaDestination(t *testing.T) {
@@ -168,13 +171,13 @@ func TestRabbitMQ_Healthy_DelegatesToPing(t *testing.T) {
 	}
 }
 
-func TestRabbitMQ_Healthy_NoPingNoOp(t *testing.T) {
+func TestRabbitMQ_Healthy_NoPingFails(t *testing.T) {
 	t.Parallel()
 
 	a, _ := New(&fakePublisher{})
 
-	if err := a.Healthy(context.Background()); err != nil {
-		t.Errorf("Healthy() error = %v; want nil", err)
+	if err := a.Healthy(context.Background()); err == nil {
+		t.Errorf("Healthy() error = nil; want no-Ping failure")
 	}
 }
 

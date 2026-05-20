@@ -21,6 +21,8 @@ func (f *fakeSQSClient) SendMessage(_ context.Context, _ string, _ []byte, _ []s
 	return nil
 }
 
+func (f *fakeSQSClient) Ping(context.Context) error { return nil }
+
 // fakeRabbitMQPublisher is a test double for streaming.RabbitMQPublisher.
 type fakeRabbitMQPublisher struct {
 	calls int
@@ -31,6 +33,8 @@ func (f *fakeRabbitMQPublisher) Publish(_ context.Context, _, _, _ string, _ []b
 	return nil
 }
 
+func (f *fakeRabbitMQPublisher) Ping(context.Context) error { return nil }
+
 // fakeEventBridgeClient is a test double for streaming.EventBridgePutEventsClient.
 type fakeEventBridgeClient struct {
 	calls int
@@ -40,6 +44,8 @@ func (f *fakeEventBridgeClient) PutEvents(_ context.Context, entries []streaming
 	f.calls += len(entries)
 	return nil
 }
+
+func (f *fakeEventBridgeClient) Ping(context.Context) error { return nil }
 
 // TestBuilder_AllFourTransports_Build_Emit_AllTargetsReceiveMessage drives
 // a Builder with all four transport kinds wired through the public

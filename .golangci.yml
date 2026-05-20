@@ -1,6 +1,6 @@
 version: "2"
 run:
-  tests: false
+  tests: true
 linters:
   enable:
     # --- Existing linters ---
@@ -133,9 +133,6 @@ linters:
         text: G113
       - linters:
           - gosec
-        text: G104
-      - linters:
-          - gosec
         text: 'G204: Subprocess launched with a potential tainted input or cmd arguments'
       - linters:
           - gosec
@@ -143,10 +140,6 @@ linters:
       - linters:
           - revive
         text: 'package-comments: should have a package comment'
-      - linters:
-          - errcheck
-          - gosec
-        path: _test\.go
       - linters:
           - staticcheck
         text: 'ST1000: at least one file in a package should have a package comment'

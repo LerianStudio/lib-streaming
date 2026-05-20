@@ -21,8 +21,8 @@ import (
 func TestHandleOutboxRow_NilRow_FiresAssertion(t *testing.T) {
 	t.Parallel()
 
-	cap := newCaptureLogger()
-	p := &Producer{logger: cap, producerID: "test-producer-nil-row"}
+	logger := newCaptureLogger()
+	p := &Producer{logger: logger, producerID: "test-producer-nil-row"}
 
 	err := p.handleOutboxRow(context.Background(), nil)
 
@@ -30,7 +30,7 @@ func TestHandleOutboxRow_NilRow_FiresAssertion(t *testing.T) {
 		t.Errorf("handleOutboxRow(nil) err = %v, want outbox.ErrOutboxEventRequired", err)
 	}
 
-	if !cap.containsMessage("ASSERTION FAILED") {
+	if !logger.containsAssertionFailure() {
 		t.Fatal("expected asserter.NotNil to fire on nil row")
 	}
 }

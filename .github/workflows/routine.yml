@@ -3,8 +3,6 @@ name: Repository Routines
 on:
   schedule:
     - cron: "0 3 * * 1"
-  pull_request:
-    types: [closed]
   push:
     branches: [main]
     paths:
@@ -38,6 +36,5 @@ jobs:
     uses: LerianStudio/github-actions-shared-workflows/.github/workflows/routine.yml@v1.30.0
     with:
       routine: ${{ inputs.routine || 'all' }}
-      dry_run: ${{ inputs.dry_run || false }}
+      dry_run: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
       merged_branch: ${{ github.head_ref }}
-    secrets: inherit

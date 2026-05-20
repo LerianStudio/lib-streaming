@@ -37,13 +37,15 @@
 //	// it, arbitrary panic arguments flow verbatim into telemetry.
 //	runtime.InitPanicMetrics(metricsFactory)
 //	assert.InitAssertionMetrics(metricsFactory)
-//	runtime.SetProductionMode(cfg.Env == "production")
+//	runtime.SetProductionMode(appCfg.Env == "production")
 //
-//	// Disabled-feature-flag fallback. When STREAMING_ENABLED=false or no
-//	// brokers are configured, return a NoopEmitter and skip launcher wiring.
-//	if !cfg.Enabled || len(cfg.Brokers) == 0 {
+//	// Disabled-feature-flag fallback. Use NoopEmitter only for an explicit
+//	// STREAMING_ENABLED=false path. If streaming is enabled but brokers are
+//	// empty, fail startup instead of silently dropping events.
+//	if !cfg.Enabled {
 //	    return inject(streaming.NewNoopEmitter())
 //	}
+//	if len(cfg.Brokers) == 0 { return errors.New("streaming enabled but brokers are empty") }
 //
 //	emitter, err := streaming.NewBuilder().
 //	    Source(cfg.CloudEventsSource).
@@ -93,17 +95,20 @@
 //
 // # Multi-transport routing
 //
-// A single Emit can fan out to N targets in parallel. Per-target circuit
-// breakers isolate target failures; with a lib-commons TenantAwareManager,
-// non-system events use tenant-scoped breakers for each target so one
-// tenant's outage does not reject neighboring tenants. Required routes drive
-// the aggregate Emit outcome; optional routes are best-effort.
+// A single Emit can dispatch to N routes. Route attempts run in deterministic
+// route-table order inside the Emit call. Per-target circuit breakers isolate
+// target failures; with a lib-commons TenantAwareManager, non-system events
+// use tenant-scoped breakers for each target so one tenant's outage does not
+// reject neighboring tenants. Required routes drive the aggregate Emit
+// outcome; optional routes are best-effort.
 //
 //   - Target: a named transport runtime (e.g. "kafka-primary", "sqs-shadow"),
 //     each with its own circuit breaker.
 //   - Route: maps one catalog EventDefinition to one (target, destination)
 //     pair. RouteRequired must succeed (or fall back to outbox) for Emit to
-//     return nil; RouteOptional failures never propagate (metrics + DLQ only).
+//     return nil; RouteOptional failures never propagate. Optional failures
+//     surface through per-route metric outcomes, route.optional_failed span
+//     events, and DLQ delivery when the route declares a DLQ.
 //   - Outbox: when a target's breaker is OPEN and an outbox writer is
 //     wired, the route-aware envelope persists and replays through the
 //     same target's adapter without going through Emit (no breaker
@@ -116,6 +121,9 @@
 // helpers Builder.SQSTarget / Builder.RabbitMQTarget /
 // Builder.EventBridgeTarget register both the target and its transport
 // factory in one call.
+// Production non-Kafka clients should also implement the corresponding
+// Ping capability (SQSPingClient, RabbitMQPingClient, EventBridgePingClient);
+// Adapter.Healthy fails closed when no probe is available.
 //
 // RabbitMQ events-only: the RabbitMQ adapter publishes business events for
 // third-party / SaaS subscribers. Internal command queues remain on
@@ -144,13 +152,15 @@
 //
 // All env vars use the STREAMING_ prefix. LoadConfig reads every var
 // below, applies defaults, and validates the result. When Enabled is
-// false or the broker list is empty, callers should use
-// streaming.NewNoopEmitter() instead of constructing a Builder.
+// false, callers should use streaming.NewNoopEmitter() instead of constructing
+// a Builder. Do not treat an empty broker list as an intentional production
+// disablement when streaming is required; fail startup and fix the deployment
+// configuration.
 //
 //	Variable                             | Type     | Default         | Purpose
 //	-------------------------------------|----------|-----------------|---------------------------------------------------------------
 //	STREAMING_ENABLED                    | bool     | false           | Master kill switch
-//	STREAMING_BROKERS                    | csv      | localhost:9092  | Redpanda/Kafka bootstrap list; required when Enabled=true
+//	STREAMING_BROKERS                    | csv      | ""              | Redpanda/Kafka bootstrap list; required when Enabled=true
 //	STREAMING_CLIENT_ID                  | string   | ""              | Kafka client.id for broker-side diagnostics
 //	STREAMING_BATCH_LINGER_MS            | int      | 5               | franz-go ProducerLinger in ms (pinned across franz-go versions)
 //	STREAMING_BATCH_MAX_BYTES            | int      | 1048576         | ProducerBatchMaxBytes (1 MiB)
@@ -214,7 +224,7 @@
 //	ClassContextCanceled    | no         | no
 //	ClassBrokerOverloaded   | yes        | no
 //
-// A multi-target Emit fanned out across N routes aggregates required-route
+// A multi-target Emit dispatched across N routes aggregates required-route
 // failures into *MultiEmitError. errors.Is walks each RouteError.Cause so
 // callers match wrapped sentinels naturally; IsCallerError returns true
 // only when every required-route failure is itself caller-correctable.
@@ -253,8 +263,15 @@
 // responsible for mounting the route, enforcing auth, starting the server,
 // and publishing any manifest artifact in CI/S3/GitHub. Pass
 // WithManifestRoutes(routes) to advertise the active route table in the
-// manifest's `routes` section. The wire-version constant is exposed at the
-// root package as streaming.ManifestVersion.
+// manifest's `routes` section. Wrap the handler before exposing it:
+//
+//	handler, err := streaming.NewStreamingHandler(descriptor, catalog, streaming.WithManifestRoutes(routes))
+//	if err != nil { return err }
+//	mux.Handle("/streaming", authenticate(handler))
+//
+// Every PR that exposes the manifest should name the auth middleware and state
+// whether the route is public, internal-only, or disabled. The wire-version
+// constant is exposed at the root package as streaming.ManifestVersion.
 //
 // # Consumer responsibilities
 //
@@ -308,6 +325,13 @@
 // may work but are unsupported — consumer services running against Kafka
 // <3.0 should validate manually before production rollout.
 //
+// # Testing dependencies
+//
+// Testcontainers, Toxiproxy, kfake, and MongoDB driver dependencies support
+// repository test suites. They are not runtime transport dependencies for
+// consuming services. Go does not provide a separate dev-dependency section,
+// so those packages can still appear in module-graph or SCA reports.
+//
 // # Relation to github.com/LerianStudio/lib-commons/v5/commons/dlq
 //
 // github.com/LerianStudio/lib-commons/v5/commons/dlq is a Redis-backed
@@ -351,7 +375,8 @@
 //
 // Metrics conform to: streaming_emitted_total, streaming_emit_duration_ms,
 // streaming_dlq_total, streaming_dlq_publish_failed_total,
-// streaming_outbox_routed_total, streaming_circuit_state.
+// streaming_outbox_routed_total, streaming_outbox_replay_target_unknown_total,
+// streaming_circuit_state, streaming_cb_recovery_liveness.
 //
 // Per-tenant attribution of DLQ or routing spikes is available through
 // the span attribute tenant.id, NOT metric labels — tenant is deliberately
@@ -360,7 +385,7 @@
 // # Per-route metric semantics
 //
 // Each route attempt increments per-route counters once. A logical Emit
-// fanned out across N routes increments streaming_emitted_total N times —
+// dispatched across N routes increments streaming_emitted_total N times —
 // one per route attempt — even though the caller issued a single Emit call.
 // Dashboards computing "logical Emits per second" should aggregate per-Emit
 // attempts via trace spans, not by summing per-route counters.
@@ -370,13 +395,28 @@
 //   - topic: distinguishes destinations across routes for a given Emit. For
 //     non-Kafka transports the label still carries the route's logical
 //     destination identifier so route-level dashboards remain meaningful.
-//   - outcome: one of produced, dlq, outboxed, optional_failed. The
-//     optional_failed value applies only to RouteOptional routes whose
-//     publish attempt failed and was not promoted to a caller-visible error
-//     (metrics + DLQ only).
+//   - outcome: one of produced, outboxed, circuit_open, caller_error, dlq,
+//     failed, outbox_failed. There is no optional_failed metric outcome in
+//     the current code. Optional-route failures add a route.optional_failed
+//     span event and retain their terminal per-route outcome.
 //
-// Multi-target Emits fan out per route, which means counter volume scales
+// Multi-target Emits dispatch per route, which means counter volume scales
 // with route count, not Emit count. Capacity-plan dashboards accordingly.
+// Optional routes used for business-critical data need separate alerts from
+// route.optional_failed span events or route-specific logs/traces, because
+// their failures do not fail the caller's Emit.
+//
+// # DLQ alerting
+//
+// streaming_dlq_publish_failed_total increments when the DLQ publish itself
+// fails. Alert on any increase; the original required-route failure may still
+// return to the caller, but the forensic copy was not preserved.
+//
+// Non-Kafka routes need an explicit RouteDefinition.DLQ when quarantine is
+// required. Kafka-like routes can derive <source>.dlq. SQS, RabbitMQ,
+// EventBridge, and custom routes skip DLQ delivery unless DLQ is set. The DLQ
+// destination kind must match the route destination kind because the same
+// target adapter publishes the DLQ message.
 //
 // # Per-target observability
 //
@@ -400,4 +440,24 @@
 //     scale targets dynamically. Operators wanting bounded per-target gauges
 //     can derive them from spans/logs and enforce their own cardinality
 //     budget.
+//
+// A green streaming_circuit_state does not prove every route is healthy. Keep
+// it as the primary-target compatibility alert, then add log- or trace-derived
+// alerts grouped by target for non-primary targets and lib-commons
+// tenant_hash alerts when TenantAwareManager is used.
+//
+// # CB recovery liveness and health
+//
+// Healthy(ctx) checks target adapter readiness, outbox viability, and CB
+// recovery-loop liveness. It returns Healthy when every target ping succeeds
+// and the recovery loop is alive/fresh, Degraded when some target or the
+// recovery loop is unhealthy but another target or outbox fallback remains
+// viable, and Down when all targets fail with no outbox or after Close.
+//
+// Dashboard-visible recovery liveness comes from streaming_cb_recovery_liveness,
+// panic_recovered_total{component="streaming",goroutine_name="cb_recovery_loop"},
+// assertion_failed_total{component="streaming",operation="cb_recovery.start"},
+// and persistent circuit_open or outbox-routed outcomes after broker recovery.
+// Initialize runtime.InitPanicMetrics and assert.InitAssertionMetrics during
+// service bootstrap so those signals reach dashboards.
 package streaming

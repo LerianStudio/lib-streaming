@@ -124,7 +124,7 @@ func TestOutboxEnvelope_Validate_RejectsInvalidShape(t *testing.T) {
 		{
 			name:    "zero aggregate id",
 			mutate:  func(e *OutboxEnvelope) { e.AggregateID = uuid.Nil },
-			wantSub: nil, // bare errors.New, not sentinel
+			wantSub: ErrInvalidOutboxEnvelope,
 		},
 		{
 			name: "invalid policy mode",

@@ -50,9 +50,8 @@ func (p *Producer) RegisterOutboxRelay(registry *outbox.HandlerRegistry) error {
 // garbage would be worse than a no-op with a warning log would have been.
 //
 // When the original target is no longer registered (config change between
-// failure and replay), the handler returns nil and logs at WARN. Returning
-// an error here would mark the row FAILED in the Dispatcher and lose the
-// event — operators can re-route or replay manually.
+// failure and replay), the handler returns an error. The row must not be
+// marked processed because no broker delivery happened.
 func (p *Producer) handleOutboxRow(ctx context.Context, row *outbox.OutboxEvent) error {
 	if p == nil {
 		return ErrNilProducer
@@ -104,10 +103,10 @@ func (p *Producer) handleOutboxRow(ctx context.Context, row *outbox.OutboxEvent)
 
 	rt, ok := p.targets[envelope.Target]
 	if !ok || rt == nil || rt.adapter == nil {
-		// Target was removed/renamed between failure and replay. Mark
-		// the row processed (return nil) but log loudly AND increment
-		// streaming_outbox_replay_target_unknown_total so ops dashboards
-		// can alert on silent event drops. Cardinality is bounded by
+		// Target was removed/renamed between failure and replay. Return
+		// an error so the dispatcher preserves retry/failure semantics;
+		// also increment streaming_outbox_replay_target_unknown_total so
+		// ops dashboards can alert. Cardinality is bounded by
 		// operator-controlled target names (typically <10 in real
 		// deployments).
 		p.metrics.recordOutboxReplayTargetUnknown(ctx, envelope.Target)
@@ -118,7 +117,7 @@ func (p *Producer) handleOutboxRow(ctx context.Context, row *outbox.OutboxEvent)
 			log.String("transport", string(envelope.Transport)),
 		)
 
-		return nil
+		return fmt.Errorf("streaming: replay outbox row %s: target %q is not registered: %w", row.ID, envelope.Target, contract.ErrMissingTarget)
 	}
 
 	if rt.kind != envelope.Transport || rt.kind != envelope.Destination.Kind {
@@ -136,13 +135,14 @@ func (p *Producer) handleOutboxRow(ctx context.Context, row *outbox.OutboxEvent)
 		TenantID:    envelope.Event.TenantID,
 		Key:         partKey,
 		Payload:     envelope.Event.Payload,
-		Headers:     buildCloudEventsTransportHeaders(envelope.Event),
+		Headers:     buildTransportHeaders(ctx, envelope.Event),
+		Attributes:  envelope.Destination.Attributes,
 	}
 
 	// Bypass the per-target breaker on replay — see godoc on this function
 	// for the rationale (no re-enqueue loops, original failure already
 	// counted).
-	if err := rt.adapter.Publish(ctx, message); err != nil {
+	if err := rt.adapter.Publish(ctx, transport.CloneMessage(message)); err != nil {
 		return fmt.Errorf("streaming: replay outbox row %s: %w", row.ID, err)
 	}
 

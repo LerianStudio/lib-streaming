@@ -40,11 +40,10 @@ func TestProducer_New_DisabledReturnsNoop(t *testing.T) {
 	}
 }
 
-// TestProducer_New_NoBrokersReturnsNoop proves the complementary branch:
-// empty broker slice returns Noop even if Enabled=true. This is the
-// operator-forgot-to-configure case; the service boots silently instead of
-// crashing.
-func TestProducer_New_NoBrokersReturnsNoop(t *testing.T) {
+// TestProducer_New_NoBrokersReturnsErrMissingBrokers proves NoopEmitter is
+// reserved for explicit Enabled=false. Enabled configs fail closed when the
+// broker list is empty.
+func TestProducer_New_NoBrokersReturnsErrMissingBrokers(t *testing.T) {
 	t.Parallel()
 
 	cfg := Config{
@@ -55,13 +54,9 @@ func TestProducer_New_NoBrokersReturnsNoop(t *testing.T) {
 		CloudEventsSource: "//test",
 	}
 
-	emitter, err := New(context.Background(), cfg)
-	if err != nil {
-		t.Fatalf("New(empty brokers) err = %v", err)
-	}
-
-	if _, ok := emitter.(*NoopEmitter); !ok {
-		t.Errorf("New(empty brokers) returned %T; want *NoopEmitter", emitter)
+	_, err := New(context.Background(), cfg)
+	if !errors.Is(err, ErrMissingBrokers) {
+		t.Fatalf("New(empty brokers) err = %v; want ErrMissingBrokers", err)
 	}
 }
 

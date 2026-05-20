@@ -153,6 +153,12 @@ type Producer struct {
 	// Resolved at construction via resolveCBRecoveryInterval(cbCfg.Timeout)
 	// to scale with the configured CBTimeout. Read-only after construction.
 	cbRecoveryInterval time.Duration
+
+	// cbRecoveryRunning/LastPokeUnixNano expose liveness of the single
+	// background CB recovery goroutine to Healthy and metrics. They are bounded,
+	// process-local state only — no tenant labels and no per-target cardinality.
+	cbRecoveryRunning      atomic.Bool
+	cbRecoveryLastPokeUnix atomic.Int64
 }
 
 // Compile-time assertion: *Producer must satisfy Emitter. A missing method
@@ -161,12 +167,12 @@ var _ Emitter = (*Producer)(nil)
 
 // New constructs an Emitter from cfg.
 //
-// When Config.Enabled is false OR the broker list is empty, New returns a
-// NoopEmitter without constructing a transport adapter — the fail-safe for
-// services that run without a broker (feature-flag-off, local-dev).
-// Otherwise it forwards to NewProducer.
+// When Config.Enabled is false, New returns a NoopEmitter without constructing
+// a transport adapter. Enabled configs are validated by NewProducer, so an
+// empty broker list returns ErrMissingBrokers instead of silently disabling
+// publishing.
 func New(ctx context.Context, cfg Config, opts ...EmitterOption) (Emitter, error) {
-	if !cfg.Enabled || len(cfg.Brokers) == 0 {
+	if !cfg.Enabled {
 		return NewNoopEmitter(), nil
 	}
 

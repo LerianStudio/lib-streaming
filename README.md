@@ -25,8 +25,8 @@ Producer-only means this library publishes business facts. It does not consume K
 |---|---|
 | **Contract-First Events** | Services publish catalog-keyed events; resource, event type, schema version, content type, and default delivery policy live in immutable event definitions |
 | **CloudEvents Native** | Every message uses CloudEvents 1.0 binary-mode metadata with raw JSON payloads |
-| **Multi-Transport** | One Emit fans out to Kafka, SQS, RabbitMQ, and EventBridge in parallel; per-target tenant-aware circuit breakers, all-or-error semantics for required routes, best-effort for optional |
-| **Broker Resilience** | Per-target circuit breakers prevent hot-looping on broker failures and route through outbox fallback when configured. With lib-commons `TenantAwareManager`, non-system events get isolated `(tenant, target)` breakers so one tenant's outage does not reject neighbors. A background recovery goroutine per Producer auto-heals stuck-OPEN breakers within `CBTimeout + 5s` of broker recovery, even for emit-only services with no other CB traffic |
+| **Multi-Transport** | One Emit dispatches to Kafka, SQS, RabbitMQ, and EventBridge routes in deterministic route-table order; per-target tenant-aware circuit breakers, all-or-error semantics for required routes, best-effort for optional |
+| **Broker Resilience** | Per-target circuit breakers prevent hot-looping on broker failures and route through outbox fallback when configured. With lib-commons `TenantAwareManager`, non-system events get isolated `(tenant, target)` breakers so one tenant's outage does not reject neighbors. A background recovery goroutine per Producer pokes registered breakers so stuck-OPEN mirrors can transition within `CBTimeout + 5s + one probe round-trip` after broker recovery, even for emit-only services with no other CB traffic |
 | **Reliable Replay** | Route-aware outbox envelopes persist target name, transport, destination, policy, and event payload for deterministic replay |
 | **Forensic DLQs** | Routable failures land in the route's DLQ with structured headers for source topic, error class, retry count, failure time, and producer identity |
 | **Testing Ergonomics** | `streamingtest.MockEmitter` gives services a concurrency-safe test double with assertion helpers and wait support |
@@ -40,7 +40,7 @@ Producer-only means this library publishes business facts. It does not consume K
 3. **Construct** — Use `streaming.NewBuilder()` to wire targets, routes, and lifecycle dependencies. Disabled-feature-flag environments use `streaming.NewNoopEmitter()`.
 4. **Emit** — Service code sends catalog-keyed `EmitRequest` values with tenant, subject, payload, and optional policy override.
 5. **Resolve** — Definition defaults, config overrides, and call overrides resolve the final direct/outbox/DLQ behavior per route.
-6. **Publish or Persist** — Per-route fan-out: direct publish to each target, or persist a route-aware `OutboxEnvelope` when policy or circuit state requires it.
+6. **Publish or Persist** — Deterministic per-route dispatch: direct publish to each target, or persist a route-aware `OutboxEnvelope` when policy or circuit state requires it.
 7. **Observe** — Emit metrics, spans, structured logs, circuit state, health state, and DLQ/outbox routing counters.
 
 ## Architecture
@@ -106,7 +106,9 @@ assert.InitAssertionMetrics(metricsFactory)
 // Scrubs panic value strings and truncates stack traces before they hit
 // log fields, span events, and ErrorReporter payloads — guards against
 // PII leakage from arbitrary panic arguments and OTel attribute bloat.
-runtime.SetProductionMode(cfg.Env == "production")
+// appCfg is your service-level config; streaming.Config intentionally does
+// not own runtime environment classification.
+runtime.SetProductionMode(appCfg.Env == "production")
 
 catalog, err := streaming.NewCatalog(streaming.EventDefinition{
     Key:          "transaction.created",
@@ -117,10 +119,13 @@ if err != nil {
     return err
 }
 
-if !cfg.Enabled || len(cfg.Brokers) == 0 {
+if !cfg.Enabled {
     emitter := streaming.NewNoopEmitter()
     // inject emitter into services; skip launcher.Add for the no-op path
     return nil
+}
+if len(cfg.Brokers) == 0 {
+    return errors.New("streaming enabled but STREAMING_BROKERS is empty")
 }
 
 emitter, err := streaming.NewBuilder().
@@ -195,17 +200,17 @@ streamingtest.AssertTenantID(t, mock, "t-abc")
 
 All environment variables use the `STREAMING_` prefix. The canonical reference lives in [`.env.reference`](./.env.reference), and `LoadConfig()` returns migration warnings alongside the parsed config.
 
-When `STREAMING_ENABLED=false` or the broker list is empty, callers should use `streaming.NewNoopEmitter()` instead of constructing a Builder. Multi-transport wiring (multiple Kafka clusters, SQS / RabbitMQ / EventBridge fan-out) is programmatic — non-Kafka destinations such as SQS queue URLs, RabbitMQ exchanges, and EventBridge bus names are typically already plumbed through the consuming service's own configuration.
+When `STREAMING_ENABLED=false`, callers should use `streaming.NewNoopEmitter()` instead of constructing a Builder. Do not treat an empty broker list as an intentional production disablement when streaming is required. Fail startup and fix the deployment secret or config instead. Multi-transport wiring (multiple Kafka clusters, SQS / RabbitMQ / EventBridge dispatch) is programmatic — non-Kafka destinations such as SQS queue URLs, RabbitMQ exchanges, and EventBridge bus names are typically already plumbed through the consuming service's own configuration.
 
 ## Multi-Transport Routing
 
-A single Emit can fan out to N targets in parallel. Per-target circuit breakers isolate target failures; when the configured manager supports lib-commons `TenantAwareManager`, non-system events use tenant-scoped breakers for each target so tenant A's outage does not reject tenant B. Required routes drive the aggregate Emit outcome; optional routes are best-effort.
+A single Emit can dispatch to N routes. Route attempts run in deterministic route-table order inside the Emit call. Per-target circuit breakers isolate target failures; when the configured manager supports lib-commons `TenantAwareManager`, non-system events use tenant-scoped breakers for each target so tenant A's outage does not reject tenant B. Required routes drive the aggregate Emit outcome; optional routes are best-effort.
 
 ### Concepts
 
 - **Target** — a named transport runtime (`kafka-primary`, `sqs-shadow`, ...). One adapter per target.
 - **Route** — maps one catalog `EventDefinition` to one `(target, destination)` pair. A definition can have many routes; each one is evaluated independently per Emit.
-- **Requirement** — `RouteRequired` (must succeed for the Emit to succeed) or `RouteOptional` (best-effort; metrics + DLQ only).
+- **Requirement** — `RouteRequired` (must succeed for the Emit to succeed) or `RouteOptional` (best-effort; metric outcomes, trace events, and DLQ when configured).
 - **Outbox** — when a route's target circuit breaker is OPEN and an outbox writer is wired, lib-streaming writes a route-aware envelope and replays it through the target's adapter without going through `Emit` (no breaker re-check).
 - **DLQ per route** — each route can declare a `DLQ` destination. DLQ topic naming, headers, and routing rules apply per route.
 
@@ -246,11 +251,13 @@ emitter, err := streaming.NewBuilder().
 
 ### All-or-error semantics
 
-For a single Emit fanned out across N routes:
+For a single Emit dispatched across N routes:
 
 - Every `RouteRequired` route must succeed (or fall back to outbox) for `Emit` to return nil.
 - A required-route failure aggregates into `*MultiEmitError`. `IsCallerError` returns true only when *every* required failure is itself caller-correctable.
-- `RouteOptional` failures never propagate — they are surfaced via the metric counters and (when the route declares DLQ) routed to the DLQ destination.
+- `RouteOptional` failures never propagate. They still produce per-route `streaming_emitted_total` outcomes such as `failed`, `circuit_open`, `outbox_failed`, or `dlq`, and they add a `route.optional_failed` span event with `route.key`, `route.target`, `route.state`, and `error.type` attributes. If the route declares a DLQ, routable failures are sent to that destination.
+
+> **Production guidance:** Do not use optional routes for audit, compliance, or customer-visible obligations unless you also alert on optional-route degradation. Derive that alert from the `route.optional_failed` span event or from route-specific logs/traces. There is no `outcome="optional_failed"` metric label in the current code.
 
 ### Built-in non-Kafka adapters
 
@@ -262,13 +269,13 @@ The library does NOT bundle AWS or AMQP SDKs. The built-in adapters in `internal
 | RabbitMQ | `streaming.RabbitMQPublisher` (`Publish(ctx, exchange, routingKey, contentType, body, headers) error`) | `streaming.RabbitMQAdapter`, `Builder.RabbitMQTarget` |
 | EventBridge | `streaming.EventBridgePutEventsClient` (`PutEvents(ctx, entries) error`) | `streaming.EventBridgeAdapter`, `Builder.EventBridgeTarget` |
 
-Optional `Ping(ctx) error` capability check on each interface delegates to `Adapter.Healthy`.
+Production SQS, RabbitMQ, and EventBridge clients must implement `Ping(ctx) error`; `Adapter.Healthy` fails closed when the caller-supplied client has no health probe. The health capabilities are exported as `streaming.SQSPingClient`, `streaming.RabbitMQPingClient`, and `streaming.EventBridgePingClient` so wrappers can assert the contract at compile time without changing the backwards-compatible publish interfaces.
 
-The SQS and EventBridge adapters reject payloads larger than 256 KiB with `ErrPayloadTooLarge` before issuing any network call. The EventBridge adapter renders a canonical CloudEvents Detail JSON shape (`specversion`, `id`, `source`, `type`, `subject`, `time`, `datacontenttype`, `dataschema`, `tenantid`, `data`) so downstream rules can match without hard-coding `ce-*` headers.
+The SQS and EventBridge adapters reject provider wire messages larger than 256 KiB with `ErrPayloadTooLarge` before issuing any network call. SQS accounting includes the body plus String message attributes. Because SQS allows only 10 message attributes, the SQS adapter forwards up to 10 deterministic attributes directly and packs overflow metadata into `x-lerian-streaming-extra-headers` as JSON instead of rejecting valid CloudEvents or DLQ metadata; `traceparent` and `tracestate` are kept as top-level SQS attributes whenever present so standard trace extraction can see them. EventBridge accounting measures the rendered PutEvents entry contribution. The EventBridge adapter renders a canonical CloudEvents Detail JSON shape (`specversion`, `id`, `source`, `type`, `subject`, `time`, `datacontenttype`, `dataschema`, `tenantid`, `traceparent`, `tracestate`, `data`) so downstream rules can match without hard-coding `ce-*` headers. EventBridge clients may also implement `EventBridgePutEventsResultClient` with `PutEventsWithResult(ctx, entries) (PutEventsResult, error)` to expose per-entry PutEvents failures without changing the backwards-compatible `EventBridgePutEventsClient` interface.
 
 #### Operational note: SQS routes resolve DNS at construction
 
-`NewRouteDefinition` and `NewRouteTable` validate every SQS `Destination` via `ssrf.ResolveAndValidate`, which performs a synchronous DNS lookup to pin the queue host against the SSRF blocklist (loopback, link-local, RFC1918, cloud-metadata ranges). This closes the TOCTOU window between preflight and the AWS SDK's own resolution at publish time, but it has an operational consequence: **service bootstrap blocks on the resolver for each SQS route**. A DNS outage at boot causes `NewRouteTable` (and therefore `Builder.Build`) to return an error and fail startup. There is no retry loop and no timeout knob — by design, this is a one-time cost paid at startup, not per-Emit. Deploy with a healthy DNS resolver in the pod/container network namespace.
+`NewRouteDefinition` and `NewRouteTable` validate every SQS `Destination` against AWS SQS endpoint host patterns, then call `ssrf.ResolveAndValidate` to reject DNS answers in blocked ranges (loopback, link-local, RFC1918, cloud-metadata ranges). This prevents caller-owned SDK wrappers from signing requests to arbitrary public hosts and fails startup when an SQS hostname resolves unsafely. Operational consequence: **service bootstrap waits on resolver validation for each unique SQS queue URL in a route table**. DNS lookup failures remain fail-closed and cause `NewRouteTable` (and therefore `Builder.Build`) to return an error after the internal bounded retry budget is exhausted. The current internal budget is 3 attempts, a 500 ms timeout per attempt, and 25 ms backoff between attempts. lib-streaming does not expose a public retry or timeout option. Deploy with a healthy DNS resolver in the pod/container network namespace.
 
 ### RabbitMQ is events-only
 
@@ -294,6 +301,25 @@ The manifest version is exposed as `streaming.ManifestVersion`. Routes are deter
 
 **SECURITY**: the manifest exposes event taxonomy, schema versions, service metadata, and producer IDs. Callers MUST wrap the handler in their app's auth middleware before mounting it publicly. The library does not enforce authentication.
 
+Example with an explicit auth wrapper:
+
+```go
+manifestHandler, err := streaming.NewStreamingHandler(
+    descriptor,
+    catalog,
+    streaming.WithManifestRoutes(routeTable),
+)
+if err != nil {
+    return err
+}
+
+// authenticate is owned by the host service. It must reject unauthenticated
+// requests before the manifest handler sees them.
+mux.Handle("/streaming", authenticate(manifestHandler))
+```
+
+Every PR that mounts or changes `/streaming` exposure must include an explicit review note that names the auth middleware, the intended audience, and whether the route is reachable from public networks.
+
 ## Operational Guidance
 
 ### Circuit-breaker tuning
@@ -308,6 +334,15 @@ The Builder exposes three setters that control per-target circuit-breaker behavi
 
 The CB recovery goroutine runs at `clamped(cbTimeout/4, [500ms, 5s])`. With a tenant-aware manager it calls `GetState` on every no-tenant target breaker and `GetStateForTenant` for every Producer-owned `(tenant, target)` breaker key recorded during Emit; otherwise it calls `GetState` on every target. This makes gobreaker's lazy OPEN→HALF-OPEN transition fire deterministically without scanning unrelated manager inventory. Maximum recovery latency after broker recovery is bounded at `CBTimeout + 5s + one probe round-trip`. Shorter `CBTimeout` values tighten that envelope at the cost of more aggressive trip behavior — choose by failure-budget, not by recovery time alone.
 
+`Healthy(ctx)` checks target adapter readiness and the internal CB recovery goroutine liveness. It returns `Healthy` when every target ping succeeds and the recovery loop is alive/fresh, `Degraded` when at least one target ping fails but another target or outbox fallback remains viable, and `Down` when all targets fail with no outbox or after the producer closes. If the recovery goroutine exits after a recovered panic or stops reporting fresh liveness, `Healthy(ctx)` reports a `Degraded` health error while otherwise healthy targets can still publish.
+
+Dashboard-visible recovery liveness comes from `streaming_cb_recovery_liveness` plus panic/assertion signals. Alert on these conditions:
+
+- `streaming_cb_recovery_liveness == 0` while the producer is expected to be running. This means the recovery loop is dead or stale and `Healthy(ctx)` will no longer report fully healthy.
+- `panic_recovered_total{component="streaming",goroutine_name="cb_recovery_loop"} > 0` after `runtime.InitPanicMetrics(...)` is initialized. This means the recovery loop recovered a panic and exited.
+- `assertion_failed_total{component="streaming",operation="cb_recovery.start"} > 0` after `assert.InitAssertionMetrics(...)` is initialized. This means a construction invariant disabled the recovery loop at startup.
+- Persistent `streaming_emitted_total{outcome="circuit_open"}` or `streaming_outbox_routed_total{reason="circuit_open"}` after the broker is healthy again. This catches ineffective recovery even when there is no panic metric.
+
 ### Per-target observability
 
 `streaming_circuit_state` is a single-dimension gauge tracking the **primary target's no-tenant compatibility breaker only** (the first registered target). Tenant-scoped breaker state is intentionally not projected onto this gauge because the metric has no tenant dimension; use lib-commons circuit-breaker metrics/logs, which expose bounded `tenant_hash`, for per-tenant dashboards. Per-target circuit-state changes are emitted through traces and logs to keep metric label cardinality bounded:
@@ -316,11 +351,31 @@ The CB recovery goroutine runs at `clamped(cbTimeout/4, [500ms, 5s])`. With a te
 - **Structured log fields**: every CB-related log line includes `target=<name>`. Log-based metric extraction (Loki / CloudWatch metric filters / GCP log metrics) is the supported path for per-target alerting.
 - **Rationale**: `tenant_id` is already off the metric label set for the same cardinality reason. A per-target gauge series is reasonable for small fixed N but creates a foot-gun for services that scale targets dynamically. Operators wanting bounded per-target gauges can derive them from spans or logs under their own cardinality budget.
 
+Alerting recipe:
+
+1. Keep `streaming_circuit_state == 2` as the primary-target compatibility alert.
+2. Add log- or trace-derived alerts grouped by `target` for every non-primary target.
+3. Add lib-commons tenant-aware circuit-breaker alerts grouped by bounded `tenant_hash` when the service uses `TenantAwareManager`.
+
+Do not assume a green `streaming_circuit_state` means every route is healthy. It only proves that the primary no-tenant breaker is not OPEN.
+
 ### Per-route metric volume
 
-A single `Emit` fanned out across N routes increments `streaming_emitted_total` **N times** — one per route attempt — even though the caller issued a single Emit call. Dashboards computing "logical Emits per second" should aggregate per-Emit attempts via trace spans, **not** by summing per-route counters. The `topic` label distinguishes destinations across routes; the `outcome` label distinguishes `produced`, `dlq`, `outboxed`, and `optional_failed`.
+A single `Emit` dispatched across N routes increments `streaming_emitted_total` **N times** — one per route attempt — even though the caller issued a single Emit call. Dashboards computing "logical Emits per second" should aggregate per-Emit attempts via trace spans, **not** by summing per-route counters. The `topic` label distinguishes destinations across routes; the `outcome` label uses the current closed set from code: `produced`, `outboxed`, `circuit_open`, `caller_error`, `dlq`, `failed`, and `outbox_failed`.
 
 Capacity-plan accordingly: counter volume scales with route count, not Emit count.
+
+### DLQ alerting
+
+`streaming_dlq_publish_failed_total` increments when the DLQ publish itself fails. The original required-route failure may still return to the caller, but the forensic copy was not preserved. Alert on any increase:
+
+```promql
+increase(streaming_dlq_publish_failed_total[5m]) > 0
+```
+
+Non-Kafka routes need explicit DLQ destinations. Kafka-like routes can derive `<source>.dlq`; SQS, RabbitMQ, EventBridge, and custom routes skip DLQ delivery unless `RouteDefinition.DLQ` is set. The DLQ destination kind must match the source route destination kind because lib-streaming publishes the DLQ message through the same target adapter.
+
+For production routes where quarantine is mandatory, make `DLQ` part of the route review checklist. Optional routes that are business-critical should also declare a DLQ and have separate optional-route failure alerts, because optional route failures do not fail the caller's Emit.
 
 ## Project Structure
 
@@ -378,6 +433,10 @@ lib-streaming/
 
 The default `make test` target is unit-focused. Integration and chaos coverage is intentionally explicit because it requires local Docker availability and may be slower than pure unit verification.
 
+Test-infrastructure dependencies such as testcontainers, Toxiproxy, kfake, and MongoDB drivers support repository tests. They are not runtime transport dependencies for consuming services, although Go's module graph can still surface them in dependency scanners because Go does not provide a separate dev-dependency section.
+
+Tenant identity is caller-supplied. lib-streaming validates the tenant ID shape, but it does not compare the value against an authenticated request context. A tenant-context validator hook is a deferred service-side hardening option, not current library behavior.
+
 ## API Documentation
 
 The package-level API documentation is generated from Go doc comments:
@@ -413,6 +472,8 @@ Key public API areas:
 - New exported identifiers require accurate Go doc comments.
 - New production behavior requires unit tests; broker/outbox/DLQ behavior should include integration coverage when feasible.
 - Do not add tenant IDs or other high-cardinality values as metric labels.
+- Manifest handler exposure must include an auth review note. Name the middleware and state whether `/streaming` is public, internal-only, or disabled.
+- Optional routes that carry business-critical data must document their alerting path and DLQ posture.
 
 ### Code Standards
 

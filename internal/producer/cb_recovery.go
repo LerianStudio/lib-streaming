@@ -2,11 +2,47 @@ package producer
 
 import (
 	"context"
+	"errors"
+	"sync"
 	"time"
 
 	"github.com/LerianStudio/lib-commons/v5/commons/circuitbreaker"
 	"github.com/LerianStudio/lib-observability/runtime"
 )
+
+var globalCBRecoveryLiveness = cbRecoveryLivenessRegistry{states: map[string]bool{}}
+
+type cbRecoveryLivenessRegistry struct {
+	mu     sync.Mutex
+	states map[string]bool
+}
+
+func (r *cbRecoveryLivenessRegistry) update(producerID string, alive bool, closed bool) bool {
+	if r == nil || producerID == "" {
+		return alive
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.states == nil {
+		r.states = make(map[string]bool)
+	}
+
+	if closed {
+		delete(r.states, producerID)
+	} else {
+		r.states[producerID] = alive
+	}
+
+	for _, state := range r.states {
+		if !state {
+			return false
+		}
+	}
+
+	return true
+}
 
 // Background circuit-breaker recovery goroutine.
 //
@@ -184,6 +220,8 @@ func (p *Producer) startCBRecoveryLoop() {
 		return
 	}
 
+	p.markCBRecoveryAlive(context.Background())
+
 	runtime.SafeGoWithContextAndComponent(
 		context.Background(),
 		p.logger,
@@ -205,6 +243,8 @@ func (p *Producer) startCBRecoveryLoop() {
 // p.stop; nothing in the producer cancels a specific ctx for goroutine
 // teardown).
 func (p *Producer) cbRecoveryLoop(_ context.Context) {
+	defer p.markCBRecoveryDead(context.Background())
+
 	ticker := time.NewTicker(p.cbRecoveryInterval)
 	defer ticker.Stop()
 
@@ -214,8 +254,65 @@ func (p *Producer) cbRecoveryLoop(_ context.Context) {
 			return
 		case <-ticker.C:
 			p.pokeAllTargetCBs()
+			p.markCBRecoveryAlive(context.Background())
 		}
 	}
+}
+
+func (p *Producer) markCBRecoveryAlive(ctx context.Context) {
+	if p == nil {
+		return
+	}
+
+	p.cbRecoveryRunning.Store(true)
+	p.cbRecoveryLastPokeUnix.Store(time.Now().UTC().UnixNano())
+	p.recordCBRecoveryLiveness(ctx, true)
+}
+
+func (p *Producer) markCBRecoveryDead(ctx context.Context) {
+	if p == nil {
+		return
+	}
+
+	p.cbRecoveryRunning.Store(false)
+	p.recordCBRecoveryLiveness(ctx, false)
+}
+
+func (p *Producer) recordCBRecoveryLiveness(ctx context.Context, alive bool) {
+	if p == nil {
+		return
+	}
+
+	processAlive := globalCBRecoveryLiveness.update(p.producerID, alive, p.closed.Load())
+	p.metrics.recordCBRecoveryLiveness(ctx, processAlive)
+}
+
+func (p *Producer) cbRecoveryLivenessError() error {
+	if p == nil || len(p.targets) == 0 || p.closed.Load() {
+		return nil
+	}
+
+	if !p.cbRecoveryRunning.Load() {
+		p.recordCBRecoveryLiveness(context.Background(), false)
+		return errors.New("streaming: circuit-breaker recovery loop is not running")
+	}
+
+	last := p.cbRecoveryLastPokeUnix.Load()
+	if last <= 0 {
+		p.recordCBRecoveryLiveness(context.Background(), false)
+		return errors.New("streaming: circuit-breaker recovery loop has not reported liveness")
+	}
+
+	maxAge := max(2*p.cbRecoveryInterval, 2*time.Second)
+
+	if time.Since(time.Unix(0, last)) > maxAge {
+		p.recordCBRecoveryLiveness(context.Background(), false)
+		return errors.New("streaming: circuit-breaker recovery loop liveness is stale")
+	}
+
+	p.recordCBRecoveryLiveness(context.Background(), true)
+
+	return nil
 }
 
 // pokeAllTargetCBs calls manager.GetState on every registered no-tenant target

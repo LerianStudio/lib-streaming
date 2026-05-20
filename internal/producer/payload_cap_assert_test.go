@@ -22,7 +22,7 @@ import (
 func TestEmitMulti_PayloadCap_FiresAssertion(t *testing.T) {
 	t.Parallel()
 
-	cap := newCaptureLogger()
+	logger := newCaptureLogger()
 	ctx := context.Background()
 
 	// 500 KiB — fits Kafka's 1 MiB but exceeds SQS's 256 KiB cap.
@@ -63,7 +63,7 @@ func TestEmitMulti_PayloadCap_FiresAssertion(t *testing.T) {
 		[]TargetSpec{{Name: "primary", Kind: contract.TransportSQS, Adapter: primary}},
 		routes,
 		catalog,
-		WithLogger(cap),
+		WithLogger(logger),
 		WithCatalog(catalog),
 	)
 	if err != nil {
@@ -79,7 +79,7 @@ func TestEmitMulti_PayloadCap_FiresAssertion(t *testing.T) {
 		t.Fatalf("Emit() error = %v; want errors.Is(ErrPayloadTooLarge)", emitErr)
 	}
 
-	if !cap.containsMessage("ASSERTION FAILED") {
+	if !logger.containsAssertionFailure() {
 		t.Fatal("expected asserter trident to fire on multi-target payload cap rejection")
 	}
 }
@@ -91,11 +91,11 @@ func TestEmitMulti_PayloadCap_FiresAssertion(t *testing.T) {
 func TestPreFlight_PayloadCap_FiresAssertion(t *testing.T) {
 	t.Parallel()
 
-	cap := newCaptureLogger()
+	logger := newCaptureLogger()
 
 	// Producer fixture with the capture logger — preFlightWithPayload uses
 	// p.newAsserter which reads p.logger.
-	p := &Producer{logger: cap}
+	p := &Producer{logger: logger}
 
 	event := Event{
 		TenantID:     "tenant-1",
@@ -111,7 +111,7 @@ func TestPreFlight_PayloadCap_FiresAssertion(t *testing.T) {
 		t.Fatalf("preFlightWithPayload err = %v; want ErrPayloadTooLarge", err)
 	}
 
-	if !cap.containsMessage("ASSERTION FAILED") {
+	if !logger.containsAssertionFailure() {
 		t.Fatal("expected asserter trident to fire on single-target preflight cap rejection")
 	}
 }

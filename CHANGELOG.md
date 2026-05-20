@@ -62,7 +62,7 @@ Contributors: @bedatty, @fredcamaral
 
 ### Changed
 
-- **`lib-commons/v5` upgraded to `v5.2.0-beta.11`.** The dependency bump brings the latest lib-commons beta surface into lib-streaming and raises the module Go floor to `1.26.2`, matching the upstream module's declared `GoVersion`. CI and documentation now use the same Go version as `go.mod`.
+- **`lib-commons/v5` upgraded to `v5.2.0`.** The dependency bump brings the latest lib-commons surface into lib-streaming and raises the module Go floor to `1.26.3`, matching the upstream module's declared `GoVersion`. CI and documentation now use the same Go version as `go.mod`.
 
 - **`OutboxEnvelope.ValidateShape` version-mismatch now wraps `ErrInvalidOutboxEnvelope`.** The previous implementation returned a bare `fmt.Errorf` that did NOT match `errors.Is(err, ErrInvalidOutboxEnvelope)`. Every other envelope-shape failure (kind/transport mismatch, empty route key, invalid transport, etc.) already wrapped the canonical sentinel; version-mismatch was the lone exception. Two consequences for callers:
   - `errors.Is(err, ErrInvalidOutboxEnvelope)` now matches the version-mismatch path (was `false` before).
@@ -76,6 +76,7 @@ Contributors: @bedatty, @fredcamaral
 
 ### Notes
 
+- EventBridge per-entry failure detection is additive: existing `EventBridgePutEventsClient.PutEvents(ctx, entries) error` wrappers continue to compile. Wrappers that can expose SDK result details should additionally implement `EventBridgePutEventsResultClient.PutEventsWithResult(ctx, entries) (PutEventsResult, error)` and populate per-entry `ErrorCode`/`ErrorMessage` so lib-streaming can reject partial EventBridge failures when the provider call itself returns nil.
+- Production SQS, RabbitMQ, and EventBridge clients must implement `Ping(ctx) error`. `Adapter.Healthy` now fails closed when the caller-supplied client has no health probe; update existing wrappers before relying on `Emitter.Healthy` for readiness.
 - The new CB recovery goroutine is intentionally not directly customizable. The interval is derived from the configured `CBTimeout` and clamped to `[500ms, 5s]`. If your service has reason to override this envelope, raise an issue with the use case before adding a `WithCBRecoveryInterval(...)` option — every additional knob on the public API surface ages.
-- The recovery goroutine emits no dedicated metric. Its health is observable through (a) `assertion_failed_total{component="streaming",operation="cb_recovery.start"}` for invariant violations at start, (b) `panic_recovered_total{component="streaming",goroutine_name="cb_recovery_loop"}` if `GetState` panics after consuming services initialize panic metrics with `runtime.InitPanicMetrics(...)`, and (c) lib-commons' own circuit-breaker transition logs (INFO/ERROR per OPEN↔HALF-OPEN↔CLOSED move). A "stuck loop with no panics and no transitions" failure mode would be silent on dashboards — consider this when alerting.
-
+- `Healthy(ctx)` reports adapter readiness, outbox viability, and CB recovery-loop liveness. Recovery-loop liveness is dashboard-visible through `streaming_cb_recovery_liveness`, `assertion_failed_total{component="streaming",operation="cb_recovery.start"}` for invariant violations at start, `panic_recovered_total{component="streaming",goroutine_name="cb_recovery_loop"}` if `GetState` panics after consuming services initialize panic metrics with `runtime.InitPanicMetrics(...)`, and sustained `streaming_emitted_total{outcome="circuit_open"}` / `streaming_outbox_routed_total{reason="circuit_open"}` after broker recovery. The implementation does not expose a public CB recovery interval or retry knob.

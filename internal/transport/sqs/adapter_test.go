@@ -4,7 +4,9 @@ package sqs
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/LerianStudio/lib-streaming/internal/contract"
@@ -172,7 +174,8 @@ func TestSQS_Publish_RejectsWrongDestinationKind(t *testing.T) {
 func TestSQS_Publish_PayloadCap(t *testing.T) {
 	t.Parallel()
 
-	a, _ := New(&fakeClient{}, "")
+	client := &fakeClient{}
+	a, _ := New(client, "")
 	tooBig := make([]byte, MaxBodyBytes+1)
 	for i := range tooBig {
 		tooBig[i] = 'a'
@@ -182,6 +185,199 @@ func TestSQS_Publish_PayloadCap(t *testing.T) {
 
 	if err := a.Publish(context.Background(), msg); !errors.Is(err, contract.ErrPayloadTooLarge) {
 		t.Errorf("Publish() error = %v; want ErrPayloadTooLarge", err)
+	}
+	if len(client.calls) != 0 {
+		t.Fatalf("SendMessage calls = %d; want 0 for oversized payload", len(client.calls))
+	}
+}
+
+func TestSQS_Publish_AttributeWireSizeCap(t *testing.T) {
+	t.Parallel()
+
+	client := &fakeClient{}
+	a, _ := New(client, "")
+	msg := sampleMessage("https://sqs.us-east-1.amazonaws.com/123/q", []byte(`{}`))
+	msg.Attributes = map[string]string{"oversized": strings.Repeat("a", MaxBodyBytes)}
+
+	if err := a.Publish(context.Background(), msg); !errors.Is(err, contract.ErrPayloadTooLarge) {
+		t.Fatalf("Publish() error = %v; want ErrPayloadTooLarge", err)
+	}
+	if len(client.calls) != 0 {
+		t.Fatalf("SendMessage calls = %d; want 0 for oversized wire message", len(client.calls))
+	}
+}
+
+func TestSQS_Publish_PacksOverflowAttributes(t *testing.T) {
+	t.Parallel()
+
+	client := &fakeClient{}
+	a, _ := New(client, "")
+	msg := sampleMessage("https://sqs.us-east-1.amazonaws.com/123/q", []byte(`{}`))
+	msg.Headers = append(msg.Headers,
+		transport.Header{Key: "ce-specversion", Value: []byte("1.0")},
+		transport.Header{Key: "ce-type", Value: []byte("studio.lerian.transaction.created")},
+		transport.Header{Key: "ce-time", Value: []byte("2026-05-04T12:00:00Z")},
+		transport.Header{Key: "ce-schemaversion", Value: []byte("1.0.0")},
+		transport.Header{Key: "ce-resourcetype", Value: []byte("transaction")},
+		transport.Header{Key: "ce-eventtype", Value: []byte("created")},
+		transport.Header{Key: "ce-tenantid", Value: []byte("tenant-1")},
+		transport.Header{Key: "ce-subject", Value: []byte("tx-1")},
+		transport.Header{Key: "ce-datacontenttype", Value: []byte("application/json")},
+		transport.Header{Key: "x-lerian-dlq-error-class", Value: []byte("auth")},
+	)
+
+	if err := a.Publish(context.Background(), msg); err != nil {
+		t.Fatalf("Publish() error = %v; want nil with packed overflow metadata", err)
+	}
+	if len(client.calls) != 1 {
+		t.Fatalf("SendMessage calls = %d; want 1", len(client.calls))
+	}
+	if got := len(client.calls[0].attributes); got > maxMessageAttributes {
+		t.Fatalf("attributes = %d; want <= %d", got, maxMessageAttributes)
+	}
+
+	attrs := map[string]string{}
+	for _, attr := range client.calls[0].attributes {
+		attrs[attr.Key] = string(attr.Value)
+	}
+
+	if attrs["ce-tenantid"] != "tenant-1" {
+		t.Fatalf("ce-tenantid = %q; want tenant-1", attrs["ce-tenantid"])
+	}
+
+	var overflow map[string]string
+	if err := json.Unmarshal([]byte(attrs[metadataOverflowAttribute]), &overflow); err != nil {
+		t.Fatalf("overflow metadata unmarshal error = %v; raw=%q", err, attrs[metadataOverflowAttribute])
+	}
+	if overflow["ce-subject"] != "tx-1" {
+		t.Fatalf("overflow ce-subject = %q; want tx-1", overflow["ce-subject"])
+	}
+	if overflow["x-lerian-dlq-error-class"] != "auth" {
+		t.Fatalf("overflow dlq class = %q; want auth", overflow["x-lerian-dlq-error-class"])
+	}
+}
+
+func TestSQS_Publish_KeepsTraceHeadersTopLevelWhenAttributesOverflow(t *testing.T) {
+	t.Parallel()
+
+	client := &fakeClient{}
+	a, _ := New(client, "")
+	msg := sampleMessage("https://sqs.us-east-1.amazonaws.com/123/q", []byte(`{}`))
+	msg.Headers = append(msg.Headers,
+		transport.Header{Key: "traceparent", Value: []byte("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")},
+		transport.Header{Key: "tracestate", Value: []byte("vendor=value")},
+		transport.Header{Key: "ce-specversion", Value: []byte("1.0")},
+		transport.Header{Key: "ce-type", Value: []byte("studio.lerian.transaction.created")},
+		transport.Header{Key: "ce-time", Value: []byte("2026-05-04T12:00:00Z")},
+		transport.Header{Key: "ce-schemaversion", Value: []byte("1.0.0")},
+		transport.Header{Key: "ce-resourcetype", Value: []byte("transaction")},
+		transport.Header{Key: "ce-eventtype", Value: []byte("created")},
+		transport.Header{Key: "ce-tenantid", Value: []byte("tenant-1")},
+		transport.Header{Key: "ce-datacontenttype", Value: []byte("application/json")},
+	)
+
+	if err := a.Publish(context.Background(), msg); err != nil {
+		t.Fatalf("Publish() error = %v", err)
+	}
+
+	attrs := map[string]string{}
+	for _, attr := range client.calls[0].attributes {
+		attrs[attr.Key] = string(attr.Value)
+	}
+	if attrs["traceparent"] == "" {
+		t.Fatalf("traceparent missing from top-level attributes: %#v", attrs)
+	}
+	if attrs["tracestate"] == "" {
+		t.Fatalf("tracestate missing from top-level attributes: %#v", attrs)
+	}
+}
+
+func TestSQS_Publish_AttributeBoundary(t *testing.T) {
+	t.Parallel()
+
+	client := &fakeClient{}
+	a, _ := New(client, "")
+	msg := sampleMessage("https://sqs.us-east-1.amazonaws.com/123/q", []byte(`{}`))
+	msg.Headers = nil
+	msg.Attributes = map[string]string{}
+	for i := 0; i < maxMessageAttributes; i++ {
+		msg.Attributes[string(rune('a'+i))] = "v"
+	}
+
+	if err := a.Publish(context.Background(), msg); err != nil {
+		t.Fatalf("Publish() exactly cap error = %v; want nil", err)
+	}
+	if got := len(client.calls[0].attributes); got != maxMessageAttributes {
+		t.Fatalf("attributes = %d; want %d", got, maxMessageAttributes)
+	}
+
+	msg.Attributes["z"] = "v"
+	if err := a.Publish(context.Background(), msg); err != nil {
+		t.Fatalf("Publish() over cap packed error = %v; want nil", err)
+	}
+	if got := len(client.calls[1].attributes); got > maxMessageAttributes {
+		t.Fatalf("packed attributes = %d; want <= %d", got, maxMessageAttributes)
+	}
+}
+
+func TestSQS_Publish_RejectsNonAWSHost(t *testing.T) {
+	t.Parallel()
+
+	client := &fakeClient{}
+	a, _ := New(client, "")
+	msg := sampleMessage("https://example.com/123/q", []byte(`{}`))
+
+	if err := a.Publish(context.Background(), msg); !errors.Is(err, contract.ErrInvalidDestination) {
+		t.Fatalf("Publish() error = %v; want ErrInvalidDestination", err)
+	}
+	if len(client.calls) != 0 {
+		t.Fatalf("SendMessage calls = %d; want 0 for non-AWS host", len(client.calls))
+	}
+}
+
+func TestSQS_Publish_RejectsQueueURLWithoutPath(t *testing.T) {
+	t.Parallel()
+
+	client := &fakeClient{}
+	a, _ := New(client, "")
+	msg := sampleMessage("https://sqs.us-east-1.amazonaws.com", []byte(`{}`))
+
+	if err := a.Publish(context.Background(), msg); !errors.Is(err, contract.ErrInvalidDestination) {
+		t.Fatalf("Publish() error = %v; want ErrInvalidDestination", err)
+	}
+	if len(client.calls) != 0 {
+		t.Fatalf("SendMessage calls = %d; want 0 for URL without queue path", len(client.calls))
+	}
+}
+
+func TestSQS_Publish_RejectsUnsafeQueueURLShapes(t *testing.T) {
+	t.Parallel()
+
+	tests := []string{
+		"https://user:pass@sqs.us-east-1.amazonaws.com/123/q",
+		"https://sqs.us-east-1.amazonaws.com/123/q?X-Amz-Signature=abc",
+		"https://sqs.us-east-1.amazonaws.com/123/q#token=secret",
+		"//sqs.us-east-1.amazonaws.com/123/q",
+		"https://sqs.us-east-1.amazonaws.com/",
+		"https://sqs.us-east-1.amazonaws.com/123",
+	}
+
+	for _, queueURL := range tests {
+		queueURL := queueURL
+		t.Run(queueURL, func(t *testing.T) {
+			t.Parallel()
+
+			client := &fakeClient{}
+			a, _ := New(client, "")
+			msg := sampleMessage(queueURL, []byte(`{}`))
+
+			if err := a.Publish(context.Background(), msg); !errors.Is(err, contract.ErrInvalidDestination) {
+				t.Fatalf("Publish() error = %v; want ErrInvalidDestination", err)
+			}
+			if len(client.calls) != 0 {
+				t.Fatalf("SendMessage calls = %d; want 0 for unsafe queue URL", len(client.calls))
+			}
+		})
 	}
 }
 
@@ -197,13 +393,13 @@ func TestSQS_Healthy_DelegatesToPing(t *testing.T) {
 	}
 }
 
-func TestSQS_Healthy_NoPingNoOp(t *testing.T) {
+func TestSQS_Healthy_NoPingFails(t *testing.T) {
 	t.Parallel()
 
 	a, _ := New(&fakeClient{}, "")
 
-	if err := a.Healthy(context.Background()); err != nil {
-		t.Errorf("Healthy() with no Ping support error = %v; want nil", err)
+	if err := a.Healthy(context.Background()); err == nil {
+		t.Errorf("Healthy() with no Ping support error = nil; want failure")
 	}
 }
 

@@ -17,13 +17,16 @@ import (
 func TestLibCommonsOutboxWriter_Write_NilRepo_FiresAssertion(t *testing.T) {
 	t.Parallel()
 
-	cap := newCaptureLogger()
-	w := &libCommonsOutboxWriter{repo: nil, logger: cap}
+	logger := newCaptureLogger()
+	w := &libCommonsOutboxWriter{repo: nil, logger: logger}
+
 	err := w.Write(context.Background(), OutboxEnvelope{})
+
 	if !errors.Is(err, ErrOutboxNotConfigured) {
 		t.Errorf("Write err = %v, want ErrOutboxNotConfigured", err)
 	}
-	if !cap.containsMessage("ASSERTION FAILED") {
+
+	if !logger.containsAssertionFailure() {
 		t.Fatal("expected asserter.NotNil to fire on nil repo at Write")
 	}
 }
@@ -36,13 +39,16 @@ func TestLibCommonsOutboxWriter_Write_NilRepo_FiresAssertion(t *testing.T) {
 func TestLibCommonsOutboxWriter_WriteWithTx_NilRepo_FiresAssertion(t *testing.T) {
 	t.Parallel()
 
-	cap := newCaptureLogger()
-	w := &libCommonsOutboxWriter{repo: nil, logger: cap}
+	logger := newCaptureLogger()
+	w := &libCommonsOutboxWriter{repo: nil, logger: logger}
+
 	err := w.WriteWithTx(context.Background(), nil, OutboxEnvelope{})
+
 	if !errors.Is(err, ErrOutboxNotConfigured) {
 		t.Errorf("WriteWithTx err = %v, want ErrOutboxNotConfigured", err)
 	}
-	if !cap.containsMessage("ASSERTION FAILED") {
+
+	if !logger.containsAssertionFailure() {
 		t.Fatal("expected asserter.NotNil to fire on nil repo at WriteWithTx")
 	}
 }

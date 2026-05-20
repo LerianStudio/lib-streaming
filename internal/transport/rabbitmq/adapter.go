@@ -40,8 +40,9 @@ type RabbitMQPublisher interface {
 	Publish(ctx context.Context, exchange, routingKey, contentType string, body []byte, headers map[string]any) error
 }
 
-// RabbitMQPingClient is an optional capability check. When the publisher
-// also satisfies this interface, Adapter.Healthy delegates to Ping.
+// RabbitMQPingClient is the capability Adapter.Healthy requires. It is kept
+// separate from RabbitMQPublisher so caller-owned AMQP wrappers can expose the
+// cheapest meaningful probe for their connection/channel lifecycle.
 type RabbitMQPingClient interface {
 	Ping(ctx context.Context) error
 }
@@ -106,23 +107,23 @@ func (a *Adapter) Publish(ctx context.Context, message transport.TransportMessag
 	return a.publisher.Publish(ctx, exchange, routingKey, contentType, message.Payload, headers)
 }
 
-// Healthy delegates to the optional RabbitMQPingClient. When the publisher
-// does not implement Ping, Healthy returns nil — connection lifecycle
-// belongs to the caller.
+// Healthy delegates to RabbitMQPingClient. Publishers without Ping fail closed
+// so readiness cannot report healthy without a real probe.
 func (a *Adapter) Healthy(ctx context.Context) error {
 	if a == nil || transport.IsNilInterface(a.publisher) {
 		return contract.ErrNilProducer
 	}
 
-	if pinger, ok := a.publisher.(RabbitMQPingClient); ok {
-		if ctx == nil {
-			ctx = context.Background()
-		}
-
-		return pinger.Ping(ctx)
+	pinger, ok := a.publisher.(RabbitMQPingClient)
+	if !ok || transport.IsNilInterface(pinger) {
+		return errors.New("rabbitmq: health check requires publisher implementing RabbitMQPingClient")
 	}
 
-	return nil
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	return pinger.Ping(ctx)
 }
 
 // Flush is a no-op. Confirm-mode batching belongs to the publisher.
@@ -179,11 +180,11 @@ func containsAny(msg string, needles ...string) bool {
 // AMQP headers table. CloudEvents headers (binary mode) carry the envelope;
 // they always win on key collisions.
 func buildHeaders(message transport.TransportMessage) map[string]any {
-	if len(message.Attributes) == 0 && len(message.Headers) == 0 {
+	if len(message.Attributes) == 0 && len(message.Headers) == 0 && message.TenantID == "" {
 		return nil
 	}
 
-	headers := make(map[string]any, len(message.Attributes)+len(message.Headers))
+	headers := make(map[string]any, len(message.Attributes)+len(message.Headers)+1)
 
 	for k, v := range message.Attributes {
 		headers[k] = v
@@ -193,6 +194,10 @@ func buildHeaders(message transport.TransportMessage) map[string]any {
 		// AMQP headers are typed; we send byte slices verbatim so the
 		// CloudEvents binary representation is preserved on the wire.
 		headers[h.Key] = append([]byte(nil), h.Value...)
+	}
+
+	if message.TenantID != "" {
+		headers["X-Tenant-ID"] = message.TenantID
 	}
 
 	return headers

@@ -2,7 +2,11 @@
 
 package transport
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/LerianStudio/lib-streaming/internal/contract"
+)
 
 // TestIsNilInterface_Matrix pins every nilable / non-nilable Kind that
 // IsNilInterface must classify, including the notorious typed-nil
@@ -112,5 +116,35 @@ func TestCloneHeadersEmptyReturnsNil(t *testing.T) {
 
 	if got := CloneHeaders(nil); got != nil {
 		t.Fatalf("CloneHeaders(nil) = %#v; want nil", got)
+	}
+}
+
+func TestCloneMessageDeepCopiesAdapterMutableFields(t *testing.T) {
+	t.Parallel()
+
+	message := TransportMessage{
+		Destination: contract.Destination{Kind: contract.TransportKafkaLike, Name: "topic", Attributes: map[string]string{"d": "1"}},
+		Payload:     []byte(`{"ok":true}`),
+		Headers:     []Header{{Key: "ce-id", Value: []byte("evt-1")}},
+		Attributes:  map[string]string{"trace": "abc"},
+	}
+
+	clone := CloneMessage(message)
+	clone.Payload[0] = '['
+	clone.Headers[0].Value[0] = 'X'
+	clone.Attributes["trace"] = "mutated"
+	clone.Destination.Attributes["d"] = "mutated"
+
+	if string(message.Payload) != `{"ok":true}` {
+		t.Fatalf("Payload shared backing array: %q", string(message.Payload))
+	}
+	if string(message.Headers[0].Value) != "evt-1" {
+		t.Fatalf("Header value shared backing array: %q", string(message.Headers[0].Value))
+	}
+	if message.Attributes["trace"] != "abc" {
+		t.Fatalf("Attributes map shared: %v", message.Attributes)
+	}
+	if message.Destination.Attributes["d"] != "1" {
+		t.Fatalf("Destination attributes map shared: %v", message.Destination.Attributes)
 	}
 }

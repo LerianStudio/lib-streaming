@@ -11,14 +11,29 @@ on:
 
 permissions:
   actions: read
-  id-token: write
   contents: read
-  pull-requests: write
-  security-events: write
 
 jobs:
+  docker-scan-guard:
+    name: Docker scan guard
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fail if container manifests appear while Docker scan is disabled
+        run: |
+          set -euo pipefail
+          if git ls-files | grep -E '(^|/)(Dockerfile|Containerfile)(\..*)?$|(^|/)(docker-compose|compose)\.(ya?ml)$' >/dev/null; then
+            echo "Container manifests detected but enable_docker_scan is false. Enable Docker scanning before merging container changes."
+            exit 1
+          fi
+
   security:
+    needs: docker-scan-guard
+    permissions:
+      contents: read
+      security-events: write
     uses: LerianStudio/github-actions-shared-workflows/.github/workflows/pr-security-scan.yml@v1.30.0
     with:
       enable_docker_scan: false
-    secrets: inherit

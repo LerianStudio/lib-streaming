@@ -26,8 +26,8 @@ import (
 func TestCBListener_NilProducer_FiresAssertion(t *testing.T) {
 	t.Parallel()
 
-	cap := newCaptureLogger()
-	l := &streamingStateListener{producer: nil, fallbackLogger: cap}
+	logger := newCaptureLogger()
+	l := &streamingStateListener{producer: nil, fallbackLogger: logger}
 
 	defer func() {
 		if r := recover(); r != nil {
@@ -37,7 +37,7 @@ func TestCBListener_NilProducer_FiresAssertion(t *testing.T) {
 
 	l.OnStateChange(context.Background(), "svc", circuitbreaker.StateClosed, circuitbreaker.StateOpen)
 
-	if !cap.containsMessage("ASSERTION FAILED") {
+	if !logger.containsAssertionFailure() {
 		t.Fatal("expected asserter to fire an ASSERTION FAILED log line on nil producer")
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/LerianStudio/lib-streaming/internal/contract"
@@ -25,6 +26,16 @@ type fakeCall struct {
 func (f *fakeClient) PutEvents(_ context.Context, entries []Entry) error {
 	f.calls = append(f.calls, fakeCall{entries: append([]Entry(nil), entries...)})
 	return f.err
+}
+
+type fakeResultClient struct {
+	fakeClient
+	result PutEventsResult
+}
+
+func (f *fakeResultClient) PutEventsWithResult(_ context.Context, entries []Entry) (PutEventsResult, error) {
+	f.calls = append(f.calls, fakeCall{entries: append([]Entry(nil), entries...)})
+	return f.result, f.err
 }
 
 type fakePingClient struct {
@@ -48,6 +59,8 @@ func sampleMessage() transport.TransportMessage {
 			{Key: "ce-specversion", Value: []byte("1.0")},
 			{Key: "ce-datacontenttype", Value: []byte("application/json")},
 			{Key: "ce-tenantid", Value: []byte("t-1")},
+			{Key: "traceparent", Value: []byte("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")},
+			{Key: "tracestate", Value: []byte("vendor=value")},
 		},
 		Attributes: map[string]string{"eventbridge.resources": "arn:aws:events:us-east-1:123:rule/r1"},
 	}
@@ -124,6 +137,8 @@ func TestEventBridge_Publish_RendersCanonicalDetail(t *testing.T) {
 		"time":            `"2026-05-04T12:00:00Z"`,
 		"datacontenttype": `"application/json"`,
 		"tenantid":        `"t-1"`,
+		"traceparent":     `"00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"`,
+		"tracestate":      `"vendor=value"`,
 		"data":            `{"hello":"eb"}`,
 	}
 
@@ -154,12 +169,161 @@ func TestEventBridge_Publish_RejectsWrongKind(t *testing.T) {
 func TestEventBridge_Publish_PayloadCap(t *testing.T) {
 	t.Parallel()
 
-	a, _ := New(&fakeClient{})
+	cli := &fakeClient{}
+	a, _ := New(cli)
 	msg := sampleMessage()
 	msg.Payload = make([]byte, MaxBodyBytes+1)
 
 	if err := a.Publish(context.Background(), msg); !errors.Is(err, contract.ErrPayloadTooLarge) {
 		t.Errorf("Publish() error = %v; want ErrPayloadTooLarge", err)
+	}
+	if len(cli.calls) != 0 {
+		t.Fatalf("PutEvents calls = %d; want 0 for oversized payload", len(cli.calls))
+	}
+}
+
+func TestEventBridge_Publish_DetailEnvelopeCap(t *testing.T) {
+	t.Parallel()
+
+	cli := &fakeClient{}
+	a, _ := New(cli)
+	msg := sampleMessage()
+	msg.Payload = []byte(`"` + strings.Repeat("a", MaxBodyBytes-2) + `"`)
+
+	if err := a.Publish(context.Background(), msg); !errors.Is(err, contract.ErrPayloadTooLarge) {
+		t.Fatalf("Publish() error = %v; want ErrPayloadTooLarge", err)
+	}
+	if len(cli.calls) != 0 {
+		t.Fatalf("PutEvents calls = %d; want 0 for oversized entry", len(cli.calls))
+	}
+}
+
+func TestEventBridgeEntryWireSize_MatchesJSONEncoding(t *testing.T) {
+	t.Parallel()
+
+	entry := Entry{
+		EventBusName: "default-bus",
+		Source:       "svc://test",
+		DetailType:   "transaction.created",
+		Detail:       []byte(`{"quoted":"value","html":"<&>","list":["a","b"]}`),
+		Resources:    []string{"arn:aws:events:us-east-1:123:rule/r1", "arn:aws:events:us-east-1:123:rule/r2"},
+	}
+
+	wireEntry := struct {
+		EventBusName string   `json:"EventBusName,omitempty"`
+		Source       string   `json:"Source"`
+		DetailType   string   `json:"DetailType"`
+		Detail       string   `json:"Detail"`
+		Time         string   `json:"Time,omitempty"`
+		Resources    []string `json:"Resources,omitempty"`
+	}{
+		EventBusName: entry.EventBusName,
+		Source:       entry.Source,
+		DetailType:   entry.DetailType,
+		Detail:       string(entry.Detail),
+		Resources:    entry.Resources,
+	}
+
+	encoded, err := json.Marshal(wireEntry)
+	if err != nil {
+		t.Fatalf("Marshal(wireEntry) error = %v", err)
+	}
+
+	if got := eventBridgeEntryWireSize(entry); got != len(encoded) {
+		t.Fatalf("eventBridgeEntryWireSize() = %d; want %d", got, len(encoded))
+	}
+}
+
+func TestEventBridge_Publish_PerEntryFailureReturnsError(t *testing.T) {
+	t.Parallel()
+
+	cli := &fakeResultClient{result: PutEventsResult{
+		FailedEntryCount: 1,
+		Entries: []PutEventsEntryResult{{
+			ErrorCode:    "AccessDeniedException",
+			ErrorMessage: "denied password=secret",
+		}},
+	}}
+	a, _ := New(cli)
+
+	err := a.Publish(context.Background(), sampleMessage())
+	if err == nil || !strings.Contains(err.Error(), "AccessDeniedException") {
+		t.Fatalf("Publish() error = %v; want per-entry failure", err)
+	}
+	if strings.Contains(err.Error(), "secret") {
+		t.Fatalf("Publish() error = %v; leaked unsanitized provider detail", err)
+	}
+}
+
+func TestEventBridge_Publish_ResultBranches(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		result PutEventsResult
+		want   string
+	}{
+		{
+			name: "failed count without details",
+			result: PutEventsResult{
+				FailedEntryCount: 1,
+			},
+			want: "failed 1 entries",
+		},
+		{
+			name: "entry detail despite zero failed count",
+			result: PutEventsResult{
+				Entries: []PutEventsEntryResult{{ErrorCode: "InternalFailure", ErrorMessage: "provider failed"}},
+			},
+			want: "entry failed",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cli := &fakeResultClient{result: tt.result}
+			a, _ := New(cli)
+
+			err := a.Publish(context.Background(), sampleMessage())
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Publish() error = %v; want containing %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestEventBridge_Publish_LegacyClientDoesNotRequireResultCapability(t *testing.T) {
+	t.Parallel()
+
+	cli := &fakeClient{}
+	a, _ := New(cli)
+
+	if err := a.Publish(context.Background(), sampleMessage()); err != nil {
+		t.Fatalf("Publish() legacy client error = %v; want nil", err)
+	}
+	if len(cli.calls) != 1 {
+		t.Fatalf("PutEvents calls = %d; want 1", len(cli.calls))
+	}
+}
+
+func TestEventBridge_Classify_PerEntryAuthFailure(t *testing.T) {
+	t.Parallel()
+
+	cli := &fakeResultClient{result: PutEventsResult{
+		FailedEntryCount: 1,
+		Entries:          []PutEventsEntryResult{{ErrorCode: "AccessDeniedException", ErrorMessage: "denied"}},
+	}}
+	a, _ := New(cli)
+
+	err := a.Publish(context.Background(), sampleMessage())
+	if err == nil {
+		t.Fatal("Publish() error = nil; want per-entry failure")
+	}
+	if got := a.Classify(err); got != contract.ClassAuth {
+		t.Fatalf("Classify(per-entry failure) = %q; want %q", got, contract.ClassAuth)
 	}
 }
 
@@ -187,13 +351,13 @@ func TestEventBridge_Healthy_DelegatesToPing(t *testing.T) {
 	}
 }
 
-func TestEventBridge_Healthy_NoPingNoOp(t *testing.T) {
+func TestEventBridge_Healthy_NoPingFails(t *testing.T) {
 	t.Parallel()
 
 	a, _ := New(&fakeClient{})
 
-	if err := a.Healthy(context.Background()); err != nil {
-		t.Errorf("Healthy() error = %v; want nil", err)
+	if err := a.Healthy(context.Background()); err == nil {
+		t.Errorf("Healthy() error = nil; want no-Ping failure")
 	}
 }
 

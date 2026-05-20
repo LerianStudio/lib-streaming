@@ -42,6 +42,7 @@ const (
 	metricNameOutboxRouted              = "streaming_outbox_routed_total"
 	metricNameOutboxReplayTargetUnknown = "streaming_outbox_replay_target_unknown_total"
 	metricNameCircuitState              = "streaming_circuit_state"
+	metricNameCBRecoveryLiveness        = "streaming_cb_recovery_liveness"
 	metricTopicUnresolved               = "__unresolved__"
 )
 
@@ -102,6 +103,9 @@ type streamingMetrics struct {
 
 	circuitStateOnce  sync.Once
 	circuitStateGauge *metrics.GaugeBuilder
+
+	cbRecoveryLivenessOnce  sync.Once
+	cbRecoveryLivenessGauge *metrics.GaugeBuilder
 
 	// warnOnce guards the single "metrics disabled" WARN the Producer emits
 	// when factory == nil at first-record time. Subsequent calls are silent.

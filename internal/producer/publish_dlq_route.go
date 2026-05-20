@@ -107,7 +107,7 @@ func (p *Producer) publishRouteDLQ(
 		causeMessage = sanitizeBrokerURL(cause.Error())
 	}
 
-	headers := buildCloudEventsTransportHeaders(event)
+	headers := buildTransportHeaders(ctx, event)
 	headers = append(headers,
 		transport.Header{Key: dlqHeaderSourceTopic, Value: []byte(sourceLabel)},
 		transport.Header{Key: dlqHeaderErrorClass, Value: []byte(cls)},
@@ -128,9 +128,10 @@ func (p *Producer) publishRouteDLQ(
 		Key:         partKey,
 		Payload:     event.Payload,
 		Headers:     headers,
+		Attributes:  dlqDest.Attributes,
 	}
 
-	if err := rt.adapter.Publish(ctx, message); err != nil {
+	if err := rt.adapter.Publish(ctx, transport.CloneMessage(message)); err != nil {
 		p.metrics.recordDLQFailed(ctx, sourceLabel)
 		p.logger.Log(ctx, log.LevelError, "streaming: route DLQ publish failed",
 			log.String("producer_id", p.producerID),

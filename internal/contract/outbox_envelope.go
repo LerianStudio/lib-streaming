@@ -2,7 +2,6 @@ package contract
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -153,7 +152,7 @@ func (e OutboxEnvelope) ValidateShape() error {
 	}
 
 	if e.AggregateID == uuid.Nil {
-		return errors.New("streaming: outbox envelope aggregate_id required")
+		return fmt.Errorf("%w: aggregate_id required", ErrInvalidOutboxEnvelope)
 	}
 
 	if err := e.Policy.Validate(); err != nil {

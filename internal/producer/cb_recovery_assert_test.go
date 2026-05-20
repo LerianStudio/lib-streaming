@@ -14,11 +14,11 @@ import (
 func TestCBRecovery_PokeAllTargets_NilEntry_FiresAssertion(t *testing.T) {
 	t.Parallel()
 
-	cap := newCaptureLogger()
+	logger := newCaptureLogger()
 	mgr := newFakeCBManager()
 
 	p := &Producer{
-		logger:     cap,
+		logger:     logger,
 		producerID: "pid-test",
 		cbManager:  mgr,
 		targets: map[string]*targetRuntime{
@@ -28,7 +28,7 @@ func TestCBRecovery_PokeAllTargets_NilEntry_FiresAssertion(t *testing.T) {
 
 	p.pokeAllTargetCBs()
 
-	if !cap.containsMessage("ASSERTION FAILED") {
+	if !logger.containsAssertionFailure() {
 		t.Fatal("expected asserter trident to fire on nil entry during CB poke")
 	}
 }
@@ -41,10 +41,10 @@ func TestCBRecovery_PokeAllTargets_NilEntry_FiresAssertion(t *testing.T) {
 func TestCBRecovery_StartLoop_NilCBManager_FiresAssertion(t *testing.T) {
 	t.Parallel()
 
-	cap := newCaptureLogger()
+	logger := newCaptureLogger()
 
 	p := &Producer{
-		logger:     cap,
+		logger:     logger,
 		producerID: "pid-test",
 		// cbManager intentionally left nil to simulate a hand-built
 		// *Producer that bypassed NewProducerMulti.
@@ -60,7 +60,7 @@ func TestCBRecovery_StartLoop_NilCBManager_FiresAssertion(t *testing.T) {
 
 	p.startCBRecoveryLoop()
 
-	if !cap.containsMessage("ASSERTION FAILED") {
+	if !logger.containsAssertionFailure() {
 		t.Fatal("expected asserter trident to fire on nil cbManager at startCBRecoveryLoop")
 	}
 }
@@ -75,11 +75,11 @@ func TestCBRecovery_StartLoop_NilCBManager_FiresAssertion(t *testing.T) {
 func TestCBRecovery_StartLoop_InvalidInterval_FiresAssertion(t *testing.T) {
 	t.Parallel()
 
-	cap := newCaptureLogger()
+	logger := newCaptureLogger()
 	mgr := newFakeCBManager()
 
 	p := &Producer{
-		logger:     cap,
+		logger:     logger,
 		producerID: "pid-test",
 		cbManager:  mgr,
 		targets: map[string]*targetRuntime{
@@ -92,7 +92,7 @@ func TestCBRecovery_StartLoop_InvalidInterval_FiresAssertion(t *testing.T) {
 
 	p.startCBRecoveryLoop()
 
-	if !cap.containsMessage("ASSERTION FAILED") {
+	if !logger.containsAssertionFailure() {
 		t.Fatal("expected asserter trident to fire on zero cbRecoveryInterval at startCBRecoveryLoop")
 	}
 }
@@ -105,11 +105,11 @@ func TestCBRecovery_StartLoop_InvalidInterval_FiresAssertion(t *testing.T) {
 func TestCBRecovery_StartLoop_NilStopChannel_FiresAssertion(t *testing.T) {
 	t.Parallel()
 
-	cap := newCaptureLogger()
+	logger := newCaptureLogger()
 	mgr := newFakeCBManager()
 
 	p := &Producer{
-		logger:     cap,
+		logger:     logger,
 		producerID: "pid-test",
 		cbManager:  mgr,
 		targets: map[string]*targetRuntime{
@@ -122,7 +122,7 @@ func TestCBRecovery_StartLoop_NilStopChannel_FiresAssertion(t *testing.T) {
 
 	p.startCBRecoveryLoop()
 
-	if !cap.containsMessage("ASSERTION FAILED") {
+	if !logger.containsAssertionFailure() {
 		t.Fatal("expected asserter trident to fire on nil stop channel at startCBRecoveryLoop")
 	}
 }

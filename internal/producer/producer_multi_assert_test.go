@@ -25,7 +25,7 @@ import (
 func TestNewProducerMulti_AdapterKindMismatch_FiresAssertion(t *testing.T) {
 	t.Parallel()
 
-	cap := newCaptureLogger()
+	logger := newCaptureLogger()
 
 	// Spec.Kind says TransportKafkaLike but the adapter reports
 	// TransportSQS. validateRoutesAgainstTargets passes (route.Destination
@@ -46,7 +46,7 @@ func TestNewProducerMulti_AdapterKindMismatch_FiresAssertion(t *testing.T) {
 		[]TargetSpec{{Name: "primary", Kind: TransportKafkaLike, Adapter: mismatchedAdapter}},
 		routes,
 		catalog,
-		WithLogger(cap),
+		WithLogger(logger),
 		WithCatalog(catalog),
 	)
 
@@ -54,7 +54,7 @@ func TestNewProducerMulti_AdapterKindMismatch_FiresAssertion(t *testing.T) {
 		t.Fatalf("NewProducerMulti() error = %v; want errors.Is(ErrInvalidRouteDefinition)", err)
 	}
 
-	if !cap.containsMessage("ASSERTION FAILED") {
+	if !logger.containsAssertionFailure() {
 		t.Fatal("expected asserter trident to fire on adapter kind mismatch")
 	}
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/LerianStudio/lib-commons/v5/commons/outbox"
 	"github.com/LerianStudio/lib-observability/log"
 	"github.com/LerianStudio/lib-streaming/internal/contract"
+	"github.com/LerianStudio/lib-streaming/internal/transport/fake"
 )
 
 // newTestUUIDv7 returns a time-ordered UUID via commons.GenerateUUIDv7. Used
@@ -147,6 +148,58 @@ func TestProducer_OutboxHandler_PublishDirectFailure_SurfacesError(t *testing.T)
 	}
 }
 
+func TestProducer_HandleOutboxRow_DestinationAttributesReachAdapter(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	adapter := fake.NewAdapter(TransportKafkaLike)
+	catalog := sampleCatalog(t)
+	routes := mustMultiRouteTable(t,
+		multiTestRoute("transaction.created.kafka.primary", "transaction.created", "primary", "lerian.streaming.transaction.created", contract.RouteRequired),
+	)
+	p, err := NewProducerMulti(
+		ctx,
+		MultiProducerConfig{Source: "svc://outbox-attrs"},
+		nil,
+		[]TargetSpec{{Name: "primary", Kind: TransportKafkaLike, Adapter: adapter}},
+		routes,
+		catalog,
+		WithLogger(log.NewNop()),
+		WithCatalog(catalog),
+	)
+	if err != nil {
+		t.Fatalf("NewProducerMulti() error = %v", err)
+	}
+	t.Cleanup(func() { _ = p.Close() })
+
+	event := sampleEvent()
+	event.ApplyDefaults()
+	envelope := testOutboxEnvelope(event, event.Topic(), "transaction.created", DefaultDeliveryPolicy(), newTestUUIDv7(t))
+	envelope.Destination.Attributes = map[string]string{"eventbridge.resources": "arn:aws:events:us-east-1:123:rule/replay"}
+	payload, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatalf("json.Marshal envelope err = %v", err)
+	}
+
+	row := &outbox.OutboxEvent{
+		ID:          newTestUUIDv7(t),
+		EventType:   StreamingOutboxEventType,
+		AggregateID: envelope.AggregateID,
+		Payload:     payload,
+	}
+
+	if err := p.handleOutboxRow(ctx, row); err != nil {
+		t.Fatalf("handleOutboxRow() error = %v", err)
+	}
+	messages := adapter.Messages()
+	if got := len(messages); got != 1 {
+		t.Fatalf("messages = %d; want 1", got)
+	}
+	if got := messages[0].Attributes["eventbridge.resources"]; got != "arn:aws:events:us-east-1:123:rule/replay" {
+		t.Fatalf("replay message attribute = %q; want envelope destination attribute", got)
+	}
+}
+
 // TestProducer_OutboxHandler_InvalidPayload_ReturnsError: a row whose
 // Payload is not valid JSON must surface an error (not panic). The
 // Dispatcher will mark it FAILED; operators can then MarkInvalid it from
@@ -177,6 +230,38 @@ func TestProducer_OutboxHandler_InvalidPayload_ReturnsError(t *testing.T) {
 
 	if !strings.Contains(err.Error(), "unmarshal") {
 		t.Errorf("err = %q; want substring %q", err.Error(), "unmarshal")
+	}
+}
+
+func TestProducer_OutboxHandler_UnknownTargetReturnsError(t *testing.T) {
+	cfg, _ := kfakeConfig(t)
+
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
+	if err != nil {
+		t.Fatalf("New err = %v", err)
+	}
+	t.Cleanup(func() { _ = emitter.Close() })
+
+	p := asProducer(t, emitter)
+	event := sampleEvent()
+	event.ApplyDefaults()
+	envelope := testOutboxEnvelope(event, event.Topic(), "transaction.created", DefaultDeliveryPolicy(), newTestUUIDv7(t))
+	envelope.Target = "retired-target"
+	payload, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatalf("json.Marshal err = %v", err)
+	}
+
+	row := &outbox.OutboxEvent{
+		ID:          newTestUUIDv7(t),
+		EventType:   StreamingOutboxEventType,
+		AggregateID: envelope.AggregateID,
+		Payload:     payload,
+	}
+
+	err = p.handleOutboxRow(context.Background(), row)
+	if !errors.Is(err, contract.ErrMissingTarget) {
+		t.Fatalf("handleOutboxRow err = %v; want ErrMissingTarget", err)
 	}
 }
 

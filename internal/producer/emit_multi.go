@@ -122,7 +122,7 @@ func (p *Producer) emitMulti(ctx context.Context, request contract.EmitRequest) 
 	// the elements it receives.
 	outcomes := make([]routeOutcome, 0, len(routes))
 
-	headers := buildCloudEventsTransportHeaders(event)
+	headers := buildTransportHeaders(ctx, event)
 	for i := range routes {
 		outcomes = append(outcomes, p.dispatchRoute(ctx, span, event, topic, resolved.DefinitionKey, policy, headers, routes[i]))
 	}
@@ -356,21 +356,22 @@ func (p *Producer) dispatchRoute(
 	//     is correctness-safe. The Kafka adapter relies on the same
 	//     lifetime invariant documented at toKgoHeaders.
 	//
-	// Cloning Payload + headers per route was reintroducing exactly the
-	// per-Emit allocation that the kgo→transport→kgo triple-conversion
-	// fix removed; for an N-route definition this was N×(payload + len
-	// headers) extra allocations on every Emit.
+	// The route message is built once and cloned only at the adapter boundary.
+	// That keeps route fan-out allocation bounded while preventing a mutating
+	// adapter from leaking changes into sibling routes or DLQ/replay paths.
 	partKey := event.PartitionKey()
 	if p.partFn != nil {
 		partKey = p.partFn(event)
 	}
 
+	destination := route.Destination.Normalize()
 	message := transport.TransportMessage{
-		Destination: route.Destination.Normalize(),
+		Destination: destination,
 		TenantID:    event.TenantID,
 		Key:         partKey,
 		Payload:     event.Payload,
 		Headers:     headers,
+		Attributes:  destination.Attributes,
 	}
 
 	// Outbox-always policy short-circuits the broker entirely.
@@ -459,13 +460,75 @@ func (p *Producer) executeRoutePublish(
 ) routeOutcome {
 	firstAttempt := time.Now().UTC()
 
-	_, execErr := p.executeWithCircuitBreaker(ctx, rt, cbScope, func() (any, error) {
+	if preparer, ok := rt.adapter.(transport.PreparedMessageAdapter); ok && !isNilInterface(preparer) {
+		prepared, err := preparer.PrepareMessage(transport.CloneMessage(message))
+		if err != nil {
+			outcome.class = rt.adapter.Classify(err)
+			outcome.cause = err
+
+			if contract.IsCallerError(err) {
+				outcome.state = outcomeCallerError
+			} else {
+				outcome.state = outcomeFailed
+
+				span.RecordError(err)
+			}
+
+			return outcome
+		}
+
+		execErr := p.executeWithCircuitBreaker(ctx, rt, cbScope, func() (any, error) {
+			if p.closed.Load() {
+				return nil, ErrEmitterClosed
+			}
+
+			return nil, preparer.PublishPrepared(ctx, prepared)
+		})
+
+		return p.handleRoutePublishExecution(ctx, span, rt, event, topic, definitionKey, route, routePolicy, firstAttempt, execErr, outcome)
+	}
+
+	if validator, ok := rt.adapter.(transport.MessageValidator); ok && !isNilInterface(validator) {
+		if err := validator.ValidateMessage(transport.CloneMessage(message)); err != nil {
+			outcome.class = rt.adapter.Classify(err)
+			outcome.cause = err
+
+			if contract.IsCallerError(err) {
+				outcome.state = outcomeCallerError
+			} else {
+				outcome.state = outcomeFailed
+
+				span.RecordError(err)
+			}
+
+			return outcome
+		}
+	}
+
+	execErr := p.executeWithCircuitBreaker(ctx, rt, cbScope, func() (any, error) {
 		if p.closed.Load() {
 			return nil, ErrEmitterClosed
 		}
 
-		return nil, rt.adapter.Publish(ctx, message)
+		return nil, rt.adapter.Publish(ctx, transport.CloneMessage(message))
 	})
+
+	return p.handleRoutePublishExecution(ctx, span, rt, event, topic, definitionKey, route, routePolicy, firstAttempt, execErr, outcome)
+}
+
+func (p *Producer) handleRoutePublishExecution(
+	ctx context.Context,
+	span trace.Span,
+	rt *targetRuntime,
+	event Event,
+	topic string,
+	definitionKey string,
+	route contract.RouteDefinition,
+	routePolicy contract.DeliveryPolicy,
+	firstAttempt time.Time,
+	execErr error,
+	outcome routeOutcome,
+) routeOutcome {
 	if execErr != nil && errors.Is(execErr, ErrNilProducer) {
 		outcome.state = outcomeFailed
 		outcome.class = rt.adapter.Classify(execErr)

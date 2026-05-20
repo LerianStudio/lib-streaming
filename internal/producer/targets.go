@@ -259,6 +259,10 @@ func (p *Producer) healthyTargets(ctx context.Context) error {
 		healthyCount++
 	}
 
+	if err := p.cbRecoveryLivenessError(); err != nil {
+		joined = errors.Join(joined, err)
+	}
+
 	if joined == nil {
 		return nil
 	}

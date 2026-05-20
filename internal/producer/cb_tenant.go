@@ -56,33 +56,37 @@ func (p *Producer) executeWithCircuitBreaker(
 	rt *targetRuntime,
 	scope circuitBreakerScope,
 	fn func() (any, error),
-) (any, error) {
+) error {
 	if rt == nil {
-		return nil, fmt.Errorf("%w: target runtime is nil", contract.ErrNilProducer)
+		return fmt.Errorf("%w: target runtime is nil", contract.ErrNilProducer)
 	}
 
 	if scope.tenantScoped && !isNilInterface(p.tenantCBManager) {
 		cb, err := p.tenantCBManager.GetOrCreateForTenant(scope.tenantID, rt.cbServiceName, p.cbConfig)
 		if err != nil {
-			return nil, fmt.Errorf("streaming: register tenant circuit breaker %q: %w", rt.cbServiceName, err)
+			return fmt.Errorf("streaming: register tenant circuit breaker %q: %w", rt.cbServiceName, err)
 		}
 
 		if isNilInterface(cb) {
-			return nil, fmt.Errorf("%w: tenant circuit breaker %q is nil", contract.ErrNilProducer, rt.cbServiceName)
+			return fmt.Errorf("%w: tenant circuit breaker %q is nil", contract.ErrNilProducer, rt.cbServiceName)
 		}
 
 		p.tenantCBKeys.Store(circuitbreaker.TenantBreakerKey{TenantID: scope.tenantID, ServiceName: rt.cbServiceName}, struct{}{})
 
-		return p.tenantCBManager.ExecuteForTenant(ctx, scope.tenantID, rt.cbServiceName, fn)
+		_, err = p.tenantCBManager.ExecuteForTenant(ctx, scope.tenantID, rt.cbServiceName, fn)
+
+		return err
 	}
 
 	if isNilInterface(p.cbManager) {
-		return nil, fmt.Errorf("%w: circuit breaker manager is nil", contract.ErrNilProducer)
+		return fmt.Errorf("%w: circuit breaker manager is nil", contract.ErrNilProducer)
 	}
 
 	if isNilInterface(rt.cb) {
-		return nil, fmt.Errorf("%w: circuit breaker %q is nil", contract.ErrNilProducer, rt.cbServiceName)
+		return fmt.Errorf("%w: circuit breaker %q is nil", contract.ErrNilProducer, rt.cbServiceName)
 	}
 
-	return p.cbManager.Execute(rt.cbServiceName, fn)
+	_, err := p.cbManager.Execute(rt.cbServiceName, fn)
+
+	return err
 }

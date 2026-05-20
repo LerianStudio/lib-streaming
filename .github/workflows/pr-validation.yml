@@ -7,8 +7,6 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
-  issues: write
 
 jobs:
   validate:
@@ -32,4 +30,3 @@ jobs:
         scripts
         streaming
         tests
-    secrets: inherit

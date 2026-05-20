@@ -11,6 +11,7 @@ import (
 	"github.com/LerianStudio/lib-observability/log"
 
 	"github.com/LerianStudio/lib-streaming/internal/contract"
+	"github.com/LerianStudio/lib-streaming/internal/transport"
 	"github.com/LerianStudio/lib-streaming/internal/transport/fake"
 )
 
@@ -61,6 +62,90 @@ func TestNewProducerMulti_AllRequiredSucceedReturnsNil(t *testing.T) {
 	}
 	if dest := secondary.Messages()[0].Destination; dest.Name != "lerian.streaming.transaction.created.replica" {
 		t.Fatalf("secondary destination = %q; want lerian.streaming.transaction.created.replica", dest.Name)
+	}
+}
+
+func TestNewProducerMulti_RouteDestinationAttributesReachAdapter(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	primary := fake.NewAdapter(TransportKafkaLike)
+
+	catalog := sampleCatalog(t)
+	route := multiTestRoute("transaction.created.kafka.primary", "transaction.created", "primary", "lerian.streaming.transaction.created", contract.RouteRequired)
+	route.Destination.Attributes = map[string]string{"eventbridge.resources": "arn:aws:events:us-east-1:123:rule/r1"}
+	routes := mustMultiRouteTable(t, route)
+
+	p, err := NewProducerMulti(
+		ctx,
+		MultiProducerConfig{Source: "svc://multi-test"},
+		nil,
+		[]TargetSpec{{Name: "primary", Kind: TransportKafkaLike, Adapter: primary}},
+		routes,
+		catalog,
+		WithLogger(log.NewNop()),
+		WithCatalog(catalog),
+	)
+	if err != nil {
+		t.Fatalf("NewProducerMulti() error = %v", err)
+	}
+	t.Cleanup(func() { _ = p.Close() })
+
+	if err := p.Emit(ctx, eventToRequest(sampleEvent())); err != nil {
+		t.Fatalf("Emit() error = %v", err)
+	}
+
+	messages := primary.Messages()
+	if got := len(messages); got != 1 {
+		t.Fatalf("messages = %d; want 1", got)
+	}
+	if got := messages[0].Attributes["eventbridge.resources"]; got != "arn:aws:events:us-east-1:123:rule/r1" {
+		t.Fatalf("message attribute = %q; want route destination attribute", got)
+	}
+}
+
+func TestNewProducerMulti_AdapterMutationDoesNotLeakAcrossRoutes(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	primary := &mutatingAdapter{kind: TransportKafkaLike}
+	secondary := fake.NewAdapter(TransportKafkaLike)
+
+	catalog := sampleCatalog(t)
+	routes := mustMultiRouteTable(t,
+		multiTestRoute("transaction.created.kafka.primary", "transaction.created", "primary", "lerian.streaming.transaction.created", contract.RouteRequired),
+		multiTestRoute("transaction.created.kafka.secondary", "transaction.created", "secondary", "lerian.streaming.transaction.created.replica", contract.RouteRequired),
+	)
+
+	p, err := NewProducerMulti(
+		ctx,
+		MultiProducerConfig{Source: "svc://multi-test"},
+		nil,
+		[]TargetSpec{
+			{Name: "primary", Kind: TransportKafkaLike, Adapter: primary},
+			{Name: "secondary", Kind: TransportKafkaLike, Adapter: secondary},
+		},
+		routes,
+		catalog,
+		WithLogger(log.NewNop()),
+		WithCatalog(catalog),
+	)
+	if err != nil {
+		t.Fatalf("NewProducerMulti() error = %v", err)
+	}
+	t.Cleanup(func() { _ = p.Close() })
+
+	if err := p.Emit(ctx, eventToRequest(sampleEvent())); err != nil {
+		t.Fatalf("Emit() error = %v; want nil", err)
+	}
+
+	messages := secondary.Messages()
+	if got := len(messages); got != 1 {
+		t.Fatalf("secondary published = %d; want 1", got)
+	}
+
+	if got, want := string(messages[0].Payload), `{"amount":100}`; got != want {
+		t.Fatalf("secondary payload = %s; want %s (primary adapter mutation leaked)", got, want)
 	}
 }
 
@@ -743,6 +828,35 @@ func mustMultiRouteTable(t *testing.T, routes ...contract.RouteDefinition) contr
 		t.Fatalf("NewRouteTable() error = %v", err)
 	}
 	return rt
+}
+
+type mutatingAdapter struct {
+	kind contract.TransportKind
+}
+
+func (a *mutatingAdapter) Kind() contract.TransportKind { return a.kind }
+
+func (a *mutatingAdapter) Publish(_ context.Context, message transport.TransportMessage) error {
+	if len(message.Payload) > 0 {
+		message.Payload[0] = 'X'
+	}
+	if len(message.Headers) > 0 && len(message.Headers[0].Value) > 0 {
+		message.Headers[0].Value[0] = 'X'
+	}
+	if message.Attributes != nil {
+		message.Attributes["mutated"] = "true"
+	}
+
+	message.Destination.Name = "mutated"
+
+	return nil
+}
+
+func (*mutatingAdapter) Healthy(context.Context) error { return nil }
+func (*mutatingAdapter) Flush(context.Context) error   { return nil }
+func (*mutatingAdapter) Close(context.Context) error   { return nil }
+func (*mutatingAdapter) Classify(error) contract.ErrorClass {
+	return contract.ClassBrokerUnavailable
 }
 
 // captureRouteOutboxWriter is a test-only OutboxWriter that records every

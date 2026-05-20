@@ -301,9 +301,9 @@ func (m *streamingMetrics) recordOutboxRouted(ctx context.Context, topic, reason
 // streaming_outbox_replay_target_unknown_total by 1. Called from
 // handleOutboxRow when an outbox replay row references a target name
 // that is no longer registered (typically a config rename between the
-// original failure and the replay attempt). The row is marked processed
-// and the original event is silently dropped from the broker's perspective
-// — this counter is the operator's signal that drops are happening.
+// original failure and the replay attempt). The row returns an error so the
+// dispatcher preserves retry/failure semantics; this counter is the operator's
+// signal that replay is blocked on target configuration drift.
 //
 // Cardinality: target name is operator-controlled and bounded (typically
 // single-digit count per service). Same discipline as cb service-name
@@ -323,7 +323,7 @@ func (m *streamingMetrics) recordOutboxReplayTargetUnknown(ctx context.Context, 
 		builder, err := m.factory.Counter(metrics.Metric{
 			Name:        metricNameOutboxReplayTargetUnknown,
 			Unit:        "1",
-			Description: "Total outbox replay rows dropped because their target was not registered.",
+			Description: "Total outbox replay rows blocked because their target was not registered.",
 		})
 		if err != nil {
 			m.logger.Log(ctx, log.LevelError, "streaming: metrics: create outbox_replay_target_unknown counter",
@@ -397,6 +397,49 @@ func (m *streamingMetrics) recordCircuitState(ctx context.Context, state int32) 
 	if err := m.circuitStateGauge.Set(ctx, int64(state)); err != nil {
 		m.logger.Log(ctx, log.LevelWarn, "streaming: metrics: record circuit_state",
 			log.String("metric", metricNameCircuitState), log.Err(err))
+	}
+}
+
+// recordCBRecoveryLiveness sets streaming_cb_recovery_liveness to 1 when the
+// per-Producer recovery goroutine is alive/fresh and 0 when it died or became
+// stale. No labels: this is intentionally one bounded process-local signal.
+func (m *streamingMetrics) recordCBRecoveryLiveness(ctx context.Context, alive bool) {
+	if m == nil {
+		return
+	}
+
+	if m.factory == nil {
+		return
+	}
+
+	m.cbRecoveryLivenessOnce.Do(func() {
+		builder, err := m.factory.Gauge(metrics.Metric{
+			Name:        metricNameCBRecoveryLiveness,
+			Unit:        "1",
+			Description: "Circuit-breaker recovery goroutine liveness: 1=alive, 0=dead or stale.",
+		})
+		if err != nil {
+			m.logger.Log(ctx, log.LevelError, "streaming: metrics: create cb_recovery_liveness gauge",
+				log.String("metric", metricNameCBRecoveryLiveness), log.Err(err))
+
+			return
+		}
+
+		m.cbRecoveryLivenessGauge = builder
+	})
+
+	if m.cbRecoveryLivenessGauge == nil {
+		return
+	}
+
+	value := int64(0)
+	if alive {
+		value = 1
+	}
+
+	if err := m.cbRecoveryLivenessGauge.Set(ctx, value); err != nil {
+		m.logger.Log(ctx, log.LevelWarn, "streaming: metrics: record cb_recovery_liveness",
+			log.String("metric", metricNameCBRecoveryLiveness), log.Err(err))
 	}
 }
 

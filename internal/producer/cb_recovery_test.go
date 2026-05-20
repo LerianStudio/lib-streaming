@@ -47,13 +47,6 @@ import (
 // (loop never started) fails inside one test run rather than hanging.
 const recoveryTestPokeDeadline = 2 * time.Second
 
-// TODO(review): wrap recovery-loop tests with goleak.VerifyNone(t) to
-// catch a future regression that breaks signalStop semantics. Adding
-// go.uber.org/goleak is a dependency change worth a separate decision —
-// the existing "no extra pokes after signalStop" assertion is a
-// behavioral proxy for goroutine exit but does not catch a stuck loop
-// that skips pokes.
-
 // awaitPokes deadline-polls until the target has accumulated `want`
 // GetState calls or the deadline expires. Returns the final observed
 // count. Test code MUST t.Fatalf when the returned count is below `want`
@@ -128,6 +121,26 @@ func TestResolveCBRecoveryInterval(t *testing.T) {
 				t.Errorf("resolveCBRecoveryInterval(%v) = %v; want %v", tt.cbTimeout, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestCBRecoveryLivenessRegistryAggregatesMultipleProducers(t *testing.T) {
+	registry := cbRecoveryLivenessRegistry{states: map[string]bool{}}
+
+	if alive := registry.update("producer-a", true, false); !alive {
+		t.Fatal("first healthy producer aggregate = false; want true")
+	}
+	if alive := registry.update("producer-b", true, false); !alive {
+		t.Fatal("two healthy producers aggregate = false; want true")
+	}
+	if alive := registry.update("producer-b", false, false); alive {
+		t.Fatal("one dead producer aggregate = true; want false")
+	}
+	if alive := registry.update("producer-a", true, false); alive {
+		t.Fatal("healthy producer update overwrote dead sibling; want aggregate false")
+	}
+	if alive := registry.update("producer-b", false, true); !alive {
+		t.Fatal("closed producer should be removed from aggregate; want true")
 	}
 }
 

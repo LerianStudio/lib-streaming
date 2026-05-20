@@ -17,6 +17,8 @@
 //	  "datacontenttype":  "<ce-datacontenttype>",
 //	  "dataschema":       "<ce-dataschema>",      // optional
 //	  "tenantid":         "<ce-tenantid>",        // optional
+//	  "traceparent":      "<traceparent>",        // optional W3C trace context
+//	  "tracestate":       "<tracestate>",         // optional W3C trace context
 //	  "data":             <raw payload JSON>
 //	}
 //
@@ -33,12 +35,15 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/LerianStudio/lib-streaming/internal/contract"
 	"github.com/LerianStudio/lib-streaming/internal/transport"
 )
 
-// MaxBodyBytes is the EventBridge per-entry size cap (256 KiB).
+// MaxBodyBytes is the EventBridge per-entry size cap (256 KiB). The adapter
+// validates the full entry contribution it controls after rendering Detail,
+// not just the raw payload.
 const MaxBodyBytes = 262_144
 
 // Entry is one EventBridge PutEvents entry produced by the adapter.
@@ -68,7 +73,29 @@ type EventBridgePutEventsClient interface {
 	PutEvents(ctx context.Context, entries []Entry) error
 }
 
-// EventBridgePingClient is an optional capability check.
+// EventBridgePutEventsResultClient is an optional capability for clients that
+// can expose provider per-entry results. Implement it to let the adapter reject
+// EventBridge partial failures when PutEvents itself returns nil.
+type EventBridgePutEventsResultClient interface {
+	PutEventsWithResult(ctx context.Context, entries []Entry) (PutEventsResult, error)
+}
+
+// PutEventsResult is the SDK-neutral result shape returned by
+// EventBridgePutEventsResultClient. It mirrors the fields lib-streaming needs
+// from AWS PutEvents: aggregate failed count and per-entry error details.
+type PutEventsResult struct {
+	FailedEntryCount int
+	Entries          []PutEventsEntryResult
+}
+
+// PutEventsEntryResult is one per-entry EventBridge publish result.
+type PutEventsEntryResult struct {
+	EventID      string
+	ErrorCode    string
+	ErrorMessage string
+}
+
+// EventBridgePingClient is the capability Adapter.Healthy requires.
 type EventBridgePingClient interface {
 	Ping(ctx context.Context) error
 }
@@ -77,6 +104,10 @@ type EventBridgePingClient interface {
 // EventBridgePutEventsClient.
 type Adapter struct {
 	client EventBridgePutEventsClient
+}
+
+type preparedMessage struct {
+	entry Entry
 }
 
 // New constructs an EventBridge Adapter bound to the supplied client.
@@ -113,51 +144,82 @@ func (a *Adapter) Publish(ctx context.Context, message transport.TransportMessag
 		ctx = context.Background()
 	}
 
-	if message.Destination.Kind != contract.TransportEventBridge {
-		return fmt.Errorf("%w: eventbridge adapter destination kind=%q", contract.ErrInvalidDestination, message.Destination.Kind)
-	}
-
-	bus := message.Destination.Name
-	if bus == "" {
-		return fmt.Errorf("%w: eventbridge bus name required", contract.ErrInvalidDestination)
-	}
-
-	if len(message.Payload) > MaxBodyBytes {
-		return fmt.Errorf("%w: eventbridge entry %d bytes exceeds %d-byte cap", contract.ErrPayloadTooLarge, len(message.Payload), MaxBodyBytes)
-	}
-
-	detail, source, detailType, eventTime, err := renderDetail(message)
+	prepared, err := a.PrepareMessage(message)
 	if err != nil {
 		return err
 	}
 
-	entry := Entry{
-		EventBusName: bus,
-		Source:       source,
-		DetailType:   detailType,
-		Detail:       detail,
-		Time:         eventTime,
-		Resources:    extractResources(message.Attributes),
+	return a.PublishPrepared(ctx, prepared)
+}
+
+// PrepareMessage performs deterministic EventBridge entry rendering without
+// issuing a network call. The producer uses this before entering the circuit
+// breaker so caller-correctable shape errors do not poison broker health.
+func (*Adapter) PrepareMessage(message transport.TransportMessage) (any, error) {
+	entry, err := prepareEntry(message)
+	if err != nil {
+		return nil, err
+	}
+
+	return preparedMessage{entry: cloneEntry(entry)}, nil
+}
+
+// PublishPrepared publishes an entry returned by PrepareMessage.
+func (a *Adapter) PublishPrepared(ctx context.Context, prepared any) error {
+	if a == nil || transport.IsNilInterface(a.client) {
+		return contract.ErrNilProducer
+	}
+
+	message, ok := prepared.(preparedMessage)
+	if !ok {
+		return fmt.Errorf("%w: eventbridge prepared message has unexpected type %T", contract.ErrInvalidDestination, prepared)
+	}
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	entry := cloneEntry(message.entry)
+
+	if resultClient, ok := a.client.(EventBridgePutEventsResultClient); ok && !transport.IsNilInterface(resultClient) {
+		result, err := resultClient.PutEventsWithResult(ctx, []Entry{entry})
+		if err != nil {
+			return err
+		}
+
+		return validatePutEventsResult(result)
 	}
 
 	return a.client.PutEvents(ctx, []Entry{entry})
 }
 
-// Healthy delegates to the optional EventBridgePingClient.
+// ValidateMessage performs deterministic message-shape checks without issuing
+// a network call. The producer invokes this before entering the broker circuit
+// breaker so caller-correctable EventBridge shape errors cannot poison broker
+// health.
+func (*Adapter) ValidateMessage(message transport.TransportMessage) error {
+	_, err := (*Adapter)(nil).PrepareMessage(message)
+
+	return err
+}
+
+// Healthy delegates to EventBridgePingClient. Clients without Ping fail closed
+// so readiness cannot report healthy without a real probe.
 func (a *Adapter) Healthy(ctx context.Context) error {
 	if a == nil || transport.IsNilInterface(a.client) {
 		return contract.ErrNilProducer
 	}
 
-	if pinger, ok := a.client.(EventBridgePingClient); ok {
-		if ctx == nil {
-			ctx = context.Background()
-		}
-
-		return pinger.Ping(ctx)
+	pinger, ok := a.client.(EventBridgePingClient)
+	if !ok || transport.IsNilInterface(pinger) {
+		return errors.New("eventbridge: health check requires client implementing EventBridgePingClient")
 	}
 
-	return nil
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	return pinger.Ping(ctx)
 }
 
 // Flush is a no-op. PutEvents is synchronous from the adapter's perspective.
@@ -255,6 +317,8 @@ func renderDetail(message transport.TransportMessage) ([]byte, string, string, t
 		DataContentType string          `json:"datacontenttype,omitempty"`
 		DataSchema      string          `json:"dataschema,omitempty"`
 		TenantID        string          `json:"tenantid,omitempty"`
+		TraceParent     string          `json:"traceparent,omitempty"`
+		TraceState      string          `json:"tracestate,omitempty"`
 		Data            json.RawMessage `json:"data"`
 	}{
 		SpecVersion:     specVersion,
@@ -266,6 +330,8 @@ func renderDetail(message transport.TransportMessage) ([]byte, string, string, t
 		DataContentType: headers["ce-datacontenttype"],
 		DataSchema:      headers["ce-dataschema"],
 		TenantID:        headers["ce-tenantid"],
+		TraceParent:     headers["traceparent"],
+		TraceState:      headers["tracestate"],
 		Data:            message.Payload,
 	}
 
@@ -281,6 +347,48 @@ func renderDetail(message transport.TransportMessage) ([]byte, string, string, t
 	}
 
 	return body, source, detailType, eventTime, nil
+}
+
+func cloneEntry(entry Entry) Entry {
+	entry.Detail = append([]byte(nil), entry.Detail...)
+	entry.Resources = append([]string(nil), entry.Resources...)
+
+	return entry
+}
+
+func prepareEntry(message transport.TransportMessage) (Entry, error) {
+	if message.Destination.Kind != contract.TransportEventBridge {
+		return Entry{}, fmt.Errorf("%w: eventbridge adapter destination kind=%q", contract.ErrInvalidDestination, message.Destination.Kind)
+	}
+
+	bus := message.Destination.Name
+	if bus == "" {
+		return Entry{}, fmt.Errorf("%w: eventbridge bus name required", contract.ErrInvalidDestination)
+	}
+
+	if len(message.Payload) > MaxBodyBytes {
+		return Entry{}, fmt.Errorf("%w: eventbridge payload %d bytes exceeds %d-byte cap", contract.ErrPayloadTooLarge, len(message.Payload), MaxBodyBytes)
+	}
+
+	detail, source, detailType, eventTime, err := renderDetail(message)
+	if err != nil {
+		return Entry{}, err
+	}
+
+	entry := Entry{
+		EventBusName: bus,
+		Source:       source,
+		DetailType:   detailType,
+		Detail:       detail,
+		Time:         eventTime,
+		Resources:    extractResources(message.Attributes),
+	}
+
+	if size := eventBridgeEntryWireSize(entry); size > MaxBodyBytes {
+		return Entry{}, fmt.Errorf("%w: eventbridge entry %d bytes exceeds %d-byte cap", contract.ErrPayloadTooLarge, size, MaxBodyBytes)
+	}
+
+	return entry, nil
 }
 
 // mapHeaders flattens the binary-mode CloudEvents headers into a string map
@@ -321,4 +429,98 @@ func extractResources(attrs map[string]string) []string {
 	}
 
 	return out
+}
+
+func validatePutEventsResult(result PutEventsResult) error {
+	if result.FailedEntryCount <= 0 {
+		for _, entry := range result.Entries {
+			if entry.ErrorCode != "" || entry.ErrorMessage != "" {
+				return fmt.Errorf("eventbridge put events entry failed: %s: %s",
+					contract.SanitizeBrokerURL(entry.ErrorCode), contract.SanitizeBrokerURL(entry.ErrorMessage))
+			}
+		}
+
+		return nil
+	}
+
+	for _, entry := range result.Entries {
+		if entry.ErrorCode != "" || entry.ErrorMessage != "" {
+			return fmt.Errorf("eventbridge put events failed %d entries: %s: %s",
+				result.FailedEntryCount, contract.SanitizeBrokerURL(entry.ErrorCode), contract.SanitizeBrokerURL(entry.ErrorMessage))
+		}
+	}
+
+	return fmt.Errorf("eventbridge put events failed %d entries", result.FailedEntryCount)
+}
+
+func eventBridgeEntryWireSize(entry Entry) int {
+	size := 2 // object braces
+	fields := 0
+	addStringField := func(name, value string, omitEmpty bool) {
+		if omitEmpty && value == "" {
+			return
+		}
+
+		if fields > 0 {
+			size++ // comma
+		}
+
+		fields++
+
+		size += jsonStringLen(name) + 1 + jsonStringLen(value)
+	}
+
+	addStringField("EventBusName", entry.EventBusName, true)
+	addStringField("Source", entry.Source, false)
+	addStringField("DetailType", entry.DetailType, false)
+	addStringField("Detail", string(entry.Detail), false)
+
+	if !entry.Time.IsZero() {
+		addStringField("Time", entry.Time.UTC().Format(time.RFC3339Nano), true)
+	}
+
+	if len(entry.Resources) > 0 {
+		if fields > 0 {
+			size++
+		}
+
+		fields++
+
+		size += jsonStringLen("Resources") + 1 + jsonStringArrayLen(entry.Resources)
+	}
+
+	return size
+}
+
+func jsonStringArrayLen(values []string) int {
+	size := 2 // array brackets
+
+	for i, value := range values {
+		if i > 0 {
+			size++
+		}
+
+		size += jsonStringLen(value)
+	}
+
+	return size
+}
+
+func jsonStringLen(value string) int {
+	size := 2 // quotes
+
+	for _, r := range value {
+		switch {
+		case r == '\\' || r == '"':
+			size += 2
+		case r <= 0x1f || r == '<' || r == '>' || r == '&' || r == '\u2028' || r == '\u2029':
+			size += 6
+		case r < utf8.RuneSelf:
+			size++
+		default:
+			size += utf8.RuneLen(r)
+		}
+	}
+
+	return size
 }

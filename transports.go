@@ -18,6 +18,11 @@ import (
 // adapter forwards on every SendMessage call.
 type SQSPublisherClient = sqs.SQSPublisherClient
 
+// SQSPingClient is the optional health capability production SQS clients
+// should implement. SQS Adapter.Healthy fails closed when the caller-supplied
+// client does not expose this probe.
+type SQSPingClient = sqs.SQSPingClient
+
 // SQSAttribute is one (key, value) message attribute the adapter passes to
 // SendMessage. Values are bytes so binary-mode CloudEvents headers stay
 // intact through the adapter -> SDK boundary.
@@ -27,8 +32,8 @@ type SQSAttribute = sqs.Attribute
 // supplied client. defaultQueueURL is used only when the route's
 // Destination.Address is empty; an explicit Destination always wins.
 //
-// The adapter rejects payloads larger than 256 KiB with ErrPayloadTooLarge
-// before issuing any network call.
+// The adapter rejects SQS wire messages larger than 256 KiB (body plus String
+// message attributes) with ErrPayloadTooLarge before issuing any network call.
 func SQSAdapter(client SQSPublisherClient, defaultQueueURL string) (TransportAdapter, error) {
 	return sqs.New(client, defaultQueueURL)
 }
@@ -119,6 +124,11 @@ func (b *Builder) SQSTarget(name string, client SQSPublisherClient, defaultQueue
 // `github.com/LerianStudio/lib-commons/v5/commons/rabbitmq`.
 type RabbitMQPublisher = rabbitmq.RabbitMQPublisher
 
+// RabbitMQPingClient is the optional health capability production RabbitMQ
+// publishers should implement. RabbitMQ Adapter.Healthy fails closed when the
+// caller-supplied publisher does not expose this probe.
+type RabbitMQPingClient = rabbitmq.RabbitMQPingClient
+
 // RabbitMQAdapter constructs a built-in RabbitMQ TransportAdapter bound to
 // the supplied publisher.
 func RabbitMQAdapter(publisher RabbitMQPublisher) (TransportAdapter, error) {
@@ -167,10 +177,27 @@ func (b *Builder) RabbitMQTarget(name string, publisher RabbitMQPublisher) *Buil
 // by the built-in EventBridge adapter.
 type EventBridgePutEventsClient = eventbridge.EventBridgePutEventsClient
 
+// EventBridgePingClient is the optional health capability production
+// EventBridge clients should implement. EventBridge Adapter.Healthy fails
+// closed when the caller-supplied client does not expose this probe.
+type EventBridgePingClient = eventbridge.EventBridgePingClient
+
+// EventBridgePutEventsResultClient is an optional capability EventBridge
+// clients can implement to let the adapter detect per-entry PutEvents failures
+// when the provider call itself returns nil.
+type EventBridgePutEventsResultClient = eventbridge.EventBridgePutEventsResultClient
+
 // EventBridgeEntry is one PutEvents entry the adapter constructs from a
 // CloudEvents-binary-mode message. See package documentation for the
 // canonical Detail JSON shape.
 type EventBridgeEntry = eventbridge.Entry
+
+// EventBridgePutEventsResult is the SDK-neutral PutEvents result returned by
+// EventBridgePutEventsResultClient.
+type EventBridgePutEventsResult = eventbridge.PutEventsResult
+
+// EventBridgePutEventsEntryResult is one per-entry EventBridge PutEvents result.
+type EventBridgePutEventsEntryResult = eventbridge.PutEventsEntryResult
 
 // EventBridgeAdapter constructs a built-in EventBridge TransportAdapter
 // bound to the supplied client.

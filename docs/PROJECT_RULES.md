@@ -43,7 +43,7 @@ Architectural constraints and design decisions for the `lib-streaming` codebase.
 - The root facade may use aliases to internal types, but exported behavior and docs are the public contract.
 - **Routes** are immutable after `NewRouteTable` construction. Every catalog `EventDefinition` MUST resolve to at least one registered route, and every route's `Target` MUST match a registered target whose adapter `Kind` matches the route's `Destination.Kind`.
 - **RabbitMQ via the streaming Builder is events-only** — past-tense business facts for third-party / SaaS subscribers. Internal command queues remain on `github.com/LerianStudio/lib-commons/v5/commons/rabbitmq`. Producer-only ownership applies even when the destination is AMQP.
-- **Built-in non-Kafka adapters** (`internal/transport/sqs`, `internal/transport/rabbitmq`, `internal/transport/eventbridge`) MUST NOT depend on the corresponding SDK module. Each adapter exposes a small caller-supplied interface so callers own their SDK lifecycle. Optional `Ping(ctx) error` is the only health affordance the library uses.
+- **Built-in non-Kafka adapters** (`internal/transport/sqs`, `internal/transport/rabbitmq`, `internal/transport/eventbridge`) MUST NOT depend on the corresponding SDK module. Each adapter exposes a small caller-supplied interface so callers own their SDK lifecycle. Production callers MUST implement `Ping(ctx) error`; adapter health fails closed when the client has no health affordance.
 - **Per-target tenant-aware circuit breakers** isolate broker failures by target and, when the configured manager satisfies lib-commons `TenantAwareManager`, by `(tenant, target)` for non-system events. System events and custom managers that only satisfy the legacy `Manager` interface use the no-tenant compatibility breaker. `targetRuntime.state` mirrors only the no-tenant breaker; tenant-scoped state is read from the manager and observed through lib-commons `tenant_hash` CB metrics/logs. `streaming_circuit_state` is a single-dimension gauge tracking the primary target's no-tenant breaker only.
 - **Target names** are validated at `Build`. Empty names, names containing control characters, names exceeding `MaxEventIDBytes` (256), and credential-like material are rejected with the documented sentinel. The cap is symmetric with route-field validation. Target names are surfaced into operator logs by the per-target `StateChangeListener`, so this validation closes a log-injection vector amplified by the CB recovery loop.
 - **`BuildManifest(descriptor, catalog, routes)`** is the single manifest entry point. Routes are populated when the route table has entries; an empty `RouteTable` produces a catalog-only document with `ManifestDocument.Routes` omitted via `omitempty`.
@@ -66,7 +66,7 @@ Architectural constraints and design decisions for the `lib-streaming` codebase.
 - `.env.reference` is the canonical environment-variable reference and must change with any added, removed, or renamed config key.
 - `LoadConfig() (Config, []string, error)` reads all `STREAMING_*` values, applies defaults, returns warnings, and validates enabled configs.
 - Config validation is skipped when streaming is disabled.
-- Disabled streaming and empty broker lists are fail-safe: callers should use `streaming.NewNoopEmitter()` instead of constructing a Builder when `cfg.Enabled=false` or `cfg.Brokers` is empty.
+- Disabled streaming is fail-safe: callers should use `streaming.NewNoopEmitter()` only when `cfg.Enabled=false`. Enabled configs with empty broker lists fail closed with `ErrMissingBrokers` instead of silently disabling publication.
 - The Builder is stricter: callers constructing a real producer must supply a valid catalog, a non-empty route table, and at least one target with valid brokers.
 - Config parsing must not log secrets or render SASL credentials in returned errors.
 - `STREAMING_EVENT_POLICIES` / `Config.PolicyOverrides` are the per-event override mechanism.
@@ -127,6 +127,10 @@ Architectural constraints and design decisions for the `lib-streaming` codebase.
 - DLQ messages preserve the original CloudEvents context and payload.
 - DLQ headers must include exactly the documented `x-lerian-dlq-*` fields: source topic, error class, error message, retry count, first failure timestamp, and producer ID.
 - DLQ publish failures are logged and counted through `streaming_dlq_publish_failed_total`; they are not returned to the original caller.
+- Production dashboards must alert on any increase in `streaming_dlq_publish_failed_total`; a failed DLQ publish means the forensic copy was not preserved even if the original required-route failure still returned to the caller.
+- Kafka-like routes can derive `<source>.dlq`; non-Kafka routes require an explicit `RouteDefinition.DLQ` when quarantine is mandatory.
+- A route's `DLQ.Kind` must match `Destination.Kind` because lib-streaming publishes the DLQ message through the same target adapter.
+- Optional routes that carry business-critical data must have explicit optional-failure alerts and a documented DLQ posture. Optional failures do not fail the caller's `Emit`.
 - Error messages written to DLQ headers must not leak SASL credentials or broker secrets.
 
 ## 10. Manifest and Introspection
@@ -135,7 +139,7 @@ Architectural constraints and design decisions for the `lib-streaming` codebase.
 - `NewStreamingHandler(descriptor, catalog, opts ...HandlerOption)` returns a stdlib `http.Handler`. `HandlerOption` is the variadic functional-option surface; `WithManifestRoutes(RouteTable)` opts a route table into the manifest's `routes` section.
 - The handler pre-marshals the manifest at construction; rebuild the handler if catalog or descriptor data changes.
 - The library does not enforce auth on the manifest handler.
-- Consuming services must wrap the handler in their own auth middleware before mounting it on a public route.
+- Consuming services must wrap the handler in their own auth middleware before mounting it on any route that is reachable outside the process. PRs that add or change manifest exposure must state the auth middleware, intended audience, and public/internal reachability.
 - `PublisherDescriptor.RoutePath` defaults to `/streaming`.
 - `ManifestVersion` is semver. Minor changes are additive; major changes remove or change fields.
 
@@ -150,7 +154,8 @@ Architectural constraints and design decisions for the `lib-streaming` codebase.
 - `Healthy(ctx)` returns nil only when ready.
 - Unhealthy checks return `*HealthError` with state `Healthy`, `Degraded`, or `Down`.
 - Broker ping inside health checks must be bounded to 500ms.
-- Degraded means broker unavailable but outbox is viable; down means both broker and fallback are unavailable.
+- Degraded means at least one target ping fails but another target remains healthy or outbox fallback is viable; down means all targets fail and no outbox fallback is available.
+- `Healthy(ctx)` reports adapter readiness, outbox viability, and CB recovery-loop liveness. A dead or stale recovery loop degrades health even when target adapters still ping successfully, because emit-only services can otherwise remain stuck OPEN after broker recovery.
 
 ### Background CB recovery goroutine
 
@@ -160,6 +165,7 @@ Architectural constraints and design decisions for the `lib-streaming` codebase.
 - Lifecycle must be coupled to the Producer: started after target/listener registration in `NewProducerMulti`, exits when `Close`/`CloseContext` closes the producer's stop channel.
 - Panic policy is `runtime.KeepRunning` — a panicking `GetState` is a real bug, not noise to swallow.
 - The recovery goroutine is the only background goroutine the library spawns per `*Producer`. Do not add more without an explicit architecture decision.
+- Dashboard-visible recovery-loop alerts should include `streaming_cb_recovery_liveness == 0`, `panic_recovered_total{component="streaming",goroutine_name="cb_recovery_loop"}`, `assertion_failed_total{component="streaming",operation="cb_recovery.start"}`, and sustained `streaming_emitted_total{outcome="circuit_open"}` / `streaming_outbox_routed_total{reason="circuit_open"}` after broker recovery. Panic/assertion alerts require consuming services to initialize runtime panic metrics and assertion metrics at bootstrap.
 
 ## 12. Error Handling Patterns
 
@@ -177,7 +183,8 @@ Architectural constraints and design decisions for the `lib-streaming` codebase.
 ## 13. Observability and Metrics
 
 - Structured logs use the repository logger interface (`Log(ctx, level, msg, fields...)`). Do not add printf-style logging methods.
-- Metrics are part of the operational contract: `streaming_emitted_total`, `streaming_emit_duration_ms`, `streaming_dlq_total`, `streaming_dlq_publish_failed_total`, `streaming_outbox_routed_total`, and `streaming_circuit_state`.
+- Metrics are part of the operational contract: `streaming_emitted_total`, `streaming_emit_duration_ms`, `streaming_dlq_total`, `streaming_dlq_publish_failed_total`, `streaming_outbox_routed_total`, `streaming_outbox_replay_target_unknown_total`, `streaming_circuit_state`, and `streaming_cb_recovery_liveness`.
+- The current `streaming_emitted_total` outcome set is `produced`, `outboxed`, `circuit_open`, `caller_error`, `dlq`, `failed`, and `outbox_failed`. There is no `optional_failed` metric outcome; optional-route degradation surfaces through `route.optional_failed` span events plus the terminal per-route outcome.
 - No `tenant_id` label on any metric.
 - Tenant identity may be attached to spans where useful and safe.
 - Nil metrics factories must degrade to a no-op recorder after a single warning log at first emit.
@@ -292,6 +299,7 @@ Build tags are the authoritative test type discriminator:
 - Keep examples minimal but complete enough to copy into a service bootstrap or test.
 - Keep docs factual and code-backed. Avoid speculative roadmap text.
 - Document security boundaries explicitly, especially manifest auth ownership and tenant identity responsibility.
+- Tenant IDs are caller-supplied. The current library validates tenant ID shape but does not compare it to an authenticated request context; any tenant-context validator hook is deferred/future hardening, not current behavior.
 - When docs and code conflict, fix the code or docs in the same change; do not leave contradictory behavior.
 
 ## 22. Misc
