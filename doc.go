@@ -29,7 +29,7 @@
 //	})
 //	if err != nil { return err }
 //	// Consuming services wire panic + assertion metrics once at bootstrap
-//	// after telemetry is initialized. lib-streaming uses commons/assert
+//	// after telemetry is initialized. lib-streaming uses lib-observability/assert
 //	// internally for post-construction invariant checks; without this call
 //	// the assertion_failed_total counter stays at zero. SetProductionMode
 //	// scrubs panic value strings and truncates stack traces before they

@@ -53,8 +53,9 @@ Architectural constraints and design decisions for the `lib-streaming` codebase.
 - Module path: `github.com/LerianStudio/lib-streaming` (bare path; no `/vN` suffix while on v0/v1 per Go's semantic-import-versioning rules).
 - Go version: `1.26.3` as declared in `go.mod`.
 - Commons: use `github.com/LerianStudio/lib-commons/v5` primitives where they are the Lerian standard.
-- Assertions: use `github.com/LerianStudio/lib-commons/v5/commons/assert` for post-construction internal invariants.
-- Panic observability: consuming services must initialize `commons/runtime` panic metrics and call `runtime.SetProductionMode` to scrub panic values before telemetry; this library must not add naked goroutines or unobservable recovery paths.
+- Assertions: use `github.com/LerianStudio/lib-observability/assert` for post-construction internal invariants.
+- Panic observability: consuming services must initialize `github.com/LerianStudio/lib-observability/runtime` panic metrics and call `runtime.SetProductionMode` to scrub panic values before telemetry; this library must not add naked goroutines or unobservable recovery paths.
+- Systemplane: use `github.com/LerianStudio/lib-systemplane` for runtime configuration; do not import removed `github.com/LerianStudio/lib-commons/v5/commons/systemplane` packages.
 - UUIDs: prefer `commons.GenerateUUIDv7()` for generated event IDs.
 - Kafka client: franz-go is the producer backend. Do not introduce another Kafka client without an explicit architecture decision.
 - Outbox integration: use `lib-commons/v5/commons/outbox` registry/repository contracts through the library adapter; do not implement a parallel dispatcher in this library.
@@ -194,7 +195,7 @@ Architectural constraints and design decisions for the `lib-streaming` codebase.
 
 ### Runtime Assertions
 
-- Use `commons/assert` for internal post-construction invariants that should never fail after prior gates checked them.
+- Use `lib-observability/assert` for internal post-construction invariants that should never fail after prior gates checked them.
 - Assertion labels use `component="streaming"` and a stable operation name.
 - Assertion failures must preserve the public API contract: record the trident signal and still return the documented sentinel/error.
 - Do not put tenant IDs on assertion metrics.
