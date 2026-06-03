@@ -34,6 +34,6 @@ jobs:
     permissions:
       contents: read
       security-events: write
-    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/pr-security-scan.yml@v1.30.0
+    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/pr-security-scan.yml@v1.32.0
     with:
       enable_docker_scan: false
