@@ -18,7 +18,7 @@ jobs:
     permissions:
       contents: read
       packages: read
-    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/go-pr-analysis.yml@v1.30.0
+    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/go-pr-analysis.yml@v1.32.0
     with:
       go_version: "1.26.3"
       golangci_lint_version: "v2.12.2"
