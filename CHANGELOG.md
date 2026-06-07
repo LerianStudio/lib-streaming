@@ -1,5 +1,22 @@
 # Lib-streaming Changelog
 
+## [1.6.0](https://github.com/LerianStudio/lib-streaming/releases/tag/v1.6.0)
+
+- Fixes:
+  - Restore secrets inheritance for release job in CI.
+  - Restore secrets inheritance for security scan in CI.
+  - Grant required permissions to reusable workflow callers.
+
+- Improvements:
+  - Note pool-per-tenant outbox transparency on `v5.5.0`.
+  - Update project dependencies and workflow versions.
+
+Contributors: @fredcamaral.
+
+[Compare changes](https://github.com/LerianStudio/lib-streaming/compare/v1.5.1...v1.6.0)
+
+---
+
 ## [1.4.0](https://github.com/LerianStudio/lib-streaming/releases/tag/v1.4.0)
 
 - Improvements:
@@ -82,3 +99,4 @@ Contributors: @bedatty, @fredcamaral
 - Production SQS, RabbitMQ, and EventBridge clients must implement `Ping(ctx) error`. `Adapter.Healthy` now fails closed when the caller-supplied client has no health probe; update existing wrappers before relying on `Emitter.Healthy` for readiness.
 - The new CB recovery goroutine is intentionally not directly customizable. The interval is derived from the configured `CBTimeout` and clamped to `[500ms, 5s]`. If your service has reason to override this envelope, raise an issue with the use case before adding a `WithCBRecoveryInterval(...)` option — every additional knob on the public API surface ages.
 - `Healthy(ctx)` reports adapter readiness, outbox viability, and CB recovery-loop liveness. Recovery-loop liveness is dashboard-visible through `streaming_cb_recovery_liveness`, `assertion_failed_total{component="streaming",operation="cb_recovery.start"}` for invariant violations at start, `panic_recovered_total{component="streaming",goroutine_name="cb_recovery_loop"}` if `GetState` panics after consuming services initialize panic metrics with `runtime.InitPanicMetrics(...)`, and sustained `streaming_emitted_total{outcome="circuit_open"}` / `streaming_outbox_routed_total{reason="circuit_open"}` after broker recovery. The implementation does not expose a public CB recovery interval or retry knob.
+
