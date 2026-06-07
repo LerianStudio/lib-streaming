@@ -62,6 +62,8 @@ Contributors: @bedatty, @fredcamaral
 
 ### Changed
 
+- **`lib-commons/v5` upgraded to `v5.5.0` — pool-per-tenant outbox dispatch is transparent to lib-streaming.** lib-commons `v5.5.0` ships a `TenantPoolResolver` seam in `commons/outbox/postgres` enabling pool-per-tenant outbox dispatch. lib-streaming requires zero code change for correctness: the outbox write path joins the caller's ambient `*sql.Tx` (which already lives on the caller's tenant pool), tenant identity travels inside the persisted `OutboxEnvelope` payload (`Event.TenantID`), and the relay registered via `RegisterOutboxRelay` republishes from that envelope regardless of which pool/schema the lib-commons dispatcher read the row from. `OutboxEnvelope` wire version stays `1` — no wire-shape change, no in-flight-row breakage on rolling deploys — and the public API surface (Builder, `OutboxWriter`/`TransactionalOutboxWriter`, `WithOutboxTx`, `RegisterOutboxRelay`) is unchanged.
+
 - **`lib-commons/v5` upgraded to `v5.2.0`.** The dependency bump brings the latest lib-commons surface into lib-streaming and raises the module Go floor to `1.26.3`, matching the upstream module's declared `GoVersion`. CI and documentation now use the same Go version as `go.mod`.
 
 - **`OutboxEnvelope.ValidateShape` version-mismatch now wraps `ErrInvalidOutboxEnvelope`.** The previous implementation returned a bare `fmt.Errorf` that did NOT match `errors.Is(err, ErrInvalidOutboxEnvelope)`. Every other envelope-shape failure (kind/transport mismatch, empty route key, invalid transport, etc.) already wrapped the canonical sentinel; version-mismatch was the lone exception. Two consequences for callers:

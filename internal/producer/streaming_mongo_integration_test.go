@@ -19,6 +19,7 @@ import (
 	mongooptions "go.mongodb.org/mongo-driver/v2/mongo/options"
 	"go.opentelemetry.io/otel/trace/noop"
 
+	"github.com/LerianStudio/lib-commons/v5/commons"
 	libMongo "github.com/LerianStudio/lib-commons/v5/commons/mongo"
 	"github.com/LerianStudio/lib-commons/v5/commons/outbox"
 	outboxmongo "github.com/LerianStudio/lib-commons/v5/commons/outbox/mongo"
@@ -31,6 +32,12 @@ const mongoImage = "mongo:7"
 
 func newMongoOutboxRepo(t *testing.T) (*libMongo.Client, *outboxmongo.Repository, string) {
 	t.Helper()
+
+	// lib-commons v5.4+ requires TLS on Mongo connections by default and fails
+	// closed otherwise. The testcontainer below is a plaintext localhost
+	// instance — the documented ALLOW_INSECURE_TLS bypass exists exactly for
+	// this case. Scoped to the test via t.Setenv.
+	t.Setenv(commons.EnvAllowInsecureTLS, "true")
 
 	ctx := context.Background()
 	container, err := tcmongo.Run(ctx, mongoImage, tcmongo.WithReplicaSet("rs0"))

@@ -20,7 +20,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v6.0.3
       - name: Fail if container manifests appear while Docker scan is disabled
         run: |
           set -euo pipefail
@@ -34,6 +34,6 @@ jobs:
     permissions:
       contents: read
       security-events: write
-    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/pr-security-scan.yml@v1.30.0
+    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/pr-security-scan.yml@v1.33.0
     with:
       enable_docker_scan: false

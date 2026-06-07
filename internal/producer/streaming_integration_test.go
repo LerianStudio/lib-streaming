@@ -36,6 +36,7 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/LerianStudio/lib-commons/v5/commons"
 	"github.com/LerianStudio/lib-commons/v5/commons/circuitbreaker"
 	"github.com/LerianStudio/lib-commons/v5/commons/outbox"
 	outboxpg "github.com/LerianStudio/lib-commons/v5/commons/outbox/postgres"
@@ -677,6 +678,12 @@ func TestIntegration_DLQRouting(t *testing.T) {
 // of scope per the T9 spec — that flow needs the outbox.Dispatcher goroutine
 // wiring which downstream services already exercise.
 func TestIntegration_OutboxFallbackUnderPartition(t *testing.T) {
+	// lib-commons v5.4+ requires TLS on Postgres connections by default and
+	// fails closed otherwise. The testcontainer below is a plaintext localhost
+	// instance — the documented ALLOW_INSECURE_TLS bypass exists exactly for
+	// this case. Scoped to the test via t.Setenv.
+	t.Setenv(commons.EnvAllowInsecureTLS, "true")
+
 	// Start both containers up front so test overhead is paid once and the
 	// Docker-unavailable skip short-circuits cleanly.
 	seed, rpContainer := startRedpanda(t)
