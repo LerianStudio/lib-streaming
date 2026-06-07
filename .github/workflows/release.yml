@@ -18,6 +18,8 @@ jobs:
     permissions:
       contents: read
       packages: read
+      pull-requests: write
+      security-events: write
     uses: LerianStudio/github-actions-shared-workflows/.github/workflows/go-pr-analysis.yml@v1.33.0
     with:
       go_version: "1.26.3"
@@ -37,3 +39,4 @@ jobs:
     uses: LerianStudio/github-actions-shared-workflows/.github/workflows/release.yml@v1.33.0
     with:
       enable_changelog: ${{ github.ref == 'refs/heads/main' }}
+    secrets: inherit

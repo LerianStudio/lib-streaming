@@ -10,6 +10,10 @@ permissions:
 
 jobs:
   validate:
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
     uses: LerianStudio/github-actions-shared-workflows/.github/workflows/pr-validation.yml@v1.33.0
     with:
       enforce_source_branches: true

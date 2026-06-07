@@ -16,6 +16,10 @@ permissions:
 jobs:
   go-analysis:
     name: Go Analysis
+    permissions:
+      contents: read
+      pull-requests: write
+      security-events: write
     uses: LerianStudio/github-actions-shared-workflows/.github/workflows/go-pr-analysis.yml@v1.33.0
     with:
       go_version: "1.26.3"

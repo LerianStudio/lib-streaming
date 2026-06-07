@@ -32,8 +32,12 @@ jobs:
   security:
     needs: docker-scan-guard
     permissions:
+      actions: read
+      id-token: write
       contents: read
+      pull-requests: write
       security-events: write
     uses: LerianStudio/github-actions-shared-workflows/.github/workflows/pr-security-scan.yml@v1.33.0
     with:
       enable_docker_scan: false
+    secrets: inherit
