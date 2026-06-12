@@ -329,7 +329,7 @@ func TestMetrics_Emit_RecordsDurationHistogram(t *testing.T) {
 }
 
 // TestMetrics_Emit_PreflightFailure_RecordsCallerErrorOutcome: a caller-
-// validation error (missing tenant) surfaces on the counter with
+// validation error (bad payload) surfaces on the counter with
 // outcome=caller_error. Preflight paths record the counter but NOT the
 // duration histogram — verifying that matters: a skew in duration metrics
 // would mix pure-validation fast-fails in with actual-emission latency.
@@ -347,10 +347,10 @@ func TestMetrics_Emit_PreflightFailure_RecordsCallerErrorOutcome(t *testing.T) {
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	bad := sampleRequest()
-	bad.TenantID = ""
+	bad.Payload = json.RawMessage(`{not json`)
 
-	if err := emitter.Emit(context.Background(), bad); !errors.Is(err, ErrMissingTenantID) {
-		t.Fatalf("Emit err = %v; want ErrMissingTenantID", err)
+	if err := emitter.Emit(context.Background(), bad); !errors.Is(err, ErrNotJSON) {
+		t.Fatalf("Emit err = %v; want ErrNotJSON", err)
 	}
 
 	rm := snapshot()

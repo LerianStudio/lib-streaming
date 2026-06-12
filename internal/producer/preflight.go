@@ -15,16 +15,18 @@ import (
 //  1. SystemEvent capability gate: reject before any other work if the
 //     Producer did not opt into system events.
 //  2. Topic-forming fields: resource and event type must be populated.
-//  3. Tenant: non-system events require a tenant.
-//  4. Source: required CloudEvents ce-source.
-//  5. Header sanitization: TenantID / ResourceType / EventType / Source /
+//  3. Source: required CloudEvents ce-source.
+//  4. Header sanitization: TenantID / ResourceType / EventType / Source /
 //     Subject must be header-safe (no control chars, bounded length).
-//  6. Payload size: reject before JSON scan.
-//  7. Payload JSON validity: prevents DLQ poisoning downstream.
+//  5. Payload size: reject before JSON scan.
+//  6. Payload JSON validity: prevents DLQ poisoning downstream.
+//
+// TenantID is NOT required: an empty TenantID is a valid single-tenant scope
+// for business events.
 //
 // Returns one of the caller sentinel errors (ErrSystemEventsNotAllowed,
-// ErrMissingResourceType, ErrMissingEventType, ErrMissingTenantID,
-// ErrMissingSource, ErrInvalid*, ErrPayloadTooLarge, ErrNotJSON).
+// ErrMissingResourceType, ErrMissingEventType, ErrMissingSource,
+// ErrInvalid*, ErrPayloadTooLarge, ErrNotJSON).
 //
 // ctx is used by the asserter trident on payload-cap rejection so a caller
 // bug surfaces on dashboards under operation="preflight.payload_size".
@@ -54,16 +56,13 @@ func (p *Producer) preFlightWithPayload(ctx context.Context, event Event, valida
 		return ErrMissingEventType
 	}
 
-	// Tenant discipline. System events (`ce-systemevent: true`) opt out of
-	// the requirement — they're ops-level fan-out that carries no per-tenant
-	// payload. Single-tenant deployments opt out via WithAllowEmptyTenant
-	// (p.allowEmptyTenant): the one-and-only tenant makes a per-event tenant
-	// identifier meaningless. The two opt-outs are independent — empty tenant
-	// is relaxed here WITHOUT granting system-event privileges (those were
-	// already gated above).
-	if !event.SystemEvent && event.TenantID == "" && !p.allowEmptyTenant {
-		return ErrMissingTenantID
-	}
+	// TenantID is intentionally NOT required. An empty TenantID denotes a
+	// single-tenant deployment and is a first-class, always-valid scope for
+	// business events. Single-tenant and multi-tenant run on physically
+	// segregated infrastructure (dedicated vs shared DB), so a multi-tenant
+	// service that lost its tenant fails at the database-routing layer long
+	// before emitting — a streaming-level tenant guard would be redundant and
+	// would only block legitimate single-tenant emits.
 
 	// ce-source is a required CloudEvents attribute. Empty source is a
 	// caller config bug (usually: forgot to set Config.CloudEventsSource).

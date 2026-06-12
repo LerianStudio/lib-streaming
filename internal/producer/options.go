@@ -73,12 +73,6 @@ type emitterOptions struct {
 	// ErrSystemEventsNotAllowed at preflight. See WithAllowSystemEvents.
 	allowSystemEvents bool
 
-	// allowEmptyTenant relaxes the empty-TenantID rejection for NON-system
-	// events. Defaults to false: a Producer that has not opted in rejects
-	// any non-system event with an empty TenantID with ErrMissingTenantID at
-	// preflight (and again at envelope validation). See WithAllowEmptyTenant.
-	allowEmptyTenant bool
-
 	// catalog is the immutable source of truth for catalog-backed emission,
 	// manifest export, and introspection.
 	catalog Catalog
@@ -295,33 +289,6 @@ func WithAllowPlaintextSASL() EmitterOption {
 func WithAllowSystemEvents() EmitterOption {
 	return func(o *emitterOptions) {
 		o.allowSystemEvents = true
-	}
-}
-
-// WithAllowEmptyTenant opts a Producer into accepting NON-system events whose
-// TenantID is empty. Without this option, any non-system Emit with an empty
-// TenantID is rejected with ErrMissingTenantID — at the synchronous preflight
-// gate AND at outbox-envelope validation (so the relay rejects it on replay
-// too).
-//
-// This is the explicit opt-in for SINGLE-TENANT deployments where every event
-// belongs to the one and only tenant and carrying a tenant identifier on the
-// wire is meaningless. It mirrors lib-commons' WithAllowEmptyTenant() naming.
-//
-// It is DISTINCT from WithAllowSystemEvents / Event.SystemEvent: a system
-// event is a privileged, ops-level fan-out that bypasses tenant discipline AND
-// hijacks the "system:*" partition space. WithAllowEmptyTenant does NEITHER —
-// it ONLY relaxes the empty-tenant rejection for ordinary business events. It
-// does not change partition-key derivation, does not drop the ce-tenantid
-// attribute, and does not enable system events. A SystemEvent=true emission on
-// a Producer that opted into empty tenant but not into system events is still
-// rejected with ErrSystemEventsNotAllowed.
-//
-// Do NOT enable this on a genuinely multi-tenant service: it would let a bug
-// that forgets to populate TenantID publish an untenanted event silently.
-func WithAllowEmptyTenant() EmitterOption {
-	return func(o *emitterOptions) {
-		o.allowEmptyTenant = true
 	}
 }
 

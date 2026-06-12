@@ -119,14 +119,6 @@ type Producer struct {
 	// WithAllowSystemEvents.
 	allowSystemEvents bool
 
-	// allowEmptyTenant, when true, permits NON-system events with an empty
-	// TenantID through preflight (single-tenant deployments). When false (the
-	// default), an empty-tenant non-system event is rejected with
-	// ErrMissingTenantID. The flag is stamped onto every persisted
-	// OutboxEnvelope so the relay respects it on replay. See
-	// WithAllowEmptyTenant.
-	allowEmptyTenant bool
-
 	// catalog is the immutable source of truth for the catalog-backed API.
 	catalog Catalog
 

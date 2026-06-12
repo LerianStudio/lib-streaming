@@ -360,24 +360,6 @@ func (b *Builder) AllowSystemEvents() *Builder {
 	return b
 }
 
-// AllowEmptyTenant opts the built producer into accepting NON-system events
-// with an empty TenantID, for SINGLE-TENANT deployments. Without it, an
-// empty-tenant non-system Emit is rejected with ErrMissingTenantID at both the
-// synchronous preflight and outbox-envelope validation gates.
-//
-// This is DISTINCT from AllowSystemEvents: it only relaxes the empty-tenant
-// rejection for ordinary business events and does not enable system events or
-// alter partitioning. Nil-safe and chainable, mirroring the other setters.
-func (b *Builder) AllowEmptyTenant() *Builder {
-	if b == nil {
-		return b
-	}
-
-	b.extraOptions = append(b.extraOptions, WithAllowEmptyTenant())
-
-	return b
-}
-
 // CloseTimeout caps the producer close/flush timeout (via
 // MultiProducerConfig.CloseTimeout and WithCloseTimeout).
 func (b *Builder) CloseTimeout(timeout time.Duration) *Builder {

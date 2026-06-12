@@ -196,10 +196,10 @@ func TestProducer_EmitRoundTrip(t *testing.T) {
 	}
 }
 
-// TestProducer_EmitPreFlight_MissingTenant asserts the synchronous
-// ErrMissingTenantID path — kfake must record ZERO records, proving no I/O
-// happened.
-func TestProducer_EmitPreFlight_MissingTenant(t *testing.T) {
+// TestProducer_EmitPreFlight_BadPayload asserts the synchronous ErrNotJSON
+// path — kfake must record ZERO records, proving no I/O happened on a
+// caller-correctable fault caught before transport.
+func TestProducer_EmitPreFlight_BadPayload(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
 	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
@@ -210,11 +210,11 @@ func TestProducer_EmitPreFlight_MissingTenant(t *testing.T) {
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	bad := sampleRequest()
-	bad.TenantID = ""
+	bad.Payload = json.RawMessage(`{not json`)
 
 	err = emitter.Emit(context.Background(), bad)
-	if !errors.Is(err, ErrMissingTenantID) {
-		t.Fatalf("Emit err = %v; want ErrMissingTenantID", err)
+	if !errors.Is(err, ErrNotJSON) {
+		t.Fatalf("Emit err = %v; want ErrNotJSON", err)
 	}
 }
 
