@@ -1,5 +1,16 @@
 # Lib-streaming Changelog
 
+## [1.6.2](https://github.com/LerianStudio/lib-streaming/releases/tag/v1.6.2)
+
+- Fixes:
+  - Treat empty `tenantId` as valid single-tenant scope in producer.
+
+Contributors: @jeffersonrodrigues92, @lerian-studio.
+
+[Compare changes](https://github.com/LerianStudio/lib-streaming/compare/v1.6.1...v1.6.2)
+
+---
+
 ## [1.6.1](https://github.com/LerianStudio/lib-streaming/releases/tag/v1.6.1)
 
 - Fixes:
