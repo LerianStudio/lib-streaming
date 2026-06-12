@@ -1,5 +1,16 @@
 # Lib-streaming Changelog
 
+## [1.6.1](https://github.com/LerianStudio/lib-streaming/releases/tag/v1.6.1)
+
+- Fixes:
+  - Allow empty `tenantId` for single-tenant business events in the producer.
+
+Contributors: @jeffersonrodrigues92, @lerian-studio,
+
+[Compare changes](https://github.com/LerianStudio/lib-streaming/compare/v1.6.0...v1.6.1)
+
+---
+
 ## [Unreleased]
 
 - Features:
