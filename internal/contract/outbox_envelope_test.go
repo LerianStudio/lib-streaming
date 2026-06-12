@@ -5,6 +5,7 @@ package contract
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -262,6 +263,117 @@ func TestOutboxEnvelope_ValidateAllowsSystemEventWithoutTenant(t *testing.T) {
 
 	if err := envelope.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v; want nil for system event without tenant", err)
+	}
+}
+
+// TestOutboxEnvelope_ValidateAllowsEmptyTenantWhenOptedIn pins issue #24:
+// a NON-system event with an empty TenantID must PASS validation when the
+// envelope's AllowEmptyTenant flag is true. This is the single-tenant
+// deployment opt-in — distinct from SystemEvent (which bypasses tenant
+// discipline AND hijacks the system:* partition space). AllowEmptyTenant
+// only relaxes the empty-tenant rejection; it does not touch partitioning.
+func TestOutboxEnvelope_ValidateAllowsEmptyTenantWhenOptedIn(t *testing.T) {
+	t.Parallel()
+
+	envelope := validOutboxEnvelope(t)
+	envelope.AllowEmptyTenant = true
+	envelope.Event.TenantID = ""
+	envelope.Event.SystemEvent = false
+
+	if err := envelope.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v; want nil for empty tenant with AllowEmptyTenant=true", err)
+	}
+
+	if err := envelope.ValidateShape(); err != nil {
+		t.Fatalf("ValidateShape() error = %v; want nil for empty tenant with AllowEmptyTenant=true", err)
+	}
+}
+
+// TestOutboxEnvelope_ValidateRejectsEmptyTenantWhenStrict pins that the
+// DEFAULT (AllowEmptyTenant=false) behavior is unchanged: a non-system
+// event with empty TenantID is still rejected with ErrMissingTenantID at
+// BOTH gates. This is the regression guard for the #24 opt-in.
+func TestOutboxEnvelope_ValidateRejectsEmptyTenantWhenStrict(t *testing.T) {
+	t.Parallel()
+
+	envelope := validOutboxEnvelope(t)
+	envelope.AllowEmptyTenant = false
+	envelope.Event.TenantID = ""
+	envelope.Event.SystemEvent = false
+
+	err := envelope.Validate()
+	if !errors.Is(err, ErrInvalidOutboxEnvelope) {
+		t.Fatalf("Validate() error = %v; want errors.Is(..., ErrInvalidOutboxEnvelope)", err)
+	}
+
+	if !errors.Is(err, ErrMissingTenantID) {
+		t.Fatalf("Validate() error = %v; want errors.Is(..., ErrMissingTenantID)", err)
+	}
+
+	if err := envelope.ValidateShape(); !errors.Is(err, ErrMissingTenantID) {
+		t.Fatalf("ValidateShape() error = %v; want errors.Is(..., ErrMissingTenantID)", err)
+	}
+}
+
+// TestOutboxEnvelope_AllowEmptyTenant_JSONRoundTrip pins that the new
+// AllowEmptyTenant flag survives JSON marshal/unmarshal so the relay,
+// which decodes the persisted envelope with NO producer-option context,
+// still respects the opt-in at replay time.
+func TestOutboxEnvelope_AllowEmptyTenant_JSONRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	original := validOutboxEnvelope(t)
+	original.AllowEmptyTenant = true
+	original.Event.TenantID = ""
+	original.Event.SystemEvent = false
+
+	body, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	var decoded OutboxEnvelope
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+
+	if !decoded.AllowEmptyTenant {
+		t.Fatalf("decoded.AllowEmptyTenant = false; want true after round-trip")
+	}
+
+	if err := decoded.Validate(); err != nil {
+		t.Errorf("decoded.Validate() error = %v; want nil after round-trip with empty tenant + AllowEmptyTenant", err)
+	}
+}
+
+// TestOutboxEnvelope_AllowEmptyTenant_DefaultsStrictWhenAbsentFromJSON pins
+// backward compatibility: an envelope persisted BEFORE this field existed
+// (its JSON has no allow_empty_tenant key) decodes to AllowEmptyTenant=false
+// (strict), preserving current behavior — an empty-tenant non-system event
+// in such a row is still rejected.
+func TestOutboxEnvelope_AllowEmptyTenant_DefaultsStrictWhenAbsentFromJSON(t *testing.T) {
+	t.Parallel()
+
+	// Marshal a valid envelope WITHOUT ever setting AllowEmptyTenant, then
+	// confirm omitempty drops the key entirely from the wire form.
+	original := validOutboxEnvelope(t)
+
+	body, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	if strings.Contains(string(body), "allow_empty_tenant") {
+		t.Fatalf("marshaled envelope unexpectedly contains allow_empty_tenant key (omitempty broken): %s", body)
+	}
+
+	var decoded OutboxEnvelope
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+
+	if decoded.AllowEmptyTenant {
+		t.Fatalf("decoded.AllowEmptyTenant = true; want false (strict) when key absent from JSON")
 	}
 }
 

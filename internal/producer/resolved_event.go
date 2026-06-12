@@ -64,7 +64,13 @@ func (p *Producer) resolveEventWithPolicy(request EmitRequest, rejectDisabled bo
 	// with EventID / SchemaVersion / DataContentType. No pre-fill needed.
 	(&event).ApplyDefaults()
 
-	if !event.SystemEvent && event.TenantID == "" {
+	// Tenant discipline mirrors preFlight: SystemEvent opts out, and
+	// single-tenant deployments opt out via WithAllowEmptyTenant
+	// (p.allowEmptyTenant). This is the catalog-keyed Emit hot path, the
+	// first gate a real EmitRequest hits — keep it consistent with
+	// preFlightWithPayload and validateOutboxEventShape so the opt-in is
+	// honored end-to-end.
+	if !event.SystemEvent && event.TenantID == "" && !p.allowEmptyTenant {
 		return resolvedEvent{}, ErrMissingTenantID
 	}
 

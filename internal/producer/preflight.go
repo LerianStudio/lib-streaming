@@ -56,8 +56,12 @@ func (p *Producer) preFlightWithPayload(ctx context.Context, event Event, valida
 
 	// Tenant discipline. System events (`ce-systemevent: true`) opt out of
 	// the requirement — they're ops-level fan-out that carries no per-tenant
-	// payload.
-	if !event.SystemEvent && event.TenantID == "" {
+	// payload. Single-tenant deployments opt out via WithAllowEmptyTenant
+	// (p.allowEmptyTenant): the one-and-only tenant makes a per-event tenant
+	// identifier meaningless. The two opt-outs are independent — empty tenant
+	// is relaxed here WITHOUT granting system-event privileges (those were
+	// already gated above).
+	if !event.SystemEvent && event.TenantID == "" && !p.allowEmptyTenant {
 		return ErrMissingTenantID
 	}
 
