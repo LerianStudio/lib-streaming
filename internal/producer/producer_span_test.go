@@ -4,6 +4,7 @@ package producer
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
@@ -211,10 +212,10 @@ func TestEmit_Span_PreflightFailure_NoSpan(t *testing.T) {
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	bad := sampleRequest()
-	bad.TenantID = "" // triggers ErrMissingTenantID
+	bad.Payload = json.RawMessage(`{not json`) // triggers ErrNotJSON
 
-	if err := emitter.Emit(context.Background(), bad); !errors.Is(err, ErrMissingTenantID) {
-		t.Fatalf("Emit err = %v; want ErrMissingTenantID", err)
+	if err := emitter.Emit(context.Background(), bad); !errors.Is(err, ErrNotJSON) {
+		t.Fatalf("Emit err = %v; want ErrNotJSON", err)
 	}
 
 	spans := getSpans()

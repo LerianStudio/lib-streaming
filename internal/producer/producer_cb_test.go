@@ -4,6 +4,7 @@ package producer
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"sync/atomic"
@@ -568,9 +569,9 @@ func TestProducer_CBListener_SubMillisecond(t *testing.T) {
 	}
 }
 
-// TestProducer_PreFlight_DoesNotFeedCB asserts that emitting N events with
-// ErrMissingTenantID does NOT trip the breaker — caller faults live OUTSIDE
-// the circuit-breaker wrapper.
+// TestProducer_PreFlight_DoesNotFeedCB asserts that emitting N events that
+// fail preflight (ErrNotJSON) does NOT trip the breaker — caller faults live
+// OUTSIDE the circuit-breaker wrapper.
 func TestProducer_PreFlight_DoesNotFeedCB(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
 
@@ -584,14 +585,14 @@ func TestProducer_PreFlight_DoesNotFeedCB(t *testing.T) {
 	p := asProducer(t, emitter)
 
 	bad := sampleRequest()
-	bad.TenantID = ""
+	bad.Payload = json.RawMessage(`{not json`)
 
 	// Emit far more than CBMinRequests (10) of the bad event — if pre-flight
 	// fed the breaker, a ratio > 0.5 would trip it OPEN.
 	for i := 0; i < 100; i++ {
 		err := emitter.Emit(context.Background(), bad)
-		if !errors.Is(err, ErrMissingTenantID) {
-			t.Fatalf("iter %d Emit err = %v; want ErrMissingTenantID", i, err)
+		if !errors.Is(err, ErrNotJSON) {
+			t.Fatalf("iter %d Emit err = %v; want ErrNotJSON", i, err)
 		}
 	}
 

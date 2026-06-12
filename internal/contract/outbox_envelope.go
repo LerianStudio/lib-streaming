@@ -41,18 +41,6 @@ type OutboxEnvelope struct {
 	Requirement   RouteRequirement `json:"requirement"`
 	Policy        DeliveryPolicy   `json:"policy"`
 	Event         Event            `json:"event"`
-
-	// AllowEmptyTenant, when true, relaxes the empty-TenantID rejection for
-	// NON-system events at envelope validation (both ValidateShape and the
-	// full Validate). It is stamped at write time from the producer's
-	// WithAllowEmptyTenant opt-in so the relay — which decodes the persisted
-	// row with NO producer-option context — honors the same single-tenant
-	// policy on replay.
-	//
-	// omitempty keeps the wire form backward-compatible: envelopes persisted
-	// before this field existed decode to false (strict), preserving the
-	// pre-#24 behavior where an empty-tenant non-system event is rejected.
-	AllowEmptyTenant bool `json:"allow_empty_tenant,omitempty"`
 }
 
 // Validate enforces full OutboxEnvelope structural integrity. Use this
@@ -96,8 +84,8 @@ func (e OutboxEnvelope) Validate() error {
 //   - Requirement: known value after normalization.
 //   - AggregateID: non-zero UUID.
 //   - Policy: valid (mode bounds + cross-field rules).
-//   - Event: structural shape — non-empty Topic-forming fields and tenant
-//     discipline mirroring producer preFlight.
+//   - Event: structural shape — non-empty Topic-forming fields and source,
+//     mirroring producer preFlight. TenantID may be empty (single-tenant scope).
 //
 // Skipped vs Validate:
 //   - Destination.Validate (URL parse, SSRF, DNS resolution).
@@ -171,7 +159,7 @@ func (e OutboxEnvelope) ValidateShape() error {
 		return err
 	}
 
-	if err := validateOutboxEventShape(e.Event, e.AllowEmptyTenant); err != nil {
+	if err := validateOutboxEventShape(e.Event); err != nil {
 		return fmt.Errorf("%w: event: %w", ErrInvalidOutboxEnvelope, err)
 	}
 
@@ -199,32 +187,24 @@ func (e OutboxEnvelope) validateDestination() error {
 // the relay rather than the originating Emit.
 //
 // The check intentionally MIRRORS Producer.preFlightWithPayload's first
-// gates (resource/event/tenant/source) but stays in the contract package
-// so it can be invoked without a Producer instance — replay handlers and
-// integration tests both need it.
+// gates (resource/event/source) but stays in the contract package so it can
+// be invoked without a Producer instance — replay handlers and integration
+// tests both need it.
 //
 // Payload JSON validity is NOT re-checked here: it lives on the Emit hot
 // path (where the caller's bytes are first seen) and again on the replay
 // preflight (where Producer.preFlightWithPayload runs after decode).
 //
-// allowEmptyTenant carries the envelope's single-tenant opt-in so the rule
-// stays consistent between write time and replay time. It mirrors the
-// p.allowEmptyTenant branch in Producer.preFlightWithPayload — the relay has
-// no Producer-option context, so the decision must travel with the envelope.
-func validateOutboxEventShape(event Event, allowEmptyTenant bool) error {
+// TenantID is intentionally NOT required: an empty TenantID denotes a
+// single-tenant deployment and is a first-class, always-valid scope for
+// business events, consistent with Producer.preFlightWithPayload.
+func validateOutboxEventShape(event Event) error {
 	if event.ResourceType == "" {
 		return ErrMissingResourceType
 	}
 
 	if event.EventType == "" {
 		return ErrMissingEventType
-	}
-
-	// Tenant discipline mirrors preFlight: SystemEvent opts out, and
-	// single-tenant deployments opt out via the envelope's AllowEmptyTenant
-	// flag (set at write time from the producer's WithAllowEmptyTenant).
-	if !event.SystemEvent && event.TenantID == "" && !allowEmptyTenant {
-		return ErrMissingTenantID
 	}
 
 	if event.Source == "" {

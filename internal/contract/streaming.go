@@ -82,10 +82,6 @@ const (
 // here alongside caller-correctable validation errors. The full truth table
 // lives in IsCallerError and is mirrored in the godoc of each sentinel.
 var (
-	// ErrMissingTenantID is returned when Event.TenantID is empty and
-	// Event.SystemEvent is false. Returned synchronously before any I/O.
-	ErrMissingTenantID = errors.New("streaming: tenant_id required for non-system events")
-
 	// ErrSystemEventsNotAllowed is returned synchronously when an Event
 	// arrives with SystemEvent=true but the Producer was constructed
 	// without WithAllowSystemEvents. SystemEvents bypass tenant discipline
@@ -381,7 +377,6 @@ var callerErrorClasses = map[ErrorClass]struct{}{
 // callerErrorSentinels enumerates the sentinel errors that signal a caller-
 // correctable fault. Used by IsCallerError via errors.Is walking.
 var callerErrorSentinels = []error{
-	ErrMissingTenantID,
 	ErrSystemEventsNotAllowed,
 	ErrMissingSource,
 	ErrMissingResourceType,
@@ -423,7 +418,7 @@ var callerErrorSentinels = []error{
 // transient infrastructure fault (broker down, network timeout).
 //
 // Returns true when err (or any error in its chain) is one of:
-//   - ErrMissingTenantID, ErrSystemEventsNotAllowed, ErrMissingSource,
+//   - ErrSystemEventsNotAllowed, ErrMissingSource,
 //     ErrMissingResourceType, ErrMissingEventType, ErrPayloadTooLarge,
 //     ErrNotJSON, ErrEventDisabled, ErrMissingBrokers, ErrInvalidCompression,
 //     ErrInvalidAcks, ErrInvalidConfigField, ErrInvalidTenantID,

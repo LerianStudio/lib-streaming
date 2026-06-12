@@ -64,15 +64,13 @@ func (p *Producer) resolveEventWithPolicy(request EmitRequest, rejectDisabled bo
 	// with EventID / SchemaVersion / DataContentType. No pre-fill needed.
 	(&event).ApplyDefaults()
 
-	// Tenant discipline mirrors preFlight: SystemEvent opts out, and
-	// single-tenant deployments opt out via WithAllowEmptyTenant
-	// (p.allowEmptyTenant). This is the catalog-keyed Emit hot path, the
-	// first gate a real EmitRequest hits — keep it consistent with
-	// preFlightWithPayload and validateOutboxEventShape so the opt-in is
-	// honored end-to-end.
-	if !event.SystemEvent && event.TenantID == "" && !p.allowEmptyTenant {
-		return resolvedEvent{}, ErrMissingTenantID
-	}
+	// TenantID is intentionally NOT required here. An empty TenantID denotes a
+	// single-tenant deployment and is a first-class, always-valid scope for
+	// business events: single-tenant and multi-tenant run on physically
+	// segregated infrastructure (dedicated vs shared DB), so a multi-tenant
+	// service that lost its tenant fails at the database-routing layer long
+	// before it could emit — a streaming-level tenant guard would be redundant
+	// and would only block legitimate single-tenant emits.
 
 	if event.Source == "" {
 		return resolvedEvent{}, ErrMissingSource

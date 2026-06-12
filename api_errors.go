@@ -24,7 +24,6 @@ const (
 )
 
 var (
-	ErrMissingTenantID                    = contract.ErrMissingTenantID
 	ErrSystemEventsNotAllowed             = contract.ErrSystemEventsNotAllowed
 	ErrMissingSource                      = contract.ErrMissingSource
 	ErrMissingResourceType                = contract.ErrMissingResourceType

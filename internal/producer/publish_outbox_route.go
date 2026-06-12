@@ -76,10 +76,6 @@ func (p *Producer) publishRouteOutbox(
 		Requirement:   route.Requirement,
 		Policy:        policy,
 		Event:         event,
-		// Stamp the single-tenant opt-in so the relay, which decodes this
-		// row with no producer-option context, applies the same
-		// empty-tenant policy as the synchronous preflight did.
-		AllowEmptyTenant: p.allowEmptyTenant,
 	}
 
 	// ValidateShape skips Destination.Validate (which performs DNS lookups

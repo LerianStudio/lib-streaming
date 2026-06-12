@@ -75,7 +75,6 @@ const (
 // errors) are reachable through errors.Is wrapping and do not need a
 // producer-package alias.
 var (
-	ErrMissingTenantID            = contract.ErrMissingTenantID
 	ErrSystemEventsNotAllowed     = contract.ErrSystemEventsNotAllowed
 	ErrMissingSource              = contract.ErrMissingSource
 	ErrMissingResourceType        = contract.ErrMissingResourceType

@@ -66,18 +66,5 @@ func WithAllowPlaintextSASL() EmitterOption { return producer.WithAllowPlaintext
 // WithAllowSystemEvents opts the producer into accepting system events.
 func WithAllowSystemEvents() EmitterOption { return producer.WithAllowSystemEvents() }
 
-// WithAllowEmptyTenant opts the producer into accepting NON-system events with
-// an empty TenantID. This is the explicit opt-in for SINGLE-TENANT deployments
-// where carrying a per-event tenant identifier is meaningless. Without it, an
-// empty-tenant non-system Emit is rejected with ErrMissingTenantID at preflight
-// and again at outbox-envelope validation (so replays are rejected too).
-//
-// It is DISTINCT from WithAllowSystemEvents / Event.SystemEvent: system events
-// are privileged ops-level fan-out that hijack the "system:*" partition space.
-// WithAllowEmptyTenant only relaxes the empty-tenant rejection for ordinary
-// business events; it does not change partitioning, does not drop the
-// ce-tenantid attribute, and does not enable system events.
-func WithAllowEmptyTenant() EmitterOption { return producer.WithAllowEmptyTenant() }
-
 // WithCatalog wires the immutable event catalog required by NewProducer.
 func WithCatalog(catalog Catalog) EmitterOption { return producer.WithCatalog(catalog) }

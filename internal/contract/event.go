@@ -41,13 +41,18 @@ import (
 //   - Payload: the raw domain payload bytes, sent unchanged as the Kafka
 //     message value. Consumers read metadata from the ce-* headers.
 type Event struct {
-	// TenantID identifies the tenant that owns this event. Required for
-	// non-system events (see SystemEvent). The library does NOT cross-
-	// check TenantID against any ambient context value — the caller is
-	// responsible for ensuring TenantID matches the authenticated tenant
-	// on the request context. Mismatches are silently accepted.
+	// TenantID identifies the tenant that owns this event. It is OPTIONAL: an
+	// empty TenantID denotes a single-tenant deployment and is fully valid for
+	// business events. Single-tenant and multi-tenant services run on
+	// physically segregated infrastructure (dedicated vs shared DB), so the
+	// library imposes no tenant requirement here.
 	//
-	// Services using lib-commons multitenancy SHOULD set:
+	// The library does NOT cross-check TenantID against any ambient context
+	// value — the caller is responsible for ensuring TenantID matches the
+	// authenticated tenant on the request context. Mismatches are silently
+	// accepted.
+	//
+	// Multi-tenant services SHOULD populate it from context:
 	//
 	//	tenantID, _ := tmcore.GetTenantIDContext(ctx)
 	//	event.TenantID = tenantID

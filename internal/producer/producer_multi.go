@@ -121,7 +121,6 @@ func NewProducerMulti(
 		outboxWriter:       resolvedOpts.outboxWriter,
 		stop:               make(chan struct{}),
 		allowSystemEvents:  resolvedOpts.allowSystemEvents,
-		allowEmptyTenant:   resolvedOpts.allowEmptyTenant,
 		catalog:            resolvedOpts.catalog,
 		policyOverrides:    cloneDeliveryPolicyOverrides(policyOverrides),
 		targets:            make(map[string]*targetRuntime, len(targets)),

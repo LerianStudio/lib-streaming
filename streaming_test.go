@@ -24,7 +24,6 @@ func TestIsCallerError(t *testing.T) {
 		{"ClassSerialization", &streaming.EmitError{Class: streaming.ClassSerialization}},
 		{"ClassValidation", &streaming.EmitError{Class: streaming.ClassValidation}},
 		{"ClassAuth", &streaming.EmitError{Class: streaming.ClassAuth}},
-		{"ErrMissingTenantID", streaming.ErrMissingTenantID},
 		{"ErrMissingSource", streaming.ErrMissingSource},
 		{"ErrMissingResourceType", streaming.ErrMissingResourceType},
 		{"ErrMissingEventType", streaming.ErrMissingEventType},
@@ -209,7 +208,6 @@ func TestSentinelErrors_IsMatches(t *testing.T) {
 	t.Parallel()
 
 	sentinels := []error{
-		streaming.ErrMissingTenantID,
 		streaming.ErrMissingSource,
 		streaming.ErrMissingResourceType,
 		streaming.ErrMissingEventType,

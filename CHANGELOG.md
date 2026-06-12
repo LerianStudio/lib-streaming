@@ -13,8 +13,8 @@ Contributors: @jeffersonrodrigues92, @lerian-studio,
 
 ## [Unreleased]
 
-- Features:
-  - Add `WithAllowEmptyTenant()` emitter option and `Builder.AllowEmptyTenant()` for single-tenant deployments. Non-system events may carry an empty `TenantID` only when the producer explicitly opts in; the flag is persisted on `OutboxEnvelope` (`allow_empty_tenant`, omitempty) so the relay honors it at replay time. Distinct from `SystemEvent` — it relaxes only the empty-tenant rejection and does not alter partitioning, drop `ce-tenantid`, or enable system events. Default behavior is unchanged: without the option, an empty-tenant non-system event still returns `ErrMissingTenantID` (fixes #24).
+- Changes:
+  - An empty `TenantID` on a non-system business event is now a first-class, always-valid single-tenant scope — accepted with zero configuration. Single-tenant and multi-tenant services run on physically segregated infrastructure (dedicated vs shared DB), so a multi-tenant service that lost its tenant fails at the database-routing layer long before emitting; a streaming-level tenant guard was redundant and only blocked legitimate single-tenant emits. The `ErrMissingTenantID` guard (catalog resolve, synchronous preflight, and outbox-envelope validation) and the short-lived `WithAllowEmptyTenant()` / `Builder.AllowEmptyTenant()` opt-in are removed, along with the `ErrMissingTenantID` sentinel and the `OutboxEnvelope.allow_empty_tenant` field. `SystemEvent` behavior is unchanged. (fixes #24)
 
 ---
 

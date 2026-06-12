@@ -188,7 +188,7 @@
 // in the internal contract layer. The categories:
 //
 //   - Caller-side validation (synchronous, no I/O — IsCallerError returns
-//     true): ErrMissingTenantID, ErrSystemEventsNotAllowed, ErrMissingSource,
+//     true): ErrSystemEventsNotAllowed, ErrMissingSource,
 //     ErrMissingResourceType, ErrMissingEventType,
 //     ErrInvalid{TenantID,ResourceType,EventType,Source,Subject,EventID,
 //     SchemaVersion,DataContentType,DataSchema}, ErrPayloadTooLarge,
