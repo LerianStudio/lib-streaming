@@ -1,5 +1,23 @@
 # Lib-streaming Changelog
 
+## [1.6.1](https://github.com/LerianStudio/lib-streaming/releases/tag/v1.6.1)
+
+- Fixes:
+  - Allow empty `tenantId` for single-tenant business events in the producer.
+
+Contributors: @jeffersonrodrigues92, @lerian-studio,
+
+[Compare changes](https://github.com/LerianStudio/lib-streaming/compare/v1.6.0...v1.6.1)
+
+---
+
+## [Unreleased]
+
+- Features:
+  - Add `WithAllowEmptyTenant()` emitter option and `Builder.AllowEmptyTenant()` for single-tenant deployments. Non-system events may carry an empty `TenantID` only when the producer explicitly opts in; the flag is persisted on `OutboxEnvelope` (`allow_empty_tenant`, omitempty) so the relay honors it at replay time. Distinct from `SystemEvent` — it relaxes only the empty-tenant rejection and does not alter partitioning, drop `ce-tenantid`, or enable system events. Default behavior is unchanged: without the option, an empty-tenant non-system event still returns `ErrMissingTenantID` (fixes #24).
+
+---
+
 ## [1.6.0](https://github.com/LerianStudio/lib-streaming/releases/tag/v1.6.0)
 
 - Fixes:

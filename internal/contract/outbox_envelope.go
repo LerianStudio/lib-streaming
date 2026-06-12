@@ -41,6 +41,18 @@ type OutboxEnvelope struct {
 	Requirement   RouteRequirement `json:"requirement"`
 	Policy        DeliveryPolicy   `json:"policy"`
 	Event         Event            `json:"event"`
+
+	// AllowEmptyTenant, when true, relaxes the empty-TenantID rejection for
+	// NON-system events at envelope validation (both ValidateShape and the
+	// full Validate). It is stamped at write time from the producer's
+	// WithAllowEmptyTenant opt-in so the relay — which decodes the persisted
+	// row with NO producer-option context — honors the same single-tenant
+	// policy on replay.
+	//
+	// omitempty keeps the wire form backward-compatible: envelopes persisted
+	// before this field existed decode to false (strict), preserving the
+	// pre-#24 behavior where an empty-tenant non-system event is rejected.
+	AllowEmptyTenant bool `json:"allow_empty_tenant,omitempty"`
 }
 
 // Validate enforces full OutboxEnvelope structural integrity. Use this
@@ -159,7 +171,7 @@ func (e OutboxEnvelope) ValidateShape() error {
 		return err
 	}
 
-	if err := validateOutboxEventShape(e.Event); err != nil {
+	if err := validateOutboxEventShape(e.Event, e.AllowEmptyTenant); err != nil {
 		return fmt.Errorf("%w: event: %w", ErrInvalidOutboxEnvelope, err)
 	}
 
@@ -194,7 +206,12 @@ func (e OutboxEnvelope) validateDestination() error {
 // Payload JSON validity is NOT re-checked here: it lives on the Emit hot
 // path (where the caller's bytes are first seen) and again on the replay
 // preflight (where Producer.preFlightWithPayload runs after decode).
-func validateOutboxEventShape(event Event) error {
+//
+// allowEmptyTenant carries the envelope's single-tenant opt-in so the rule
+// stays consistent between write time and replay time. It mirrors the
+// p.allowEmptyTenant branch in Producer.preFlightWithPayload — the relay has
+// no Producer-option context, so the decision must travel with the envelope.
+func validateOutboxEventShape(event Event, allowEmptyTenant bool) error {
 	if event.ResourceType == "" {
 		return ErrMissingResourceType
 	}
@@ -203,8 +220,10 @@ func validateOutboxEventShape(event Event) error {
 		return ErrMissingEventType
 	}
 
-	// Tenant discipline mirrors preFlight: SystemEvent opts out.
-	if !event.SystemEvent && event.TenantID == "" {
+	// Tenant discipline mirrors preFlight: SystemEvent opts out, and
+	// single-tenant deployments opt out via the envelope's AllowEmptyTenant
+	// flag (set at write time from the producer's WithAllowEmptyTenant).
+	if !event.SystemEvent && event.TenantID == "" && !allowEmptyTenant {
 		return ErrMissingTenantID
 	}
 
