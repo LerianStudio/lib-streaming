@@ -6,8 +6,8 @@ github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c h1:udKWzYgxTojEK
 github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c/go.mod h1:xomTg63KZ2rFqZQzSB4Vz2SUXa1BpHTVz9L5PTmPC4E=
 github.com/DATA-DOG/go-sqlmock v1.5.2 h1:OcvFkGmslmlZibjAjaHm3L//6LiuBgolP7OputlJIzU=
 github.com/DATA-DOG/go-sqlmock v1.5.2/go.mod h1:88MAG/4G7SMwSE3CeA0ZKzrT5CiOU3OJ+JlNzwDqpNU=
-github.com/LerianStudio/lib-commons/v5 v5.5.0 h1:VHaCY22FXllptWg+KRXopzNJoetE3tYMmrB9VsfFxOA=
-github.com/LerianStudio/lib-commons/v5 v5.5.0/go.mod h1:5bw4SShNUCPEHRR2mjiCIJxkok5J2cvnYhnMGT5fZzQ=
+github.com/LerianStudio/lib-commons/v5 v5.6.1 h1:FvDckAzrngucmZuWUc/7Em899UbFzgbfpnhQu0+9t90=
+github.com/LerianStudio/lib-commons/v5 v5.6.1/go.mod h1:QFluaXHnCTWzHhVvh568JFoBn64pCH8roeIurBRZNC4=
 github.com/LerianStudio/lib-observability v1.0.1 h1:Nz5U+dzhkTEu+86rQBXAkxB09OQE7/mxFZbZgZPFejo=
 github.com/LerianStudio/lib-observability v1.0.1/go.mod h1:kGZvqUqgFVTv5TkqqVqAtJ9GHEr0WMK2MfnjoQAyrp4=
 github.com/Microsoft/go-winio v0.6.2 h1:F2VQgta7ecxGYO8k3ZZz3RS8fVIXVxONVUPlNERoyfY=
