@@ -14,7 +14,7 @@ jobs:
       contents: read
       pull-requests: write
       issues: write
-    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/pr-validation.yml@v1.33.0
+    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/pr-validation.yml@v1.33.1
     with:
       enforce_source_branches: true
       allowed_source_branches: 'develop|release-candidate|hotfix/*'
