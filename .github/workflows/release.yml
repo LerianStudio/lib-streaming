@@ -36,7 +36,7 @@ jobs:
       issues: write
       pull-requests: write
       packages: read
-    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/release.yml@v1.33.0
+    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/release.yml@v1.36.6
     with:
       enable_changelog: ${{ github.ref == 'refs/heads/main' }}
     secrets: inherit
