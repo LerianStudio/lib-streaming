@@ -5,12 +5,23 @@
 //
 // # Scope
 //
-// streaming is the producer-only entry point for past-tense domain facts
-// intended for external consumers (e.g. "transaction.created"). It is NOT
-// for internal command dispatch or work queues — for those, use
-// github.com/LerianStudio/lib-commons/v5/commons/rabbitmq. It is NOT a
-// consumer library — downstream services consume with cloudevents/sdk-go/v2
-// + franz-go directly.
+// streaming is the entry point for past-tense domain facts intended for
+// external consumers (e.g. "transaction.created"). It is NOT for internal
+// command dispatch or work queues — for those, use
+// github.com/LerianStudio/lib-commons/v5/commons/rabbitmq.
+//
+// As of the consumer wave, streaming is no longer producer-only. The hardened
+// at-least-once group consumer (streaming.NewConsumer / streaming.Consumer /
+// streaming.Handler) reverses the historical "NOT a consumer library" scope:
+// services that previously hand-rolled a franz-go group loop (and rediscovered
+// the same commit/seek/rebalance/DLQ holes each time) now implement only
+// Handler{ Handle(ctx, Event, payload) error } and let the library own commit,
+// retry, seek-back, DLQ, tenant scoping, and rebalance safety. The design
+// contract and the at-least-once state machine live in
+// docs/design/consumer.md. ce-tenantid -> Event.TenantID is parsed by the
+// library via ParseCloudEventsHeaders before Handle runs; see "Consumer
+// responsibilities" below for why the tenant check is still the single biggest
+// operational invariant — the consumer makes it first-class, not optional.
 //
 // lib-streaming and github.com/LerianStudio/lib-commons/v5/commons/rabbitmq
 // are orthogonal. Neither deprecates the other.
