@@ -3,6 +3,10 @@
 
 # ── Scopes (aligned with .github/labeler.yml) ─────────────────────────────────
 
+- name: consumer
+  color: "196127"
+  description: Consumer surface — at-least-once group runtime, retry/seek-back, DLQ, tenant scoping
+
 - name: producer
   color: "0e8a16"
   description: Producer surface — constructor, kgo, app integration, lifecycle hooks
