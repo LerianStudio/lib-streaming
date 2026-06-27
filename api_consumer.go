@@ -72,7 +72,7 @@ func WithConsumerTracer(t trace.Tracer) ConsumerOption { return consumer.WithTra
 //	    Handler(myHandler{}).
 //	    DLQTopicSuffix(".dlq").  // optional; default ".dlq"
 //	    RetryBudget(3).
-//	    Classifier(isTerminal).
+//	    Classifier(isTransient).
 //	    Build(ctx)
 //	if err != nil { return err }
 //	go func() { _ = c.Run(ctx) }()  // SafeGo in production

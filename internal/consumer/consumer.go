@@ -231,13 +231,14 @@ func Build(ctx context.Context, cfg ConsumerConfig, handler Handler, opts ...Opt
 		groupID: cfg.Group,
 	}
 
-	// Prepend the production seam so explicit caller opts (tests) can still
-	// override it.
+	// The internal DLQ seam is authoritative: it is applied LAST so Build's
+	// constructed adapter always wins. The dlqPublisher option is unexported
+	// (test-only) and no longer overrides it here.
 	prod := []Option{
 		WithDLQPublisher(dlq),
 	}
 
-	runner, err := New(cfg, client, handler, append(prod, opts...)...)
+	runner, err := New(cfg, client, handler, append(append([]Option(nil), opts...), prod...)...)
 	if err != nil {
 		client.Close()
 		// Best-effort cleanup on a construction failure; the close error is not
@@ -470,6 +471,13 @@ func (c *consumerRuntime) handleWithRetry(ctx context.Context, rec *kgo.Record, 
 
 	for attempt := 0; ; attempt++ {
 		err := c.dispatch(ctx, rec, ev)
+
+		// Shutdown landing mid-Handle: if Run's ctx is cancelled, a handler that
+		// honors it returns a cancellation error. That is shutdown, not poison —
+		// stop and let the record re-deliver on restart, never DLQ it.
+		if ctx.Err() != nil {
+			return dispositionStop, attempt
+		}
 
 		disp := c.classify(err, sourceHandler)
 		if disp != dispositionRetry {
