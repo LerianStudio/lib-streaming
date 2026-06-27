@@ -1,5 +1,26 @@
 # Lib-streaming Changelog
 
+## [1.7.0](https://github.com/LerianStudio/lib-streaming/releases/tag/v1.7.0)
+
+Features:
+- Introduced an at-least-once Kafka consumer with Dead Letter Queue (DLQ) support. (@fredcamaral)
+
+Fixes:
+- Improved the shutdown guard by keying it on the nature of the error encountered. (@fredcamaral)
+- Tightened the shutdown guard and corrected issues identified during review follow-ups. (@fredcamaral)
+- Addressed review follow-ups from PR `#46`. (@fredcamaral)
+- Ensured the return of DLQ close errors and aligned contract documentation. (@fredcamaral)
+- Responded to CodeRabbit's review comments on the consumer implementation. (@fredcamaral)
+
+Improvements:
+- Refactored to extract shared packages for Kafka security and DLQ headers. (@fredcamaral)
+- Registered consumer PR-title scope and labels in the CI configuration. (@fredcamaral)
+- Bumped `lib-commons/v5` to `v5.8.0`. (@fredcamaral)
+
+[Compare changes](https://github.com/LerianStudio/lib-streaming/compare/v1.6.2...v1.7.0)
+
+---
+
 ## [1.6.2](https://github.com/LerianStudio/lib-streaming/releases/tag/v1.6.2)
 
 - Fixes:
