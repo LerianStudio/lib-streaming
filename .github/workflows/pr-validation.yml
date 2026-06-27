@@ -22,6 +22,7 @@ jobs:
       pr_title_scopes: |
         ci
         config
+        consumer
         deps
         docs
         examples

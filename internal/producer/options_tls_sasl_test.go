@@ -383,7 +383,7 @@ func (*typedNilSASLMechanism) Authenticate(context.Context, string) (sasl.Sessio
 // tls.Config.Clone() is documented as a shallow copy. Without an explicit
 // slice copy, the caller could swap an approved AES-GCM suite for a weak
 // CBC suite at any point after Producer construction and before the first
-// dial — silently weakening transport security. cloneTLSConfigWithDefaults
+// dial — silently weakening transport security. kafkasec.CloneTLSConfigWithDefaults
 // must therefore deep-copy CipherSuites.
 func TestWithTLSConfig_DeepClonesCipherSuites(t *testing.T) {
 	t.Parallel()
@@ -527,7 +527,7 @@ func TestBuildKgoOpts_WithApprovedTLS12CipherSuite_AcceptsAndPreservesSuite(t *t
 }
 
 // TestBuildKgoOpts_TLSVersionRange_MinExceedsMax_RejectsTLSConfig asserts
-// validateTLSConfig rejects MinVersion=TLS1.3 + MaxVersion=TLS1.2. Without
+// kafkasec.ValidateTLSConfig rejects MinVersion=TLS1.3 + MaxVersion=TLS1.2. Without
 // this check, the producer would silently store a contradictory config that
 // crypto/tls would later reject at handshake time with a less precise
 // error. The check applies effectiveMinVersion (defaulted to TLS1.2 when

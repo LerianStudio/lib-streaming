@@ -1,11 +1,11 @@
 package producer
 
 import (
-	"crypto/tls"
 	"fmt"
 	"math"
 	"time"
 
+	"github.com/LerianStudio/lib-streaming/internal/kafkasec"
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
@@ -15,15 +15,6 @@ import (
 // In practice brokers cap this around 1 MiB - 10 MiB; giving operators room
 // for 2 GiB is already far past any real-world setting.
 const maxBatchMaxBytes = math.MaxInt32
-
-var approvedTLS12CipherSuites = map[uint16]struct{}{
-	tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256:       {},
-	tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256:         {},
-	tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384:       {},
-	tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384:         {},
-	tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256: {},
-	tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256:   {},
-}
 
 // buildKgoOpts translates a validated streaming.Config plus the resolved
 // emitterOptions into the franz-go option slice. Each option is pinned
@@ -116,19 +107,19 @@ func buildKgoOpts(cfg Config, opts emitterOptions) ([]kgo.Opt, error) {
 		kgoOpts = append(kgoOpts, kgo.ClientID(cfg.ClientID))
 	}
 
-	if err := validateTLSConfig(opts.tlsConfig); err != nil {
+	if err := kafkasec.ValidateTLSConfig(opts.tlsConfig); err != nil {
 		return nil, err
 	}
 
-	tlsConfig := cloneTLSConfigWithDefaults(opts.tlsConfig)
+	tlsConfig := kafkasec.CloneTLSConfigWithDefaults(opts.tlsConfig)
 
 	saslMechanism := opts.saslMechanism
 	if isNilInterface(saslMechanism) {
 		saslMechanism = nil
 	}
 
-	if saslMechanism != nil && tlsConfig == nil && !opts.allowPlaintextSASL {
-		return nil, fmt.Errorf("%w: pair WithSASL with WithTLSConfig, or explicitly opt into unsafe local/dev plaintext via WithAllowPlaintextSASL", ErrPlaintextSASLNotAllowed)
+	if err := kafkasec.SASLRequiresTLS(saslMechanism != nil, tlsConfig != nil, opts.allowPlaintextSASL); err != nil {
+		return nil, err
 	}
 
 	// TLS configuration. franz-go's DialTLSConfig clones the config per-dial and
@@ -147,108 +138,6 @@ func buildKgoOpts(cfg Config, opts emitterOptions) ([]kgo.Opt, error) {
 	}
 
 	return kgoOpts, nil
-}
-
-// cloneTLSConfigWithDefaults returns a defensive deep copy of cfg with
-// MinVersion defaulted to TLS 1.2 when unset.
-//
-// tls.Config.Clone is documented as a shallow copy: the caller can still
-// mutate CipherSuites, CurvePreferences, NextProtos, or RootCAs after we
-// have stored the "clone" and weaken the producer's broker dial policy
-// retroactively. We re-allocate the security-critical mutable slices here
-// so that, post-construction, no caller-reachable handle aliases the
-// stored config's policy fields. (Cert chains and *x509.CertPool are
-// internally pooled by crypto/tls; we leave those as the shallow Clone
-// returned them — replacing them would break legitimate callers that
-// rotate certs through a wrapper.)
-func cloneTLSConfigWithDefaults(cfg *tls.Config) *tls.Config {
-	if cfg == nil {
-		return nil
-	}
-
-	cloned := cfg.Clone()
-	if cloned.MinVersion == 0 {
-		cloned.MinVersion = tls.VersionTLS12
-	}
-
-	cloned.CipherSuites = cloneUint16Slice(cloned.CipherSuites)
-	cloned.CurvePreferences = cloneCurveIDSlice(cloned.CurvePreferences)
-	cloned.NextProtos = cloneStringSlice(cloned.NextProtos)
-
-	return cloned
-}
-
-func cloneUint16Slice(src []uint16) []uint16 {
-	if src == nil {
-		return nil
-	}
-
-	dst := make([]uint16, len(src))
-	copy(dst, src)
-
-	return dst
-}
-
-func cloneCurveIDSlice(src []tls.CurveID) []tls.CurveID {
-	if src == nil {
-		return nil
-	}
-
-	dst := make([]tls.CurveID, len(src))
-	copy(dst, src)
-
-	return dst
-}
-
-func cloneStringSlice(src []string) []string {
-	if src == nil {
-		return nil
-	}
-
-	dst := make([]string, len(src))
-	copy(dst, src)
-
-	return dst
-}
-
-func validateTLSConfig(cfg *tls.Config) error {
-	if cfg == nil {
-		return nil
-	}
-
-	if cfg.InsecureSkipVerify {
-		return fmt.Errorf("%w: InsecureSkipVerify is forbidden", ErrInvalidTLSConfig)
-	}
-
-	if cfg.MinVersion != 0 && cfg.MinVersion < tls.VersionTLS12 {
-		return fmt.Errorf("%w: MinVersion must be TLS 1.2 or newer", ErrInvalidTLSConfig)
-	}
-
-	if cfg.MaxVersion != 0 && cfg.MaxVersion < tls.VersionTLS12 {
-		return fmt.Errorf("%w: MaxVersion must be TLS 1.2 or newer", ErrInvalidTLSConfig)
-	}
-
-	// Reject contradictory version ranges. Apply the same TLS 1.2 default
-	// for MinVersion that cloneTLSConfigWithDefaults uses, otherwise a
-	// caller passing only MaxVersion=TLS1.0/1.1 would already have been
-	// rejected above and a caller passing MaxVersion=TLS1.2/1.3 with
-	// MinVersion=0 must remain valid (effective range 1.2..MaxVersion).
-	effectiveMin := cfg.MinVersion
-	if effectiveMin == 0 {
-		effectiveMin = tls.VersionTLS12
-	}
-
-	if cfg.MaxVersion != 0 && effectiveMin > cfg.MaxVersion {
-		return fmt.Errorf("%w: MinVersion (0x%04x) must not exceed MaxVersion (0x%04x)", ErrInvalidTLSConfig, effectiveMin, cfg.MaxVersion)
-	}
-
-	for _, suite := range cfg.CipherSuites {
-		if _, ok := approvedTLS12CipherSuites[suite]; !ok {
-			return fmt.Errorf("%w: unsupported TLS 1.2 CipherSuite 0x%04x", ErrInvalidTLSConfig, suite)
-		}
-	}
-
-	return nil
 }
 
 // resolveCompression maps the Config string to a kgo.CompressionCodec. The
