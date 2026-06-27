@@ -5,6 +5,7 @@ package streaming
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"testing"
 	"time"
 
@@ -151,8 +152,8 @@ func TestConsumerBuilder_TLSSetterEnablesSASL(t *testing.T) {
 	}
 
 	// SASL without TLS -> rejected at Build (SASL-requires-TLS gate).
-	if _, err := base().SASL(mech).Build(context.Background()); err == nil {
-		t.Error("Build with SASL and no TLS = nil; want SASL-requires-TLS rejection")
+	if _, err := base().SASL(mech).Build(context.Background()); !errors.Is(err, ErrPlaintextSASLNotAllowed) {
+		t.Errorf("Build with SASL and no TLS; want ErrPlaintextSASLNotAllowed: %v", err)
 	}
 
 	// SASL with TLS -> accepted.

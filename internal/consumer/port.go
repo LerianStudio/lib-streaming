@@ -133,9 +133,14 @@ type transportDLQPublisher struct {
 // it returns only after the adapter acknowledges, so the source offset is
 // committed strictly after the quarantine copy is durable.
 //
-// firstFailureAt is the time of the first handler attempt for this record; the
-// runtime threads it so the header reflects when the record first failed, not
-// when it was finally quarantined.
+// firstFailureAt is stamped time.Now() at publish — the QUARANTINE-verdict time,
+// not necessarily the first-ever failure. For a record that fails terminally on
+// attempt 0 (codec faults, default-classified handler errors) the two coincide.
+// A record that first fails TRANSIENTLY, seeks back, and is DLQ'd on a later
+// poll's terminal verdict has an earlier true first-failure that is NOT carried
+// through the seam — the stamp then reflects quarantine time, lagging the first
+// failure. This is forensic metadata only (never a routing decision), so the skew
+// on the retry-then-terminal path is accepted, not threaded as a captured time.
 func (p *transportDLQPublisher) PublishDLQ(ctx context.Context, rec *kgo.Record, cause error, retryCount int) error {
 	if p == nil || transport.IsNilInterface(p.adapter) {
 		return contract.ErrNilProducer

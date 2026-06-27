@@ -15,7 +15,8 @@ import (
 )
 
 // Handler is the only interface a consuming service implements. The library
-// owns commit, retry, seek-back, DLQ, tenant scoping, and rebalance safety.
+// owns commit, retry, seek-back, DLQ, tenant propagation, and rebalance safety;
+// tenant filtering/enforcement is the handler's own responsibility (see below).
 //
 //	type myHandler struct{}
 //	func (myHandler) Handle(ctx context.Context, ev streaming.Event, payload []byte) error {
@@ -72,7 +73,7 @@ func WithConsumerTracer(t trace.Tracer) ConsumerOption { return consumer.WithTra
 //	    Handler(myHandler{}).
 //	    DLQTopicSuffix(".dlq").  // optional; default ".dlq"
 //	    RetryBudget(3).
-//	    Classifier(isTerminal).
+//	    Classifier(isTransient).
 //	    Build(ctx)
 //	if err != nil { return err }
 //	go func() { _ = c.Run(ctx) }()  // SafeGo in production

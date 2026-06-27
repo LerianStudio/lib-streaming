@@ -25,8 +25,8 @@ type Handler interface {
 (empty when `ce-tenantid` is absent — a valid single-tenant scope; see §7b).
 `payload` is the raw record value.
 Returning `nil` = success. A non-nil error feeds the retry/DLQ state machine.
-The library owns commit, retry, seek-back, DLQ, tenant scoping, and rebalance
-safety.
+The library owns commit, retry, seek-back, DLQ, tenant propagation, and rebalance
+safety; tenant filtering/enforcement is the handler's own responsibility (§7b).
 
 Construction (functional-options + Builder, matching the producer):
 
@@ -40,7 +40,7 @@ c, err := streaming.NewConsumer().
     Handler(myHandler{}).
     DLQTopicSuffix(".dlq").   // optional; default ".dlq"
     RetryBudget(3).
-    Classifier(isTerminal).  // optional
+    Classifier(isTransient).  // optional
     Build(ctx)
 // c.Run(ctx) blocks (SafeGo-friendly, goleak-clean); c.Close() is idempotent.
 ```
@@ -463,9 +463,13 @@ library via the existing `ParseCloudEventsHeaders` codec
 **before** `Handle` is invoked — never from the payload body. The tenant id is
 attached to the handler `ctx` (so downstream tenant-aware repos/telemetry pick it
 up) and to span attributes (`tenant.id`), kept off metric labels to bound
-cardinality. This makes the doc.go "single biggest operational invariant"
-(doc.go §"Consumer responsibilities") a property of the library, not a checklist
-item each service must remember.
+cardinality. The tenant invariant is therefore a **shared** responsibility: the
+library *propagates* `ce-tenantid` onto the handler `ctx` and span (from the
+header, before `Handle`), but it does NOT filter or reject on it — a
+successfully-decoded event is ALWAYS dispatched. Enforcing the doc.go "single
+biggest operational invariant" (doc.go §"Consumer responsibilities") — deciding
+whether an empty or unexpected tenant is acceptable, and scoping every read/write
+to it — remains the handler's duty, not an automatic library guarantee.
 
 **The codec does NOT validate `ce-tenantid`.** `ParseCloudEventsHeaders`
 reads `TenantID` as an *optional* extension

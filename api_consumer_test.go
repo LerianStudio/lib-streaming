@@ -6,15 +6,13 @@ import (
 	"context"
 	"testing"
 
-	"github.com/LerianStudio/lib-streaming/internal/contract"
-
 	streaming "github.com/LerianStudio/lib-streaming"
 )
 
 // noopHandler is a do-nothing Handler for builder-construction tests.
 type noopHandler struct{}
 
-func (noopHandler) Handle(context.Context, contract.Event, []byte) error { return nil }
+func (noopHandler) Handle(context.Context, streaming.Event, []byte) error { return nil }
 
 // TestNewConsumer_DefaultsEnabled proves the fluent builder yields a REAL runtime
 // by default (finding #1): NewConsumer historically left Enabled=false (zero
