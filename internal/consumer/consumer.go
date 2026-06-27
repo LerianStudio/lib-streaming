@@ -472,13 +472,16 @@ func (c *consumerRuntime) handleWithRetry(ctx context.Context, rec *kgo.Record, 
 	for attempt := 0; ; attempt++ {
 		err := c.dispatch(ctx, rec, ev)
 
-		// Shutdown landing mid-Handle: if Run's ctx is cancelled AND the handler
-		// returned an error (a cancel-honoring handler does), that error is
-		// shutdown-induced, not poison — stop and let the record re-deliver on
-		// restart, never DLQ it. Gate on err != nil so a handler that already
-		// SUCCEEDED still commits: an unconditional check would skip the commit for
-		// an already-processed record and force a needless duplicate on restart.
-		if err != nil && ctx.Err() != nil {
+		// Shutdown landing mid-Handle: stop (re-deliver, never DLQ) ONLY when the
+		// handler error is itself a cancellation caused by Run's ctx being
+		// cancelled. Gating on the error's NATURE (not merely "ctx cancelled +
+		// any error") keeps fail-closed intact: a real terminal/business error
+		// that merely COINCIDES with shutdown must still classify to the DLQ, and
+		// a successful handle (err == nil) must still commit. errors.Is(err,
+		// ctx.Err()) catches a handler that propagated the ctx error verbatim;
+		// the explicit Canceled/DeadlineExceeded cover a freshly-wrapped one.
+		if err != nil && ctx.Err() != nil &&
+			(errors.Is(err, ctx.Err()) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
 			return dispositionStop, attempt
 		}
 

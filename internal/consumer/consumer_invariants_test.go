@@ -577,3 +577,40 @@ func TestInvariant_SuccessfulHandleDuringShutdownStillCommits(t *testing.T) {
 		t.Errorf("partition 0 must NOT be halted on a successful handle; halted=%v", halted)
 	}
 }
+
+// Invariant (#7 precision) — a REAL terminal/business error (NOT a cancellation)
+// that merely COINCIDES with shutdown must still be quarantined to the DLQ, not
+// silently converted to a STOP. The shutdown guard keys on the error's NATURE
+// (cancellation) precisely so fail-closed survives shutdown overlap. With no
+// Classifier, a plain terminal error routes to the DLQ even though ctx is
+// cancelled. Broadening the guard back to "any error during shutdown" makes this
+// test fail (the record stops + re-delivers instead of quarantining) — the teeth.
+func TestInvariant_TerminalErrorDuringShutdownStillDLQs(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // shutdown overlaps, but the handler error is NOT a cancellation.
+
+	handler := &fakeHandler{fn: func(_ context.Context, _ cloudevents.Event, _ []byte) error {
+		return errors.New("account not found") // a real terminal/business error
+	}}
+
+	client := newFakeGroupClient()
+	dlq := &fakeDLQ{}
+	r := newTestRuntime(t, client, handler, dlq)
+
+	halted := r.processFetches(ctx, fetchOf("t", 0, rec("t", 0, 9, ceHeaders("tenantA", false))))
+
+	if dlq.count() != 1 {
+		t.Errorf("DLQ count = %d; want 1 (a real terminal error must quarantine even during shutdown)", dlq.count())
+	}
+
+	// DLQ commits the source offset (rec.Offset+1) after the quarantine copy is durable.
+	if wm := client.committedWatermarks()[topicPartition{"t", 0}]; wm != 10 {
+		t.Errorf("committed watermark = %d; want 10 (DLQ commits rec.Offset+1)", wm)
+	}
+
+	if _, ok := halted[topicPartition{"t", 0}]; ok {
+		t.Errorf("partition 0 must NOT be halted on a DLQ verdict; halted=%v", halted)
+	}
+}
