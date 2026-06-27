@@ -7,6 +7,7 @@ import (
 
 	"github.com/LerianStudio/lib-observability/log"
 	"github.com/LerianStudio/lib-streaming/internal/contract"
+	"github.com/LerianStudio/lib-streaming/internal/dlqheader"
 	"github.com/LerianStudio/lib-streaming/internal/transport"
 )
 
@@ -109,12 +110,12 @@ func (p *Producer) publishRouteDLQ(
 
 	headers := buildTransportHeaders(ctx, event)
 	headers = append(headers,
-		transport.Header{Key: dlqHeaderSourceTopic, Value: []byte(sourceLabel)},
-		transport.Header{Key: dlqHeaderErrorClass, Value: []byte(cls)},
-		transport.Header{Key: dlqHeaderErrorMessage, Value: []byte(causeMessage)},
-		transport.Header{Key: dlqHeaderRetryCount, Value: []byte(strconv.Itoa(extractRetryCount(cause)))},
-		transport.Header{Key: dlqHeaderFirstFailureAt, Value: []byte(firstAttempt.UTC().Format(time.RFC3339Nano))},
-		transport.Header{Key: dlqHeaderProducerID, Value: []byte(p.producerID)},
+		transport.Header{Key: dlqheader.SourceTopic, Value: []byte(sourceLabel)},
+		transport.Header{Key: dlqheader.ErrorClass, Value: []byte(cls)},
+		transport.Header{Key: dlqheader.ErrorMessage, Value: []byte(causeMessage)},
+		transport.Header{Key: dlqheader.RetryCount, Value: []byte(strconv.Itoa(extractRetryCount(cause)))},
+		transport.Header{Key: dlqheader.FirstFailureAt, Value: []byte(firstAttempt.UTC().Format(time.RFC3339Nano))},
+		transport.Header{Key: dlqheader.ProducerID, Value: []byte(p.producerID)},
 	)
 
 	partKey := event.PartitionKey()
