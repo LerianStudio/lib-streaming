@@ -472,10 +472,13 @@ func (c *consumerRuntime) handleWithRetry(ctx context.Context, rec *kgo.Record, 
 	for attempt := 0; ; attempt++ {
 		err := c.dispatch(ctx, rec, ev)
 
-		// Shutdown landing mid-Handle: if Run's ctx is cancelled, a handler that
-		// honors it returns a cancellation error. That is shutdown, not poison —
-		// stop and let the record re-deliver on restart, never DLQ it.
-		if ctx.Err() != nil {
+		// Shutdown landing mid-Handle: if Run's ctx is cancelled AND the handler
+		// returned an error (a cancel-honoring handler does), that error is
+		// shutdown-induced, not poison — stop and let the record re-deliver on
+		// restart, never DLQ it. Gate on err != nil so a handler that already
+		// SUCCEEDED still commits: an unconditional check would skip the commit for
+		// an already-processed record and force a needless duplicate on restart.
+		if err != nil && ctx.Err() != nil {
 			return dispositionStop, attempt
 		}
 

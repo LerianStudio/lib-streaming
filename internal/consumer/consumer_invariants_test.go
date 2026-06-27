@@ -540,3 +540,40 @@ func TestInvariant_ShutdownMidHandleNeverDLQ(t *testing.T) {
 		t.Errorf("partition 0 must be halted on the shutdown stop; halted=%v", halted)
 	}
 }
+
+// Invariant (#7 refinement) — a handler that already SUCCEEDED (returns nil) when
+// shutdown lands must still COMMIT, not be turned into a STOP. The shutdown guard
+// is gated on err != nil precisely so a late ctx-cancellation does not skip the
+// commit for an already-processed record (which would force a needless duplicate
+// re-delivery on restart). Reverting the guard to an unconditional ctx.Err()
+// check makes this test fail (the committed watermark drops to 0) — the teeth.
+func TestInvariant_SuccessfulHandleDuringShutdownStillCommits(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Run's ctx is already cancelled, but the handler succeeds anyway.
+
+	handler := &fakeHandler{fn: func(_ context.Context, _ cloudevents.Event, _ []byte) error {
+		return nil // handler finished successfully despite the cancellation
+	}}
+
+	client := newFakeGroupClient()
+	dlq := &fakeDLQ{}
+	r := newTestRuntime(t, client, handler, dlq)
+
+	halted := r.processFetches(ctx, fetchOf("t", 0, rec("t", 0, 9, ceHeaders("tenantA", false))))
+
+	// A successful handle commits its watermark (rec.Offset+1) even though ctx is
+	// cancelled — the record was processed, so it must not be re-delivered.
+	if wm := client.committedWatermarks()[topicPartition{"t", 0}]; wm != 10 {
+		t.Errorf("committed watermark = %d; want 10 (a successful handle commits even during shutdown)", wm)
+	}
+
+	if dlq.count() != 0 {
+		t.Errorf("DLQ count = %d; want 0 (a successful handle never DLQs)", dlq.count())
+	}
+
+	if _, ok := halted[topicPartition{"t", 0}]; ok {
+		t.Errorf("partition 0 must NOT be halted on a successful handle; halted=%v", halted)
+	}
+}

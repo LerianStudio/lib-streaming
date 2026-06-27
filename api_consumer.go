@@ -15,7 +15,8 @@ import (
 )
 
 // Handler is the only interface a consuming service implements. The library
-// owns commit, retry, seek-back, DLQ, tenant scoping, and rebalance safety.
+// owns commit, retry, seek-back, DLQ, tenant propagation, and rebalance safety;
+// tenant filtering/enforcement is the handler's own responsibility (see below).
 //
 //	type myHandler struct{}
 //	func (myHandler) Handle(ctx context.Context, ev streaming.Event, payload []byte) error {

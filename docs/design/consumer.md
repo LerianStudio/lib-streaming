@@ -25,8 +25,8 @@ type Handler interface {
 (empty when `ce-tenantid` is absent — a valid single-tenant scope; see §7b).
 `payload` is the raw record value.
 Returning `nil` = success. A non-nil error feeds the retry/DLQ state machine.
-The library owns commit, retry, seek-back, DLQ, tenant scoping, and rebalance
-safety.
+The library owns commit, retry, seek-back, DLQ, tenant propagation, and rebalance
+safety; tenant filtering/enforcement is the handler's own responsibility (§7b).
 
 Construction (functional-options + Builder, matching the producer):
 
