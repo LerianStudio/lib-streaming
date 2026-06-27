@@ -1,6 +1,6 @@
 # Design Contract — Hardened At-Least-Once Kafka Consumer
 
-Status: CONTRACT (skeletons compile; no runtime logic yet)
+Status: SHIPPED (runtime implemented, unit + kfake integration tests green)
 Scope: reverse lib-streaming from producer-only to producer + consumer.
 Module: `github.com/LerianStudio/lib-streaming` (own module, Go 1.26.3).
 
@@ -511,33 +511,22 @@ exactly where the physical infra boundary already lives.
 
 ---
 
-## 8. kafkasec extraction plan (WAVE 2 — not done here)
+## 8. kafkasec extraction (SHIPPED)
 
-The producer's TLS/SASL plumbing — `validateTLSConfig`,
-`cloneTLSConfigWithDefaults`, and the SASL-requires-TLS gate — lives
-package-private in `internal/producer/producer_kgo.go:119-252`. The consumer
-needs the **identical** validation (same `ErrInvalidTLSConfig` /
-`ErrPlaintextSASLNotAllowed` semantics, same cipher allowlist).
+The producer's TLS/SASL plumbing — `ValidateTLSConfig`,
+`CloneTLSConfigWithDefaults`, and the SASL-requires-TLS gate — now lives in the
+shared `internal/kafkasec` package, used by **both** producer and consumer so
+they enforce one identical broker-dial security policy with no second copy to
+drift. `internal/producer/producer_kgo.go` and `internal/consumer` both call it;
+`ConsumerConfig.Validate` invokes `kafkasec.ValidateTLSConfig` and
+`kafkasec.SASLRequiresTLS`. This was a **pure move** (no behavior change).
 
-Plan: extract those helpers into a new shared `internal/kafkasec` package used by
-**both** producer and consumer. `internal/producer` re-exports or calls them;
-`internal/consumer/kgo_client.go` calls them when assembling `kgo.Opt`. This is a
-**pure move** (no behavior change) and is sequenced as wave 2 to keep this
-contract wave free of producer-file edits. Until then, `ConsumerConfig` holds
-`tlsConfig`/`saslMechanism`/`allowPlaintextSASL` and `Build` will call the shared
-validators once they exist. **Do not duplicate** the validation in the consumer
-package — that would create two drifting copies of a security gate.
-
-**Same wave, same rule for the DLQ header constants.** The producer's six
-`x-lerian-dlq-*` constants (`internal/producer/dlq_helpers.go:13-20`) plus the
-two consumer-specific ones (`x-lerian-dlq-source-partition`,
-`x-lerian-dlq-source-offset`) move into a shared package (alongside `kafkasec`,
-or a sibling `internal/dlqheaders`) so producer and consumer reference ONE
-definition (§6). This is a wave-2 pure move; **do not extract now**. The consumer
-package cannot import the producer-private constants, so for this compiling
-skeleton the `dlqPublisher` body stays `TODO(impl)` and names the constants in a
-comment rather than referencing them. Duplicating the six names in the consumer
-package now would re-create exactly the divergence Finding 2 caught.
+**Same for the DLQ header constants.** The six shared `x-lerian-dlq-*` constants
+plus the two consumer-specific ones (`x-lerian-dlq-source-partition`,
+`x-lerian-dlq-source-offset`) now live in the shared `internal/dlqheader`
+package, referenced by ONE definition (§6). The `transportDLQPublisher` body
+(`internal/consumer/port.go`) is implemented against them — no duplicate
+constants, no divergence.
 
 ---
 

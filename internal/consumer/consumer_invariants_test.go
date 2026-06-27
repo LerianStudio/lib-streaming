@@ -378,7 +378,9 @@ func TestInvariant_G_FetchErrorDrain(t *testing.T) {
 			t.Fatal("Run did not stop on ErrClientClosed")
 		}
 
-		// No records, no AllowRebalance for a pure shutdown poll (we return before it).
+		// No records dispatched on a pure shutdown poll. AllowRebalance still
+		// fires (deferred per cycle, before the stop check — the Wave-3 deadlock
+		// fix asserted by TestRegression_AllowRebalancePairsWithStopPathPoll).
 		if handler.callCount() != 0 {
 			t.Errorf("handler called %d times; want 0", handler.callCount())
 		}

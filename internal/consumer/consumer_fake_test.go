@@ -204,9 +204,10 @@ func (f *fakeGroupClient) committedWatermarks() map[topicPartition]int64 {
 type fakeDLQ struct {
 	mu sync.Mutex
 
-	calls    []*kgo.Record
-	failNext bool
-	failErr  error
+	calls      []*kgo.Record
+	failNext   bool
+	failErr    error
+	closeCalls int
 }
 
 func (d *fakeDLQ) PublishDLQ(_ context.Context, rec *kgo.Record, _ error, _ int) error {
@@ -226,11 +227,27 @@ func (d *fakeDLQ) PublishDLQ(_ context.Context, rec *kgo.Record, _ error, _ int)
 	return nil
 }
 
+func (d *fakeDLQ) Close(_ context.Context) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	d.closeCalls++
+
+	return nil
+}
+
 func (d *fakeDLQ) count() int {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
 	return len(d.calls)
+}
+
+func (d *fakeDLQ) closeCount() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	return d.closeCalls
 }
 
 // fakeHandler dispatches each record to a per-call function keyed by the record

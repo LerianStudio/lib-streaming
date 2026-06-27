@@ -117,8 +117,40 @@ const (
 	defaultRetryInLoopMaxDwell = 1 * time.Second
 	defaultHaltBackoff         = 250 * time.Millisecond
 	defaultCloseTimeout        = 30 * time.Second
-	defaultDLQTopicSuffix      = ".dlq"
+	// DefaultDLQTopicSuffix is the suffix appended to a source topic to derive its
+	// DLQ topic when the caller omits one. Exported so the root builder
+	// (NewConsumer) applies the identical default on the programmatic path that
+	// LoadConsumerConfig applies on the env path — a blank suffix would derive
+	// <topic><""> == the source topic and loop a terminal record forever.
+	DefaultDLQTopicSuffix = ".dlq"
+
+	// maxSafeRetryInLoopDwell caps RetryInLoopMaxDwell. The member holds
+	// BlockRebalanceOnPoll for the life of the batch (config.go:1944-1953 warns this
+	// exact mode), so the aggregate in-loop dwell must stay comfortably below the
+	// group session timeout or the member is evicted mid-retry. ConsumerConfig has
+	// no session-timeout field, so we bound against a conservative ceiling well
+	// under franz-go's ~45s default session timeout. Sustained transients are meant
+	// to fall through to the CROSS-POLL HaltBackoff path (group unblocked), not to
+	// dwell longer in-loop.
+	maxSafeRetryInLoopDwell = 30 * time.Second
 )
+
+// DefaultBuilderConfig returns an ENABLED ConsumerConfig with every non-required
+// numeric/duration field set to the same default LoadConsumerConfig applies. The
+// root builder (NewConsumer) seeds it so a minimal fluent build passes Validate;
+// Brokers/Group/Topics/Handler remain the caller's responsibility.
+func DefaultBuilderConfig() ConsumerConfig {
+	return ConsumerConfig{
+		Enabled:             true,
+		RetryBudget:         defaultRetryBudget,
+		RetryBackoffInitial: defaultRetryBackoffInitial,
+		RetryBackoffMax:     defaultRetryBackoffMax,
+		RetryInLoopMaxDwell: defaultRetryInLoopMaxDwell,
+		HaltBackoff:         defaultHaltBackoff,
+		CloseTimeout:        defaultCloseTimeout,
+		DLQTopicSuffix:      DefaultDLQTopicSuffix,
+	}
+}
 
 // LoadConsumerConfig reads every STREAMING_CONSUMER_* environment variable,
 // applies defaults, and validates the result when Enabled=true.
@@ -144,7 +176,14 @@ func LoadConsumerConfig() (ConsumerConfig, []string, error) {
 		HaltBackoff:         getenvMsOrDefault("STREAMING_CONSUMER_HALT_BACKOFF_MS", defaultHaltBackoff),
 		PollTimeout:         getenvMsOrDefault("STREAMING_CONSUMER_POLL_TIMEOUT_MS", 0),
 		CloseTimeout:        getenvSecOrDefault("STREAMING_CONSUMER_CLOSE_TIMEOUT_S", defaultCloseTimeout),
-		DLQTopicSuffix:      commons.GetenvOrDefault("STREAMING_CONSUMER_DLQ_SUFFIX", defaultDLQTopicSuffix),
+		DLQTopicSuffix:      commons.GetenvOrDefault("STREAMING_CONSUMER_DLQ_SUFFIX", DefaultDLQTopicSuffix),
+	}
+
+	// GetenvOrDefault only substitutes the default when the var is UNSET; an env
+	// var explicitly set to "" slips through as a blank suffix. Re-apply the
+	// default so <topic><suffix> never collides with the source topic.
+	if cfg.DLQTopicSuffix == "" {
+		cfg.DLQTopicSuffix = DefaultDLQTopicSuffix
 	}
 
 	if !cfg.Enabled {
@@ -196,6 +235,13 @@ func (c ConsumerConfig) Validate() error {
 		}
 	}
 
+	// Bound the aggregate in-loop dwell below the group rebalance/session window:
+	// it holds BlockRebalanceOnPoll for the batch, so an over-long dwell gets the
+	// member evicted mid-retry. See maxSafeRetryInLoopDwell.
+	if c.RetryInLoopMaxDwell > maxSafeRetryInLoopDwell {
+		return fmt.Errorf("%w: RetryInLoopMaxDwell=%s exceeds the safe ceiling %s (holds BlockRebalanceOnPoll; would risk rebalance-timeout eviction mid-retry)", ErrInvalidConfigField, c.RetryInLoopMaxDwell, maxSafeRetryInLoopDwell)
+	}
+
 	// HaltBackoff and PollTimeout may be zero (zero PollTimeout = block; zero
 	// HaltBackoff = re-poll immediately), but never negative.
 	if c.HaltBackoff < 0 {
@@ -204,6 +250,15 @@ func (c ConsumerConfig) Validate() error {
 
 	if c.PollTimeout < 0 {
 		return fmt.Errorf("%w: PollTimeout=%s (must be >= 0)", ErrInvalidConfigField, c.PollTimeout)
+	}
+
+	// A whitespace-only suffix trims to empty -> <topic><suffix> collides with the
+	// source topic and a terminal record loops back into the SUBSCRIBED stream
+	// instead of quarantining. An EMPTY suffix is defaulted to DefaultDLQTopicSuffix
+	// upstream (NewConsumer / LoadConsumerConfig); a non-empty-but-blank one is a
+	// caller mistake we reject rather than silently default over.
+	if c.DLQTopicSuffix != "" && strings.TrimSpace(c.DLQTopicSuffix) == "" {
+		return fmt.Errorf("%w: DLQTopicSuffix is whitespace-only (would collide with the source topic)", ErrInvalidConfigField)
 	}
 
 	// Transport-security gate (shared with the producer via internal/kafkasec):

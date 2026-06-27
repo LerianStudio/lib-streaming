@@ -90,8 +90,35 @@ type ConsumerBuilder struct {
 	opts       []ConsumerOption
 }
 
-// NewConsumer returns an empty ConsumerBuilder.
-func NewConsumer() *ConsumerBuilder { return &ConsumerBuilder{} }
+// NewConsumer returns a ConsumerBuilder defaulted to ENABLED — an explicitly
+// fluent-built consumer is meant to run (mirrors the producer default at
+// api.go:771). Config-driven callers that gate on a deployment flag use
+// .Enabled(cfg.Flag); the env path (LoadConsumerConfig) keeps its own
+// STREAMING_CONSUMER_ENABLED kill switch.
+func NewConsumer() *ConsumerBuilder {
+	// Seed the same defaults LoadConsumerConfig applies so a minimal fluent build
+	// (Brokers/Group/Topics/Handler only) passes Validate and runs. Without these,
+	// the zero-value backoff/dwell/timeout fields would fail validation and the
+	// default-enabled builder would be unusable. The DLQ suffix default also
+	// prevents <topic><""> == the source topic (a terminal record would loop
+	// forever instead of quarantining).
+	b := &ConsumerBuilder{cfg: consumer.DefaultBuilderConfig()}
+
+	return b
+}
+
+// Enabled gates whether Build yields a real runtime (true) or the disabled-mode
+// no-op (false). Defaults to true via NewConsumer; pass .Enabled(cfg.Flag) to
+// drive it from config.
+func (b *ConsumerBuilder) Enabled(v bool) *ConsumerBuilder {
+	if b == nil {
+		return b
+	}
+
+	b.cfg.Enabled = v
+
+	return b
+}
 
 // Brokers sets the bootstrap broker list.
 func (b *ConsumerBuilder) Brokers(brokers ...string) *ConsumerBuilder {

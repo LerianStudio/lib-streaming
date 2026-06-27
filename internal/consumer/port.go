@@ -108,6 +108,10 @@ type dlqPublisher interface {
 	// record is acknowledged, so the source offset is committed strictly
 	// after the quarantine copy is durable.
 	PublishDLQ(ctx context.Context, rec *kgo.Record, cause error, retryCount int) error
+	// Close flushes and shuts the underlying publisher (its own produce-side
+	// client). The runtime calls it from consumerRuntime.Close so the DLQ client
+	// and any buffered quarantine writes are not leaked/stranded. Idempotent.
+	Close(ctx context.Context) error
 }
 
 // transportDLQPublisher is the PRODUCTION dlqPublisher. It republishes poison
@@ -176,9 +180,22 @@ func (p *transportDLQPublisher) PublishDLQ(ctx context.Context, rec *kgo.Record,
 			Kind: contract.TransportKafkaLike,
 			Name: rec.Topic + p.suffix,
 		},
-		Payload: rec.Value, // payload-verbatim
+		Key:     string(rec.Key), // preserve the original key: verbatim republish + stable DLQ partitioning for replay
+		Payload: rec.Value,       // payload-verbatim
 		Headers: headers,
 	}
 
 	return p.adapter.Publish(ctx, transport.CloneMessage(message))
+}
+
+// Close flushes and shuts the DLQ adapter's produce-side client. Idempotent and
+// nil-safe: a publisher with no adapter (defensive) is a no-op. consumerRuntime.
+// Close calls this alongside the consume-client close so the second franz-go
+// client Build created for DLQ publishing is not leaked.
+func (p *transportDLQPublisher) Close(ctx context.Context) error {
+	if p == nil || transport.IsNilInterface(p.adapter) {
+		return nil
+	}
+
+	return p.adapter.Close(ctx)
 }

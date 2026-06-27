@@ -3,9 +3,16 @@
 package kafkasec
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"errors"
+	"math/big"
 	"testing"
+	"time"
 
 	"github.com/LerianStudio/lib-streaming/internal/contract"
 )
@@ -126,4 +133,60 @@ func TestCloneTLSConfigWithDefaults_DefaultsAndDeepCopy(t *testing.T) {
 	if cloned.CipherSuites[0] != approved {
 		t.Errorf("after caller mutation, clone CipherSuites[0] = %#x; want %#x", cloned.CipherSuites[0], approved)
 	}
+}
+
+// TestCloneTLSConfigWithDefaults_ClonesCAPools proves RootCAs/ClientCAs are
+// cloned, not aliased (finding #7): a caller adding a trust root to its own pool
+// after passing cfg must not retroactively widen who the stored config trusts.
+func TestCloneTLSConfigWithDefaults_ClonesCAPools(t *testing.T) {
+	t.Parallel()
+
+	rootCAs := x509.NewCertPool()
+	clientCAs := x509.NewCertPool()
+	caller := &tls.Config{RootCAs: rootCAs, ClientCAs: clientCAs}
+
+	cloned := CloneTLSConfigWithDefaults(caller)
+
+	if cloned.RootCAs == caller.RootCAs {
+		t.Error("RootCAs aliased between caller and clone; want a distinct cloned pool")
+	}
+
+	if cloned.ClientCAs == caller.ClientCAs {
+		t.Error("ClientCAs aliased between caller and clone; want a distinct cloned pool")
+	}
+
+	// Mutating the caller's pool must not alter the clone's trust set.
+	caller.RootCAs.AddCert(selfSignedCert(t))
+	if caller.RootCAs.Equal(cloned.RootCAs) {
+		t.Error("after caller added a cert, clone RootCAs equals caller's; the pool was aliased")
+	}
+}
+
+// selfSignedCert mints a throwaway self-signed certificate for pool-mutation tests.
+func selfSignedCert(t *testing.T) *x509.Certificate {
+	t.Helper()
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "kafkasec-test"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+	}
+
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("CreateCertificate: %v", err)
+	}
+
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatalf("ParseCertificate: %v", err)
+	}
+
+	return cert
 }

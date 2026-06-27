@@ -1,7 +1,10 @@
-// Package streaming provides a producer-only library for publishing Lerian
-// domain events as CloudEvents 1.0 binary-mode messages, with multi-transport
-// routing across Kafka, SQS, RabbitMQ, and EventBridge, per-target circuit
-// breakers, route-aware outbox fallback, and per-topic DLQ.
+// Package streaming publishes and consumes Lerian domain events as CloudEvents
+// 1.0 binary-mode messages. The producer side routes across Kafka, SQS,
+// RabbitMQ, and EventBridge with per-target circuit breakers, route-aware
+// outbox fallback, and per-topic DLQ. The consumer side (streaming.NewConsumer
+// / streaming.Consumer / streaming.Handler) is a hardened at-least-once Kafka
+// group consumer that owns commit, retry, seek-back, DLQ, tenant scoping, and
+// rebalance safety behind a single Handler method.
 //
 // # Scope
 //

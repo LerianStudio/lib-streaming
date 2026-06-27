@@ -28,17 +28,18 @@ var approvedTLS12CipherSuites = map[uint16]struct{}{
 	tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256:   {},
 }
 
-// CloneTLSConfigWithDefaults returns a defensive deep copy of cfg with
-// MinVersion defaulted to TLS 1.2 when unset.
+// CloneTLSConfigWithDefaults clones cfg (struct + the security-critical mutable
+// slices + the CA pools), defaults MinVersion to TLS 1.2 when unset, and returns
+// the result. It does NOT deep-copy Certificates or NameToCertificate: those are
+// the caller's cert chains (often rotated through a wrapper), so callers must not
+// mutate them after passing cfg in.
 //
-// tls.Config.Clone is documented as a shallow copy: the caller can still
-// mutate CipherSuites, CurvePreferences, NextProtos, or RootCAs after we
-// have stored the "clone" and weaken the broker dial policy retroactively.
-// We re-allocate the security-critical mutable slices here so that,
-// post-construction, no caller-reachable handle aliases the stored config's
-// policy fields. (Cert chains and *x509.CertPool are internally pooled by
-// crypto/tls; we leave those as the shallow Clone returned them — replacing
-// them would break legitimate callers that rotate certs through a wrapper.)
+// tls.Config.Clone is documented as a shallow copy: the caller can still mutate
+// CipherSuites, CurvePreferences, NextProtos, RootCAs, or ClientCAs after we have
+// stored the "clone" and weaken the broker dial policy retroactively. We
+// re-allocate the policy slices and clone the CA pools (cheap (*x509.CertPool).
+// Clone) here so that, post-construction, no caller-reachable handle aliases the
+// stored config's policy fields.
 func CloneTLSConfigWithDefaults(cfg *tls.Config) *tls.Config {
 	if cfg == nil {
 		return nil
@@ -52,6 +53,17 @@ func CloneTLSConfigWithDefaults(cfg *tls.Config) *tls.Config {
 	cloned.CipherSuites = cloneUint16Slice(cloned.CipherSuites)
 	cloned.CurvePreferences = cloneCurveIDSlice(cloned.CurvePreferences)
 	cloned.NextProtos = cloneStringSlice(cloned.NextProtos)
+
+	// Clone the CA pools so a caller mutating its RootCAs/ClientCAs after passing
+	// cfg cannot retroactively alter who the stored config trusts. Certificates /
+	// NameToCertificate are deliberately left aliased (see docstring).
+	if cloned.RootCAs != nil {
+		cloned.RootCAs = cloned.RootCAs.Clone()
+	}
+
+	if cloned.ClientCAs != nil {
+		cloned.ClientCAs = cloned.ClientCAs.Clone()
+	}
 
 	return cloned
 }

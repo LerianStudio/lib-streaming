@@ -186,6 +186,14 @@ func Build(ctx context.Context, cfg ConsumerConfig, handler Handler, opts ...Opt
 		return NewNoop(), nil
 	}
 
+	// Normalize a blank suffix to the safe default before validation/wiring so a
+	// directly-constructed ConsumerConfig (not via NewConsumer/LoadConsumerConfig)
+	// never derives <topic><""> == the source topic. A whitespace-only suffix is
+	// rejected by Validate below.
+	if cfg.DLQTopicSuffix == "" {
+		cfg.DLQTopicSuffix = DefaultDLQTopicSuffix
+	}
+
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
@@ -316,7 +324,10 @@ func (c *consumerRuntime) pollCycle(ctx context.Context) (stop bool, halted map[
 	}
 
 	halted = c.processFetches(ctx, fetches)
-	c.lastPollOK.Store(true)
+	// A fetch-error cycle (auth / data-loss / other non-shutdown error) must leave
+	// Healthy() reporting NOT-ok — the group is not cleanly fetching. A clean cycle
+	// marks the consumer healthy.
+	c.lastPollOK.Store(!fetchErr)
 
 	// Req 6: a non-shutdown fetch error must not hot-spin the poll loop.
 	if fetchErr {
@@ -614,9 +625,34 @@ func (c *consumerRuntime) Close() error {
 		c.closed.Store(true)
 		close(c.stop)
 		c.client.Close()
+
+		// Close the DLQ publisher's own produce-side client so it (and any buffered
+		// quarantine writes) is flushed and released, not leaked. Bounded by
+		// CloseTimeout so a wedged DLQ broker cannot hang shutdown. Best-effort:
+		// the close error is not actionable once the loop is already stopping.
+		if !transport.IsNilInterface(c.dlq) {
+			ctx, cancel := context.WithTimeout(context.Background(), c.dlqCloseTimeout())
+			defer cancel()
+
+			if err := c.dlq.Close(ctx); err != nil {
+				c.logger.Log(ctx, log.LevelError, "streaming consumer: DLQ publisher close failed",
+					log.Err(sanitize(err)),
+				)
+			}
+		}
 	})
 
 	return nil
+}
+
+// dlqCloseTimeout returns the bound applied to the DLQ publisher flush+close on
+// shutdown, falling back to a conservative default when CloseTimeout is unset.
+func (c *consumerRuntime) dlqCloseTimeout() time.Duration {
+	if c.cfg.CloseTimeout > 0 {
+		return c.cfg.CloseTimeout
+	}
+
+	return defaultCloseTimeout
 }
 
 // Healthy reports consumer readiness: not closed, and the poll loop has
