@@ -43,6 +43,7 @@ import (
 	libPostgres "github.com/LerianStudio/lib-commons/v5/commons/postgres"
 	"github.com/LerianStudio/lib-observability/log"
 	"github.com/LerianStudio/lib-streaming/internal/contract"
+	"github.com/LerianStudio/lib-streaming/internal/dlqheader"
 )
 
 // redpandaImage pins the Redpanda container image. Pinning the tag (not
@@ -632,14 +633,14 @@ func TestIntegration_DLQRouting(t *testing.T) {
 
 	// Six x-lerian-dlq-* headers all present. Tenant identity is in
 	// ce-tenantid (CloudEvents), not in a DLQ-specific header.
-	assert.Equal(t, sourceTopic, hdrs[dlqHeaderSourceTopic], "dlq source-topic")
-	assert.NotEmpty(t, hdrs[dlqHeaderErrorClass], "dlq error-class")
-	assert.Truef(t, isDLQRoutable(ErrorClass(hdrs[dlqHeaderErrorClass])),
-		"dlq error-class %q should be DLQ-routable", hdrs[dlqHeaderErrorClass])
-	assert.NotEmpty(t, hdrs[dlqHeaderErrorMessage], "dlq error-message")
-	assert.NotEmpty(t, hdrs[dlqHeaderRetryCount], "dlq retry-count") // "0" is the best-effort value (franz-go has no public retry-count accessor)
-	assert.NotEmpty(t, hdrs[dlqHeaderFirstFailureAt], "dlq first-failure-at")
-	assert.NotEmpty(t, hdrs[dlqHeaderProducerID], "dlq producer-id")
+	assert.Equal(t, sourceTopic, hdrs[dlqheader.SourceTopic], "dlq source-topic")
+	assert.NotEmpty(t, hdrs[dlqheader.ErrorClass], "dlq error-class")
+	assert.Truef(t, isDLQRoutable(ErrorClass(hdrs[dlqheader.ErrorClass])),
+		"dlq error-class %q should be DLQ-routable", hdrs[dlqheader.ErrorClass])
+	assert.NotEmpty(t, hdrs[dlqheader.ErrorMessage], "dlq error-message")
+	assert.NotEmpty(t, hdrs[dlqheader.RetryCount], "dlq retry-count") // "0" is the best-effort value (franz-go has no public retry-count accessor)
+	assert.NotEmpty(t, hdrs[dlqheader.FirstFailureAt], "dlq first-failure-at")
+	assert.NotEmpty(t, hdrs[dlqheader.ProducerID], "dlq producer-id")
 
 	// Thirteen ce-* headers preserved verbatim. We assert on the required
 	// subset (spec, id, source, type, time, resourcetype, eventtype,

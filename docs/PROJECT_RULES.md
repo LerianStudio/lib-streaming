@@ -4,7 +4,7 @@ Architectural constraints and design decisions for the `lib-streaming` codebase.
 
 ## 1. Architecture
 
-- `lib-streaming` is a producer-only Go library, not a service and not a stream consumer.
+- `lib-streaming` is an event-streaming Go library — an event producer (`streaming.NewBuilder()`) and an at-least-once stream consumer (`streaming.NewConsumer()`) — not a service.
 - The root package (`package streaming`) is the public facade. It owns constructors, public aliases, option wrappers, manifest helpers, producer wrapper methods, error sentinels, and package documentation.
 - Implementation details live under `internal/` and must not be imported by downstream services.
 - Public test support lives in `streamingtest`; test-only helpers must not leak into the production root package.
@@ -34,7 +34,7 @@ Architectural constraints and design decisions for the `lib-streaming` codebase.
 
 - `Emitter` is exactly the three-method interface: `Emit(ctx, EmitRequest) error`, `Close() error`, and `Healthy(ctx) error`.
 - The only supported emitter implementations are root `*Producer`, `NoopEmitter`, and `streamingtest.MockEmitter`.
-- `streaming.NewBuilder()` is the single public construction entry point. Disabled-feature-flag environments use `streaming.NewNoopEmitter()` instead of constructing a Builder.
+- `streaming.NewBuilder()` is the public producer construction entry point and `streaming.NewConsumer()` the consumer construction entry point. Disabled-feature-flag environments use `streaming.NewNoopEmitter()` (producer) or `streaming.NewConsumer().Enabled(false)` (consumer) instead of constructing a live one.
 - The Builder requires a non-empty `Source(...)` (CloudEvents `ce-source`), a non-empty `Catalog(...)`, a non-empty `Routes(...)` table, and at least one `Target(...)`. Build returns a distinct sentinel error when any of these are missing — there are no inferred defaults.
 - The Builder exposes per-target circuit-breaker tuning through `CBFailureRatio`, `CBMinRequests`, and `CBTimeout` setters. Zero values fall back to lib-commons HTTP presets (`0.5`, `10`, `30s`). `CBTimeout` also drives the CB recovery loop's tick interval (`clamped(cbTimeout/4, [500ms, 5s])`).
 - Passing nil factories/managers for optional observability and circuit-breaker dependencies must degrade safely to documented fallbacks.

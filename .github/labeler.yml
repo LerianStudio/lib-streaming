@@ -2,6 +2,12 @@
 #
 # Labels are aligned with the pr_title_scopes in pr-validation.yml.
 
+consumer:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'api_consumer*.go'
+          - 'internal/consumer/**/*'
+
 producer:
   - changed-files:
       - any-glob-to-any-file:

@@ -1,23 +1,8 @@
 package producer
 
-// DLQ header keys (TRD §C8). Every DLQ message carries all six; none are
-// optional. Keeping them colocated here (not in cloudevents.go) because they
-// are NOT CloudEvents context attributes — they are Lerian-specific
-// operational metadata that sits alongside the ce-* headers on DLQ messages.
-//
-// Tenant identity is carried exclusively in the CloudEvents ce-tenantid
-// header (set by buildCloudEventsHeaders). There is no x-lerian-dlq-tenant-id
-// — duplicating tenant data across header namespaces would widen the wire
-// contract beyond the documented six DLQ headers and force every consumer
-// to reconcile two sources of truth.
-const (
-	dlqHeaderSourceTopic    = "x-lerian-dlq-source-topic"
-	dlqHeaderErrorClass     = "x-lerian-dlq-error-class"
-	dlqHeaderErrorMessage   = "x-lerian-dlq-error-message"
-	dlqHeaderRetryCount     = "x-lerian-dlq-retry-count"
-	dlqHeaderFirstFailureAt = "x-lerian-dlq-first-failure-at"
-	dlqHeaderProducerID     = "x-lerian-dlq-producer-id"
-)
+// The six DLQ forensic header keys live in internal/dlqheader so the
+// consumer's DLQ publisher (later wave) reuses the exact same string values
+// — a shared wire contract, not a producer-private detail.
 
 // dlqTopicSuffix is the literal suffix appended to the source topic to
 // derive the per-topic DLQ name. Per-topic DLQ (TRD §C8) is preferred over

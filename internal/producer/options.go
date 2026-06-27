@@ -8,6 +8,7 @@ import (
 	"github.com/LerianStudio/lib-commons/v5/commons/outbox"
 	"github.com/LerianStudio/lib-observability/log"
 	"github.com/LerianStudio/lib-observability/metrics"
+	"github.com/LerianStudio/lib-streaming/internal/kafkasec"
 	"github.com/twmb/franz-go/pkg/sasl"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -220,8 +221,8 @@ func WithOutboxWriter(writer OutboxWriter) EmitterOption {
 // TLS-using consumer per the T8 scope note in docs/pre-dev/streaming/tasks.md.
 func WithTLSConfig(cfg *tls.Config) EmitterOption {
 	return func(o *emitterOptions) {
-		// Clone with defaults; validateTLSConfig runs during producer construction.
-		o.tlsConfig = cloneTLSConfigWithDefaults(cfg)
+		// Clone with defaults; kafkasec.ValidateTLSConfig runs during producer construction.
+		o.tlsConfig = kafkasec.CloneTLSConfigWithDefaults(cfg)
 	}
 }
 
