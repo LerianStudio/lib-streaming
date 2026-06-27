@@ -208,6 +208,7 @@ type fakeDLQ struct {
 	failNext   bool
 	failErr    error
 	closeCalls int
+	closeErr   error
 }
 
 func (d *fakeDLQ) PublishDLQ(_ context.Context, rec *kgo.Record, _ error, _ int) error {
@@ -233,7 +234,7 @@ func (d *fakeDLQ) Close(_ context.Context) error {
 
 	d.closeCalls++
 
-	return nil
+	return d.closeErr
 }
 
 func (d *fakeDLQ) count() int {

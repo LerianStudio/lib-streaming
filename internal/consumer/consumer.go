@@ -621,6 +621,8 @@ func (c *consumerRuntime) Close() error {
 		return nil
 	}
 
+	var closeErr error
+
 	c.closeOnce.Do(func() {
 		c.closed.Store(true)
 		close(c.stop)
@@ -628,8 +630,9 @@ func (c *consumerRuntime) Close() error {
 
 		// Close the DLQ publisher's own produce-side client so it (and any buffered
 		// quarantine writes) is flushed and released, not leaked. Bounded by
-		// CloseTimeout so a wedged DLQ broker cannot hang shutdown. Best-effort:
-		// the close error is not actionable once the loop is already stopping.
+		// CloseTimeout so a wedged DLQ broker cannot hang shutdown. A close failure
+		// can mean buffered quarantine writes were lost, so surface it (logged AND
+		// returned) instead of swallowing it on the shutdown path.
 		if !transport.IsNilInterface(c.dlq) {
 			ctx, cancel := context.WithTimeout(context.Background(), c.dlqCloseTimeout())
 			defer cancel()
@@ -638,11 +641,13 @@ func (c *consumerRuntime) Close() error {
 				c.logger.Log(ctx, log.LevelError, "streaming consumer: DLQ publisher close failed",
 					log.Err(sanitize(err)),
 				)
+
+				closeErr = fmt.Errorf("close DLQ publisher: %w", err)
 			}
 		}
 	})
 
-	return nil
+	return closeErr
 }
 
 // dlqCloseTimeout returns the bound applied to the DLQ publisher flush+close on

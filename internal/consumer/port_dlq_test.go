@@ -4,6 +4,7 @@ package consumer
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/twmb/franz-go/pkg/kgo"
@@ -91,5 +92,26 @@ func TestConsumerRuntimeClose_ClosesDLQ(t *testing.T) {
 
 	if dlq.closeCount() != 1 {
 		t.Errorf("DLQ Close called %d times after second runtime Close; want 1 (idempotent)", dlq.closeCount())
+	}
+}
+
+// TestConsumerRuntimeClose_ReturnsDLQError proves a DLQ publisher close failure
+// is surfaced from Close() (wrapped, not swallowed). A failed DLQ close can mean
+// buffered quarantine writes were lost, so the shutdown path must let callers see
+// it rather than silently returning nil.
+func TestConsumerRuntimeClose_ReturnsDLQError(t *testing.T) {
+	t.Parallel()
+
+	client := newFakeGroupClient()
+	dlq := &fakeDLQ{closeErr: contract.ErrNilProducer}
+	r := newTestRuntime(t, client, &fakeHandler{}, dlq)
+
+	err := r.Close()
+	if err == nil {
+		t.Fatal("Close returned nil; want the DLQ close failure surfaced, not swallowed")
+	}
+
+	if !errors.Is(err, contract.ErrNilProducer) {
+		t.Errorf("Close error = %v; want it to wrap the DLQ close error (%v)", err, contract.ErrNilProducer)
 	}
 }
