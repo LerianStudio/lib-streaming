@@ -208,7 +208,7 @@ func NewProducer(ctx context.Context, cfg Config, opts ...EmitterOption) (*Produ
 
 	// Auto-generate a RouteTable: one required Kafka route per catalog
 	// definition, all pointing at the synthesized "primary" target.
-	routes, err := autoGenerateKafkaRoutes(resolvedOpts.catalog)
+	routes, err := autoGenerateKafkaRoutes(resolvedOpts.catalog, cfg.CloudEventsSource)
 	if err != nil {
 		_ = adapter.Close(context.Background())
 		return nil, err
@@ -241,7 +241,11 @@ func NewProducer(ctx context.Context, cfg Config, opts ...EmitterOption) (*Produ
 // key pattern enforced by NewRouteDefinition. Definition keys themselves
 // are NOT subject to that pattern (they may carry underscores), so the
 // translation is one-way and lossless for routing purposes.
-func autoGenerateKafkaRoutes(catalog Catalog) (contract.RouteTable, error) {
+//
+// source is the producer's configured CloudEvents ce-source; it becomes the
+// service namespace segment of each derived topic (see Event.Topic), so the
+// synthesized route destinations match the topics runtime Emit publishes to.
+func autoGenerateKafkaRoutes(catalog Catalog, source string) (contract.RouteTable, error) {
 	defs := catalog.Definitions()
 	routes := make([]contract.RouteDefinition, 0, len(defs))
 
@@ -252,7 +256,7 @@ func autoGenerateKafkaRoutes(catalog Catalog) (contract.RouteTable, error) {
 			Target:        "primary",
 			Destination: contract.Destination{
 				Kind: contract.TransportKafkaLike,
-				Name: def.Topic(),
+				Name: def.Topic(source),
 			},
 			Requirement: contract.RouteRequired,
 		})

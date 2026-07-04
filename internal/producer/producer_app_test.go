@@ -351,7 +351,7 @@ func TestProducer_PostClose_Emit_RecordsCallerErrorMetric(t *testing.T) {
 	// not itself record any streaming_emitted_total data point, so the
 	// baseline is zero on a fresh meter — but we compute the delta
 	// defensively in case a future instrumentation change adds one.
-	topic := "lerian.streaming.transaction.created"
+	topic := "test.transaction.created"
 	before := callerErrorCount(t, snapshot(), topic)
 
 	err = emitter.Emit(context.Background(), sampleRequest())
@@ -377,7 +377,7 @@ func TestProducer_PostClose_Emit_NoBrokerIO(t *testing.T) {
 		t.Fatalf("New err = %v", err)
 	}
 
-	topic := "lerian.streaming.transaction.created"
+	topic := "test.transaction.created"
 
 	if err := emitter.Close(); err != nil {
 		t.Fatalf("Close err = %v", err)

@@ -31,7 +31,6 @@ const (
 	defaultCBFailureRatio        = 0.5
 	defaultCBMinRequests         = 10
 	defaultDataContentType       = "application/json"
-	topicPrefix                  = "lerian.streaming."
 	cloudEventsSpecVersion       = "1.0"
 	defaultRecordDeliveryTimeout = 30 * time.Second
 	defaultCBTimeout             = 30 * time.Second
@@ -60,4 +59,22 @@ func ParseCloudEventsHeaders(headers []kgo.RecordHeader) (Event, error) {
 // duplicate that could drift from the canonical version.
 func parseMajorVersion(version string) int {
 	return contract.ParseMajorVersion(version)
+}
+
+// sanitizeSourceSegment forwards to the canonical
+// contract.SanitizeSourceSegment so producer-package property tests
+// reconstruct the expected topic base using the SAME implementation that
+// Event.Topic() prepends at runtime. Mirrors the parseMajorVersion forwarder.
+func sanitizeSourceSegment(source string) string {
+	return contract.SanitizeSourceSegment(source)
+}
+
+// sourceTopicPrefix returns the service-namespace prefix that Event.Topic()
+// prepends for a given ce-source, i.e. "{sanitize(source)}.". Build-tagged
+// integration/chaos tests append a "<resource>.<event>" suffix to it to
+// reconstruct the exact topic the producer publishes to. This replaces the
+// former fixed "lerian.streaming." topicPrefix constant now that the topic
+// namespace is derived from the producing service's source.
+func sourceTopicPrefix(source string) string {
+	return contract.SanitizeSourceSegment(source) + "."
 }

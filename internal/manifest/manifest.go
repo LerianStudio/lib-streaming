@@ -78,7 +78,7 @@ func BuildManifest(descriptor PublisherDescriptor, catalog Catalog, routes Route
 			Key:             definition.Key,
 			ResourceType:    definition.ResourceType,
 			EventType:       definition.EventType,
-			Topic:           definition.Topic(),
+			Topic:           definition.Topic(descriptor.SourceBase),
 			SchemaVersion:   definition.SchemaVersion,
 			DataContentType: definition.DataContentType,
 			DataSchema:      definition.DataSchema,

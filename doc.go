@@ -54,7 +54,7 @@
 //	        Key:           "transaction.created.kafka.primary",
 //	        DefinitionKey: "transaction.created",
 //	        Target:        "primary",
-//	        Destination:   streaming.KafkaTopic("lerian.streaming.transaction.created"),
+//	        Destination:   streaming.KafkaTopic("midaz-ledger.transaction.created"),
 //	        Requirement:   streaming.RouteRequired,
 //	    }).
 //	    Target(streaming.TargetConfig{

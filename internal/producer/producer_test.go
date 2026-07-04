@@ -23,9 +23,9 @@ import (
 // kfakeConfig returns a Config that points at a freshly-started kfake
 // cluster. BatchLingerMs is set to 1 so ProduceSync returns fast in tests.
 //
-// The sample-event topic ("lerian.streaming.transaction.created") is
-// pre-seeded with 3 partitions so ProduceSync doesn't fail with
-// UNKNOWN_TOPIC_OR_PARTITION.
+// The sample-event topic ("test.transaction.created", derived from the
+// "//test" ce-source) is pre-seeded with 3 partitions so ProduceSync doesn't
+// fail with UNKNOWN_TOPIC_OR_PARTITION.
 //
 // The returned cluster is registered for automatic teardown via t.Cleanup.
 func kfakeConfig(t *testing.T) (Config, *kfake.Cluster) {
@@ -35,7 +35,7 @@ func kfakeConfig(t *testing.T) (Config, *kfake.Cluster) {
 		kfake.NumBrokers(1),
 		kfake.AllowAutoTopicCreation(),
 		kfake.DefaultNumPartitions(3),
-		kfake.SeedTopics(3, "lerian.streaming.transaction.created"),
+		kfake.SeedTopics(3, "test.transaction.created"),
 	)
 	if err != nil {
 		t.Fatalf("kfake.NewCluster err = %v", err)
@@ -92,7 +92,10 @@ func sampleEvent() Event {
 		ResourceType:  "transaction",
 		EventType:     "created",
 		SchemaVersion: "1.0.0",
-		Source:        "//test/service",
+		// Source matches kfakeConfig's CloudEventsSource so the derived topic
+		// (sanitize("//test")=".test" → "test.transaction.created") is what the
+		// producer actually publishes to and what the consumer reads.
+		Source: "//test",
 		Subject:       "tx-123",
 		Payload:       json.RawMessage(`{"amount":100}`),
 	}
@@ -288,7 +291,7 @@ func TestProducer_EmitPreFlight_InvalidJSON(t *testing.T) {
 
 // TestProducer_EmitPreFlight_MissingResourceType: empty ResourceType surfaces
 // ErrMissingResourceType synchronously. Guards against the degenerate
-// "lerian.streaming.." topic and malformed "studio.lerian." ce-type header
+// degenerate "{service}.." topic and malformed "studio.lerian." ce-type header
 // that a caller-blank ResourceType would produce — no consumer routes those,
 // so the emit would silently vanish at the worst possible layer.
 func TestProducer_EmitPreFlight_MissingResourceType(t *testing.T) {
