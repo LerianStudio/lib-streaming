@@ -28,8 +28,8 @@ func TestEventDefinition_New_NormalizesDefaults(t *testing.T) {
 	if definition.DefaultPolicy != DefaultDeliveryPolicy() {
 		t.Errorf("DefaultPolicy = %#v; want %#v", definition.DefaultPolicy, DefaultDeliveryPolicy())
 	}
-	if got := definition.Topic(); got != "lerian.streaming.transaction.created" {
-		t.Errorf("Topic() = %q; want %q", got, "lerian.streaming.transaction.created")
+	if got := definition.Topic("midaz-ledger"); got != "midaz-ledger.transaction.created" {
+		t.Errorf("Topic() = %q; want %q", got, "midaz-ledger.transaction.created")
 	}
 }
 
@@ -118,22 +118,22 @@ func TestEventDefinition_Topic_AppendsVersionSuffixForMajorV2Plus(t *testing.T) 
 		{
 			name:          "major 1 uses base form",
 			schemaVersion: "1.0.0",
-			want:          "lerian.streaming.payment.authorized",
+			want:          "midaz-ledger.payment.authorized",
 		},
 		{
 			name:          "major 2 appends .v2",
 			schemaVersion: "2.0.0",
-			want:          "lerian.streaming.payment.authorized.v2",
+			want:          "midaz-ledger.payment.authorized.v2",
 		},
 		{
 			name:          "major 3 appends .v3 for 3.5.7",
 			schemaVersion: "3.5.7",
-			want:          "lerian.streaming.payment.authorized.v3",
+			want:          "midaz-ledger.payment.authorized.v3",
 		},
 		{
 			name:          "major 0 uses base form for 0.9.0",
 			schemaVersion: "0.9.0",
-			want:          "lerian.streaming.payment.authorized",
+			want:          "midaz-ledger.payment.authorized",
 		},
 	}
 
@@ -151,7 +151,7 @@ func TestEventDefinition_Topic_AppendsVersionSuffixForMajorV2Plus(t *testing.T) 
 				t.Fatalf("NewEventDefinition() error = %v", err)
 			}
 
-			if got := definition.Topic(); got != tt.want {
+			if got := definition.Topic("midaz-ledger"); got != tt.want {
 				t.Errorf("Topic() = %q; want %q", got, tt.want)
 			}
 		})

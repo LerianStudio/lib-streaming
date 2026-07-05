@@ -56,13 +56,14 @@ func TestEvent_Topic_EmptySchema_DoesNotFireAssertion(t *testing.T) {
 	t.Cleanup(func() { setContractAsserterLogger(prev) })
 
 	e := Event{
+		Source:       "midaz-ledger",
 		ResourceType: "transaction",
 		EventType:    "created",
 		// SchemaVersion intentionally empty.
 	}
 
 	got := e.Topic()
-	if got != "lerian.streaming.transaction.created" {
+	if got != "midaz-ledger.transaction.created" {
 		t.Errorf("Topic() = %q; want base form for empty schema", got)
 	}
 
@@ -83,13 +84,14 @@ func TestEvent_Topic_MalformedSchema_DoesNotFireAssertion(t *testing.T) {
 	t.Cleanup(func() { setContractAsserterLogger(prev) })
 
 	e := Event{
+		Source:        "midaz-ledger",
 		ResourceType:  "transaction",
 		EventType:     "created",
 		SchemaVersion: "two-point-oh", // unparseable
 	}
 
 	got := e.Topic()
-	if got != "lerian.streaming.transaction.created" {
+	if got != "midaz-ledger.transaction.created" {
 		t.Errorf("Topic() = %q; want base form (public contract preserved on malformed schema)", got)
 	}
 
@@ -107,13 +109,14 @@ func TestEvent_Topic_MajorGTE2_DoesNotFireAssertion(t *testing.T) {
 	t.Cleanup(func() { setContractAsserterLogger(prev) })
 
 	e := Event{
+		Source:        "midaz-ledger",
 		ResourceType:  "transaction",
 		EventType:     "created",
 		SchemaVersion: "2.0.0",
 	}
 
 	got := e.Topic()
-	if got != "lerian.streaming.transaction.created.v2" {
+	if got != "midaz-ledger.transaction.created.v2" {
 		t.Errorf("Topic() = %q; want .v2 suffix", got)
 	}
 
@@ -130,13 +133,14 @@ func TestEvent_Topic_MajorLT2_DoesNotFireAssertion(t *testing.T) {
 	t.Cleanup(func() { setContractAsserterLogger(prev) })
 
 	e := Event{
+		Source:        "midaz-ledger",
 		ResourceType:  "transaction",
 		EventType:     "created",
 		SchemaVersion: "1.5.0",
 	}
 
 	got := e.Topic()
-	if got != "lerian.streaming.transaction.created" {
+	if got != "midaz-ledger.transaction.created" {
 		t.Errorf("Topic() = %q; want base form for major < 2", got)
 	}
 

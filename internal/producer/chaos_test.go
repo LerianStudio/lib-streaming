@@ -405,7 +405,7 @@ func TestChaos_BrokerLatency_CircuitOpensAndOutboxCatches(t *testing.T) {
 	// Pre-create topic to avoid UNKNOWN_TOPIC_OR_PARTITION on the first
 	// produce. Goes through the proxy (no toxic injected yet) — same path
 	// the producer will use.
-	chaosTopic := topicPrefix + "chaos.event"
+	chaosTopic := sourceTopicPrefix(chaosSource) + "chaos.event"
 	chaosEnsureTopic(t, proxiedBroker, chaosTopic)
 	chaosEnsureTopic(t, proxiedBroker, dlqTopic(chaosTopic))
 

@@ -58,7 +58,7 @@ func TestManifest_BuildManifest(t *testing.T) {
 	if manifest.Events[0].Key != "account.closed" {
 		t.Errorf("Events[0].Key = %q; want sorted key account.closed", manifest.Events[0].Key)
 	}
-	if manifest.Events[0].Topic != "lerian.streaming.account.closed" {
+	if manifest.Events[0].Topic != "lerian.midaz-transaction-service.account.closed" {
 		t.Errorf("Events[0].Topic = %q", manifest.Events[0].Topic)
 	}
 	if !manifest.Events[0].SystemEvent {

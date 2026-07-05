@@ -204,8 +204,10 @@ func TestProperty_Topic_Deterministic(t *testing.T) {
 
 		major := parseMajorVersion(event.SchemaVersion)
 
-		// Base form: "lerian.streaming.<resource>.<event>"
-		base := topicPrefix + event.ResourceType + "." + event.EventType
+		// Base form: "{sanitize(Source)}.<resource>.<event>" — the producing
+		// service (ce-source) is the topic namespace, replacing the former
+		// fixed "lerian.streaming." prefix.
+		base := sanitizeSourceSegment(event.Source) + "." + event.ResourceType + "." + event.EventType
 
 		if major >= 2 {
 			expectedSuffix := ".v" + itoa(major)
