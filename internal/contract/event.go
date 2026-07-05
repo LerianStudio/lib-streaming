@@ -91,17 +91,18 @@ const defaultSchemaVersion = "1.0.0"
 // leaves Event.DataContentType empty. Matches the CloudEvents spec default.
 const defaultDataContentType = "application/json"
 
-// topicPrefix is the namespace prefix for every Lerian streaming topic.
-// Downstream consumers rely on this prefix to route to the streaming bus.
-const topicPrefix = "lerian.streaming."
-
 // Topic returns the derived Kafka topic name for this event.
 //
-// Base form: "lerian.streaming.<ResourceType>.<EventType>".
+// Base form: "{sanitize(Source)}.<ResourceType>.<EventType>". The producing
+// service (the CloudEvents ce-source) IS the topic namespace, so downstream
+// Kafka ACLs can scope a producer to its own topics ("{service}.*"). This
+// replaces the former fixed "lerian.streaming." prefix, whose job was
+// namespacing/discovery — the service prefix now does that. See
+// sanitizeSourceSegment for the exact Source-to-segment transformation.
 //
 // When the parsed major version of SchemaVersion is >= 2, Topic appends
-// ".v<major>" — e.g. SchemaVersion="2.3.1" yields
-// "lerian.streaming.<resource>.<event>.v2". Invalid or empty semver falls
+// ".v<major>" — e.g. Source="midaz-ledger", SchemaVersion="2.3.1" yields
+// "midaz-ledger.<resource>.<event>.v2". Invalid or empty semver falls
 // through to the base form.
 //
 // Semver parsing is delegated to golang.org/x/mod/semver.Major, which is the
@@ -121,7 +122,7 @@ func (e *Event) Topic() string {
 		return ""
 	}
 
-	base := topicPrefix + e.ResourceType + "." + e.EventType
+	base := sanitizeSourceSegment(e.Source) + "." + e.ResourceType + "." + e.EventType
 
 	major := parseMajorVersion(e.SchemaVersion)
 	if major < 2 {

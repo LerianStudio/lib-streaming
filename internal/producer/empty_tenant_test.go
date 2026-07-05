@@ -37,7 +37,7 @@ func TestProducer_EmitEmptyTenant_DirectPath(t *testing.T) {
 		t.Fatalf("Emit empty tenant err = %v; want nil", err)
 	}
 
-	consumer := newConsumer(t, cluster, "lerian.streaming.transaction.created")
+	consumer := newConsumer(t, cluster, "test.transaction.created")
 	fetchCtx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 

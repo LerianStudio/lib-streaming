@@ -417,7 +417,9 @@ func TestIntegration_PartitionFIFO(t *testing.T) {
 	// Pre-create the topic with 3 partitions so the sticky-key distribution
 	// is non-trivial. auto-create would give us the broker default (often 1),
 	// which would trivially pass a FIFO check.
-	topic := "lerian.streaming.order.submitted"
+	// Derive the topic from the producer's ce-source so it matches what the
+	// service-namespaced Event.Topic() actually publishes to.
+	topic := (&Event{Source: integrationSource, ResourceType: "order", EventType: "submitted"}).Topic()
 	ensureTopics(t, brokers[0], 3, topic)
 	// DLQ created with 1 partition — not exercised here, but a stray
 	// produce failure during the test shouldn't require dynamic auto-create.
@@ -534,8 +536,10 @@ func TestIntegration_DLQRouting(t *testing.T) {
 
 	resourceType := "ledger"
 	eventType := "overflow"
-	sourceTopic := topicPrefix + resourceType + "." + eventType // lerian.streaming.ledger.overflow
-	dlqName := dlqTopic(sourceTopic)                            // ...overflow.dlq
+	// Derive the source topic from the producer's ce-source so it matches
+	// the service-namespaced Event.Topic() the producer publishes to.
+	sourceTopic := (&Event{Source: integrationSource, ResourceType: resourceType, EventType: eventType}).Topic()
+	dlqName := dlqTopic(sourceTopic) // ...overflow.dlq
 
 	// Pre-create source with a tiny max.message.bytes. franz-go's
 	// ProduceSync returns kerr.MessageTooLarge (or wraps kerr.RecordListTooLarge
@@ -805,7 +809,7 @@ CREATE TABLE IF NOT EXISTS outbox_events (
 
 	// Pre-create the source + DLQ topics so the baseline emits don't race
 	// Redpanda's controller and produce a false-positive outbox write.
-	baselineTopic := topicPrefix + "payment.authorized"
+	baselineTopic := sourceTopicPrefix(integrationSource) + "payment.authorized"
 	ensureTopics(t, brokers[0], 1, baselineTopic, dlqTopic(baselineTopic))
 
 	tenantCtx := outbox.ContextWithTenantID(ctx, "tenant-outbox-it")
@@ -1017,7 +1021,7 @@ func TestIntegration_CircuitBreaker_TripsOrganically(t *testing.T) {
 	brokers := []string{seed}
 
 	// Pre-create source + DLQ so the baseline emits don't race on metadata.
-	sourceTopic := topicPrefix + "transaction.cb_organic"
+	sourceTopic := sourceTopicPrefix(integrationSource) + "transaction.cb_organic"
 	ensureTopics(t, brokers[0], 1, sourceTopic, dlqTopic(sourceTopic))
 
 	// CB tuned to trip with minimal friction: low min-requests, low
