@@ -217,6 +217,47 @@ func TestProducer_EmitPreFlight_HeaderSanitization_AcceptsAtLimits(t *testing.T)
 	}
 }
 
+// TestProducer_EmitPreFlight_SanitizeEmptySource_Rejected asserts that a
+// non-empty Source made up entirely of separators/invalid runes (which
+// sanitizeSourceSegment folds to "") is rejected with ErrInvalidSource. Left
+// unguarded, Event.Topic() would build a leading-dot ".<resource>.<event>"
+// topic that Kafka rejects at publish time — a caller config bug should fail
+// synchronously as a caller-correctable error instead.
+func TestProducer_EmitPreFlight_SanitizeEmptySource_Rejected(t *testing.T) {
+	t.Parallel()
+
+	cfg, _ := kfakeConfig(t)
+
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
+	if err != nil {
+		t.Fatalf("New err = %v", err)
+	}
+
+	t.Cleanup(func() { _ = emitter.Close() })
+
+	p := asProducer(t, emitter)
+
+	cases := []string{"---", "!!!", "//", "://", "   "}
+	for _, src := range cases {
+		t.Run(src, func(t *testing.T) {
+			t.Parallel()
+
+			e := sampleEvent()
+			e.Source = src
+			(&e).ApplyDefaults()
+
+			err := p.preFlightWithPayload(context.Background(), e, true)
+			if !errors.Is(err, ErrInvalidSource) {
+				t.Errorf("preFlight(Source=%q) err = %v; want errors.Is(ErrInvalidSource)", src, err)
+			}
+
+			if !IsCallerError(err) {
+				t.Errorf("IsCallerError(%v) = false; want true", err)
+			}
+		})
+	}
+}
+
 // TestHasControlChar covers the scanner helper in isolation. Tab is rejected
 // — CloudEvents header values never contain tabs in practice.
 func TestHasControlChar(t *testing.T) {

@@ -3,6 +3,8 @@ package producer
 import (
 	"context"
 	"encoding/json"
+
+	"github.com/LerianStudio/lib-streaming/internal/contract"
 )
 
 // preFlightWithPayload runs all caller-side validation on an Event before
@@ -15,7 +17,8 @@ import (
 //  1. SystemEvent capability gate: reject before any other work if the
 //     Producer did not opt into system events.
 //  2. Topic-forming fields: resource and event type must be populated.
-//  3. Source: required CloudEvents ce-source.
+//  3. Source: required CloudEvents ce-source, and must not fold to an empty
+//     topic-segment under sanitization.
 //  4. Header sanitization: TenantID / ResourceType / EventType / Source /
 //     Subject must be header-safe (no control chars, bounded length).
 //  5. Payload size: reject before JSON scan.
@@ -68,6 +71,16 @@ func (p *Producer) preFlightWithPayload(ctx context.Context, event Event, valida
 	// caller config bug (usually: forgot to set Config.CloudEventsSource).
 	if event.Source == "" {
 		return ErrMissingSource
+	}
+
+	// Source must survive topic-segment sanitization. A non-empty Source made
+	// up entirely of separators/invalid runes (e.g. "---" or "://") folds to
+	// "" (see contract.SanitizeSourceSegment), which would let Event.Topic()
+	// build a leading-dot ".<resource>.<event>" topic that Kafka rejects at
+	// publish time. Reject it here so the caller config bug surfaces as a
+	// synchronous, caller-correctable error rather than a broker-side failure.
+	if contract.SanitizeSourceSegment(event.Source) == "" {
+		return ErrInvalidSource
 	}
 
 	// Header sanitization. Every field that travels as a CloudEvents

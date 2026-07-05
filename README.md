@@ -218,7 +218,7 @@ A single Emit can dispatch to N routes. Route attempts run in deterministic rout
 
 ```go
 emitter, err := streaming.NewBuilder().
-    Source("svc://ledger").
+    Source("midaz-ledger").
     Catalog(catalog).
     Routes(
         streaming.RouteDefinition{

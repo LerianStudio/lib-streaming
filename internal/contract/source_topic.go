@@ -34,9 +34,32 @@ const topicSegmentSeparators = "-._"
 //	"//lerian.midaz/transaction-service" -> "lerian.midaz-transaction-service"
 //	"svc://tenant-cb-test"               -> "svc-tenant-cb-test"
 //
-// Empty input yields an empty string; empty Source is rejected upstream by
-// ErrMissingSource before a real emit reaches topic derivation, so this
-// function does not itself signal an error.
+// COLLISION RISK: the transformation is lossy, so two DISTINCT raw ce-source
+// values can normalize to the same segment (e.g. "my!service" and
+// "my-service" both become "my-service"). Because that segment IS the Kafka
+// topic namespace / ACL scope ("{sanitize(Source)}.*"), an accidental
+// collision between unrelated services would silently merge their topic space
+// and ACL grants. Service owners MUST pick ce-source values that stay unique
+// AFTER lowercasing, punctuation-folding, and separator-collapsing — do not
+// rely on raw-string distinctions (case, punctuation) that this function
+// erases.
+//
+// EMPTY RESULT: empty input yields an empty string, and a non-empty input made
+// up entirely of separators/invalid runes (e.g. "---" or "!!!") also sanitizes
+// to "". Both shapes are rejected upstream at emit time — empty Source by
+// ErrMissingSource and sanitize-to-empty Source by ErrInvalidSource in the
+// producer preflight — before topic derivation runs, so Event.Topic() never
+// constructs a leading-dot ".<resource>.<event>" topic that Kafka would
+// reject. This function itself does not signal an error.
+//
+// PERFORMANCE: Event.Topic() calls this on every emit, so it is on the per-Emit
+// hot path. The cost is a strings.ToLower plus a strings.Builder rune scan
+// (small and bounded by the 2048-byte Source cap). Source is effectively
+// constant for a producer's lifetime; the runtime path deliberately keeps this
+// single canonical sanitizer rather than a memoizing cache, trading a tiny
+// recompute for allocation-predictable behavior and no shared mutable state. A
+// caller that needs the segment in a tight loop can hoist it once (see the
+// producer's sourceTopicPrefix test helper).
 func sanitizeSourceSegment(source string) string {
 	if source == "" {
 		return ""

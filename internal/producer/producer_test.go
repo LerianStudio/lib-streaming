@@ -93,11 +93,11 @@ func sampleEvent() Event {
 		EventType:     "created",
 		SchemaVersion: "1.0.0",
 		// Source matches kfakeConfig's CloudEventsSource so the derived topic
-		// (sanitize("//test")=".test" → "test.transaction.created") is what the
+		// (sanitize("//test")="test" → "test.transaction.created") is what the
 		// producer actually publishes to and what the consumer reads.
-		Source: "//test",
-		Subject:       "tx-123",
-		Payload:       json.RawMessage(`{"amount":100}`),
+		Source:  "//test",
+		Subject: "tx-123",
+		Payload: json.RawMessage(`{"amount":100}`),
 	}
 }
 
