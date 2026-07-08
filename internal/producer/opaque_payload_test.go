@@ -134,3 +134,70 @@ func TestProducer_PreFlight_OversizedNonJSON_StillTooLarge(t *testing.T) {
 		t.Fatalf("preFlight err = %v; want ErrPayloadTooLarge", err)
 	}
 }
+
+// TestIsJSONContentType pins the JSON-family recognition: a bare
+// application/json, an empty (CloudEvents default) value, a charset PARAMETER,
+// and any RFC 6839 +json structured suffix all re-enter the json.Valid gate;
+// non-JSON media types (xml, text) stay opaque; a malformed content type fails
+// CLOSED (validate rather than silently skip).
+func TestIsJSONContentType(t *testing.T) {
+	tests := []struct {
+		name string
+		ct   string
+		want bool
+	}{
+		{name: "empty is default json", ct: "", want: true},
+		{name: "plain json", ct: "application/json", want: true},
+		{name: "json with charset param", ct: "application/json; charset=utf-8", want: true},
+		{name: "cloudevents +json suffix", ct: "application/cloudevents+json", want: true},
+		{name: "hal +json suffix", ct: "application/hal+json", want: true},
+		{name: "xml is opaque", ct: "application/xml", want: false},
+		{name: "xml with charset param is opaque", ct: "application/xml; charset=iso-8859-1", want: false},
+		{name: "text plain is opaque", ct: "text/plain", want: false},
+		{name: "malformed fails closed to validate", ct: "@@@", want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := isJSONContentType(tt.ct); got != tt.want {
+				t.Fatalf("isJSONContentType(%q) = %v; want %v", tt.ct, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestProducer_Emit_ParameterizedJSON_RejectsMalformed is the emit-level
+// regression: a definition whose DataContentType carries a charset PARAMETER
+// (application/json; charset=utf-8) is still JSON — a malformed payload must
+// re-enter the json.Valid gate and Emit must return ErrNotJSON, not ship the
+// poison bytes verbatim. (The application/xml relay-preserved case — non-JSON
+// payload -> Emit nil — is covered by TestProducer_Emit_NonJSONContentType_Accepts.)
+func TestProducer_Emit_ParameterizedJSON_RejectsMalformed(t *testing.T) {
+	cfg, _ := kfakeConfig(t)
+
+	catalog, err := NewCatalog(EventDefinition{
+		Key:             "transaction.created",
+		ResourceType:    "transaction",
+		EventType:       "created",
+		SchemaVersion:   "1.0.0",
+		DataContentType: "application/json; charset=utf-8",
+	})
+	if err != nil {
+		t.Fatalf("NewCatalog err = %v", err)
+	}
+
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(catalog))
+	if err != nil {
+		t.Fatalf("New err = %v", err)
+	}
+	t.Cleanup(func() { _ = emitter.Close() })
+
+	req := sampleRequest()
+	req.Payload = json.RawMessage(xmlPayload) // malformed JSON
+
+	if err := emitter.Emit(context.Background(), req); !errors.Is(err, ErrNotJSON) {
+		t.Fatalf("Emit err = %v; want ErrNotJSON (parameterized JSON content type must re-enter json.Valid gate)", err)
+	}
+}

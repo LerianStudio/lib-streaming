@@ -3,6 +3,8 @@ package producer
 import (
 	"context"
 	"encoding/json"
+	"mime"
+	"strings"
 
 	"github.com/LerianStudio/lib-streaming/internal/contract"
 )
@@ -159,10 +161,26 @@ func (*Producer) validateHeaderSafeFields(event Event) error {
 }
 
 // isJSONContentType reports whether a CloudEvents DataContentType denotes a
-// JSON payload that must pass json.Valid. An empty value means the CloudEvents
-// default (application/json), so it is treated as JSON. Any other content type
-// (e.g. application/xml) is opaque: the payload ships verbatim as the record
-// value and the json.Valid scan is skipped.
+// JSON payload that must pass json.Valid. The recognition is media-type aware:
+// parameters are stripped (application/json; charset=utf-8) and the RFC 6839
+// structured "+json" suffix is honored (application/cloudevents+json,
+// application/hal+json). An empty value means the CloudEvents default
+// (application/json). A non-JSON media type (e.g. application/xml) is opaque:
+// the payload ships verbatim and the json.Valid scan is skipped.
+//
+// A parse error fails CLOSED — an unrecognizable content type re-enters the
+// json.Valid gate rather than silently skipping it. That is the money-path-safe
+// default: worst case it rejects a weird content type LOUDLY (ErrNotJSON), it
+// never silently ships unvalidated bytes onto the topic.
 func isJSONContentType(ct string) bool {
-	return ct == "" || ct == "application/json"
+	if ct == "" {
+		return true
+	}
+
+	mt, _, err := mime.ParseMediaType(ct)
+	if err != nil {
+		return true
+	}
+
+	return mt == "application/json" || strings.HasSuffix(mt, "+json")
 }
