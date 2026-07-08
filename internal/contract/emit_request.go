@@ -20,8 +20,16 @@ type EmitRequest struct {
 }
 
 // newEmitRequest validates and optionally copies an EmitRequest. Validates
-// request-local shape only; catalog lookup and system-event tenant rules
-// require the EventDefinition and happen during emit resolution.
+// request-local shape only (definition key, policy, header fields, size cap);
+// catalog lookup and system-event tenant rules require the EventDefinition and
+// happen during emit resolution.
+//
+// JSON-payload validity is NOT checked here: it is content-type-aware and the
+// request does not carry a DataContentType (that comes from the catalog
+// definition). The json.Valid gate runs during emit resolution once the
+// definition's DataContentType is known — see resolveEventWithPolicy. The size
+// cap stays here and is content-type-agnostic: it protects Kafka's
+// max.message.bytes regardless of payload encoding.
 func newEmitRequest(request EmitRequest, copyPayload bool) (EmitRequest, error) {
 	if request.DefinitionKey == "" {
 		return EmitRequest{}, fmt.Errorf("%w: empty definition key", ErrInvalidEventDefinition)
@@ -37,10 +45,6 @@ func newEmitRequest(request EmitRequest, copyPayload bool) (EmitRequest, error) 
 
 	if len(request.Payload) > MaxPayloadBytes {
 		return EmitRequest{}, ErrPayloadTooLarge
-	}
-
-	if !json.Valid(request.Payload) {
-		return EmitRequest{}, ErrNotJSON
 	}
 
 	if copyPayload {

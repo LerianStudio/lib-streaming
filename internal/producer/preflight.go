@@ -112,12 +112,15 @@ func (p *Producer) preFlightWithPayload(ctx context.Context, event Event, valida
 			return ErrPayloadTooLarge
 		}
 
-		// Payload must parse as JSON. This is the line of defense that keeps
-		// malformed bytes out of consumers and prevents DLQ replay from
-		// repeatedly re-poisoning the same topic. An empty payload is
-		// permitted ONLY when it's valid JSON (e.g. `null`, `{}`); a genuinely
-		// empty byte slice fails json.Valid and surfaces ErrNotJSON.
-		if !json.Valid(event.Payload) {
+		// Payload must parse as JSON — but only for JSON content types. This
+		// is the line of defense that keeps malformed bytes out of consumers
+		// and prevents DLQ replay from repeatedly re-poisoning the same topic.
+		// An empty payload is permitted ONLY when it's valid JSON (e.g. `null`,
+		// `{}`); a genuinely empty byte slice fails json.Valid and surfaces
+		// ErrNotJSON. A non-JSON content type (e.g. application/xml) ships its
+		// payload verbatim as the record value and skips the scan; the size
+		// cap above still protects Kafka's max.message.bytes.
+		if isJSONContentType(event.DataContentType) && !json.Valid(event.Payload) {
 			return ErrNotJSON
 		}
 	}
@@ -153,4 +156,13 @@ func (*Producer) validateHeaderSafeFields(event Event) error {
 	}
 
 	return nil
+}
+
+// isJSONContentType reports whether a CloudEvents DataContentType denotes a
+// JSON payload that must pass json.Valid. An empty value means the CloudEvents
+// default (application/json), so it is treated as JSON. Any other content type
+// (e.g. application/xml) is opaque: the payload ships verbatim as the record
+// value and the json.Valid scan is skipped.
+func isJSONContentType(ct string) bool {
+	return ct == "" || ct == "application/json"
 }
