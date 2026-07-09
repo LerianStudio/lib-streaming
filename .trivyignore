@@ -8,3 +8,12 @@
 # Review by: 2026-09-01
 # Tracking: https://github.com/gofiber/fiber/security/advisories/GHSA-gcfq-8gqf-4876
 CVE-2026-45045 exp:2026-09-01
+
+# golang.org/x/crypto/openpgp inherited advisory.
+# lib-streaming does not import openpgp, and govulncheck reports no reachable
+# call path. No fixed version is published yet.
+#
+# Severity: UNKNOWN (GO-2026-5932)
+# Review by: 2026-10-01
+# Tracking: https://pkg.go.dev/vuln/GO-2026-5932
+GO-2026-5932 exp:2026-10-01

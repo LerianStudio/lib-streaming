@@ -3,6 +3,8 @@ package producer
 import (
 	"context"
 	"encoding/json"
+	"mime"
+	"strings"
 
 	"github.com/LerianStudio/lib-streaming/internal/contract"
 )
@@ -112,12 +114,15 @@ func (p *Producer) preFlightWithPayload(ctx context.Context, event Event, valida
 			return ErrPayloadTooLarge
 		}
 
-		// Payload must parse as JSON. This is the line of defense that keeps
-		// malformed bytes out of consumers and prevents DLQ replay from
-		// repeatedly re-poisoning the same topic. An empty payload is
-		// permitted ONLY when it's valid JSON (e.g. `null`, `{}`); a genuinely
-		// empty byte slice fails json.Valid and surfaces ErrNotJSON.
-		if !json.Valid(event.Payload) {
+		// Payload must parse as JSON — but only for JSON content types. This
+		// is the line of defense that keeps malformed bytes out of consumers
+		// and prevents DLQ replay from repeatedly re-poisoning the same topic.
+		// An empty payload is permitted ONLY when it's valid JSON (e.g. `null`,
+		// `{}`); a genuinely empty byte slice fails json.Valid and surfaces
+		// ErrNotJSON. A non-JSON content type (e.g. application/xml) ships its
+		// payload verbatim as the record value and skips the scan; the size
+		// cap above still protects Kafka's max.message.bytes.
+		if isJSONContentType(event.DataContentType) && !json.Valid(event.Payload) {
 			return ErrNotJSON
 		}
 	}
@@ -153,4 +158,29 @@ func (*Producer) validateHeaderSafeFields(event Event) error {
 	}
 
 	return nil
+}
+
+// isJSONContentType reports whether a CloudEvents DataContentType denotes a
+// JSON payload that must pass json.Valid. The recognition is media-type aware:
+// parameters are stripped (application/json; charset=utf-8) and the RFC 6839
+// structured "+json" suffix is honored (application/cloudevents+json,
+// application/hal+json). An empty value means the CloudEvents default
+// (application/json). A non-JSON media type (e.g. application/xml) is opaque:
+// the payload ships verbatim and the json.Valid scan is skipped.
+//
+// A parse error fails CLOSED — an unrecognizable content type re-enters the
+// json.Valid gate rather than silently skipping it. That is the money-path-safe
+// default: worst case it rejects a weird content type LOUDLY (ErrNotJSON), it
+// never silently ships unvalidated bytes onto the topic.
+func isJSONContentType(ct string) bool {
+	if ct == "" {
+		return true
+	}
+
+	mt, _, err := mime.ParseMediaType(ct)
+	if err != nil {
+		return true
+	}
+
+	return mt == "application/json" || strings.HasSuffix(mt, "+json")
 }

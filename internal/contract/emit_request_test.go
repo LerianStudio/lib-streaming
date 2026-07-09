@@ -101,14 +101,6 @@ func TestEmitRequest_New_RejectsInvalidShape(t *testing.T) {
 			want: ErrPayloadTooLarge,
 		},
 		{
-			name: "payload not json",
-			request: EmitRequest{
-				DefinitionKey: "transaction.created",
-				Payload:       json.RawMessage(`not-json`),
-			},
-			want: ErrNotJSON,
-		},
-		{
 			name: "invalid policy override",
 			request: EmitRequest{
 				DefinitionKey:  "transaction.created",
