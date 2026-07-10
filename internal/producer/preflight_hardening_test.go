@@ -187,9 +187,9 @@ func TestProducer_EmitPreFlight_HeaderSanitization_RejectsInjections(t *testing.
 }
 
 // TestProducer_EmitPreFlight_HeaderSanitization_AcceptsAtLimits asserts that
-// fields exactly at their byte ceiling are ACCEPTED by preFlight. Checks
-// preFlight directly so the long-but-valid ResourceType / EventType don't
-// need to resolve to a pre-created kfake topic.
+// fields exactly at their individual header byte ceilings pass the header
+// gate. The composed topic limit is an independent, stricter constraint
+// covered by TestProducer_EmitPreFlight_TopicAtExactBoundary.
 func TestProducer_EmitPreFlight_HeaderSanitization_AcceptsAtLimits(t *testing.T) {
 	t.Parallel()
 
@@ -212,8 +212,8 @@ func TestProducer_EmitPreFlight_HeaderSanitization_AcceptsAtLimits(t *testing.T)
 	e.Subject = strings.Repeat("j", maxSubjectBytes)
 	(&e).ApplyDefaults()
 
-	if err := p.preFlightWithPayload(context.Background(), e, true); err != nil {
-		t.Errorf("preFlight at-limit fields err = %v; want nil", err)
+	if err := p.validateHeaderSafeFields(e); err != nil {
+		t.Errorf("validateHeaderSafeFields at-limit fields err = %v; want nil", err)
 	}
 }
 

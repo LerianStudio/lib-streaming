@@ -9,6 +9,9 @@ import (
 	"github.com/LerianStudio/lib-streaming/internal/contract"
 )
 
+// maxKafkaTopicNameBytes is Kafka's protocol-level topic-name limit.
+const maxKafkaTopicNameBytes = 249
+
 // preFlightWithPayload runs all caller-side validation on an Event before
 // it reaches the transport. Defaults must already be applied by the
 // caller — preFlight is pure validation, never mutation.
@@ -23,8 +26,9 @@ import (
 //     topic-segment under sanitization.
 //  4. Header sanitization: TenantID / ResourceType / EventType / Source /
 //     Subject must be header-safe (no control chars, bounded length).
-//  5. Payload size: reject before JSON scan.
-//  6. Payload JSON validity: prevents DLQ poisoning downstream.
+//  5. Derived topic length: reject names Kafka cannot accept.
+//  6. Payload size: reject before JSON scan.
+//  7. Payload JSON validity: prevents DLQ poisoning downstream.
 //
 // TenantID is NOT required: an empty TenantID is a valid single-tenant scope
 // for business events.
@@ -92,6 +96,14 @@ func (p *Producer) preFlightWithPayload(ctx context.Context, event Event, valida
 	// into structured logs) or break OTEL label pipelines.
 	if err := p.validateHeaderSafeFields(event); err != nil {
 		return err
+	}
+
+	// Individual topic components can each satisfy their own header limits
+	// while the final source.resource.event[.vN] name exceeds Kafka's
+	// protocol limit. Reject the complete derived name synchronously rather
+	// than surfacing a broker-side unknown-topic failure.
+	if len(event.Topic()) > maxKafkaTopicNameBytes {
+		return ErrInvalidDestination
 	}
 
 	// Pre-flight size cap. 1 MiB is the Redpanda default; we check BEFORE
@@ -168,17 +180,18 @@ func (*Producer) validateHeaderSafeFields(event Event) error {
 // (application/json). A non-JSON media type (e.g. application/xml) is opaque:
 // the payload ships verbatim and the json.Valid scan is skipped.
 //
-// A parse error fails CLOSED — an unrecognizable content type re-enters the
-// json.Valid gate rather than silently skipping it. That is the money-path-safe
-// default: worst case it rejects a weird content type LOUDLY (ErrNotJSON), it
-// never silently ships unvalidated bytes onto the topic.
+// A parse error with no recoverable media type fails CLOSED: an unrecognizable
+// content type re-enters the json.Valid gate rather than silently skipping it.
+// If mime.ParseMediaType recovers the base media type but rejects malformed
+// parameters, classify from that base type so an opaque payload is not
+// incorrectly forced through json.Valid.
 func isJSONContentType(ct string) bool {
 	if ct == "" {
 		return true
 	}
 
 	mt, _, err := mime.ParseMediaType(ct)
-	if err != nil {
+	if err != nil && mt == "" {
 		return true
 	}
 

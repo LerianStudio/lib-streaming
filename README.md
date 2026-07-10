@@ -119,6 +119,12 @@ if err != nil {
     return err
 }
 
+eventTopic := (&streaming.Event{
+    Source:       cfg.CloudEventsSource,
+    ResourceType: "transaction",
+    EventType:    "created",
+}).Topic()
+
 if !cfg.Enabled {
     emitter := streaming.NewNoopEmitter()
     // inject emitter into services; skip launcher.Add for the no-op path
@@ -135,7 +141,7 @@ emitter, err := streaming.NewBuilder().
         Key:           "transaction.created.kafka.primary",
         DefinitionKey: "transaction.created",
         Target:        "primary",
-        Destination:   streaming.KafkaTopic("midaz-ledger.transaction.created"),
+        Destination:   streaming.KafkaTopic(eventTopic),
         Requirement:   streaming.RouteRequired,
     }).
     Target(streaming.TargetConfig{

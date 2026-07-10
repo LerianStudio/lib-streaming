@@ -153,6 +153,8 @@ func TestIsJSONContentType(t *testing.T) {
 		{name: "hal +json suffix", ct: "application/hal+json", want: true},
 		{name: "xml is opaque", ct: "application/xml", want: false},
 		{name: "xml with charset param is opaque", ct: "application/xml; charset=iso-8859-1", want: false},
+		{name: "xml with malformed charset remains opaque", ct: "application/xml; charset=@@@", want: false},
+		{name: "json with malformed charset remains json", ct: "application/json; charset=@@@", want: true},
 		{name: "text plain is opaque", ct: "text/plain", want: false},
 		{name: "malformed fails closed to validate", ct: "@@@", want: true},
 	}

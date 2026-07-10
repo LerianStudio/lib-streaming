@@ -42,6 +42,11 @@
 //	    EventType:    "created",
 //	})
 //	if err != nil { return err }
+//	eventTopic := (&streaming.Event{
+//	    Source:       cfg.CloudEventsSource,
+//	    ResourceType: "transaction",
+//	    EventType:    "created",
+//	}).Topic()
 //	// Consuming services wire panic + assertion metrics once at bootstrap
 //	// after telemetry is initialized. lib-streaming uses lib-observability/assert
 //	// internally for post-construction invariant checks; without this call
@@ -68,7 +73,7 @@
 //	        Key:           "transaction.created.kafka.primary",
 //	        DefinitionKey: "transaction.created",
 //	        Target:        "primary",
-//	        Destination:   streaming.KafkaTopic("midaz-ledger.transaction.created"),
+//	        Destination:   streaming.KafkaTopic(eventTopic),
 //	        Requirement:   streaming.RouteRequired,
 //	    }).
 //	    Target(streaming.TargetConfig{

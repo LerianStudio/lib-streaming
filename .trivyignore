@@ -1,8 +1,8 @@
-# github.com/gofiber/fiber/v2 — X-Real-IP spoofing via Header.Add().
+# github.com/gofiber/fiber/v2 - X-Real-IP spoofing via Header.Add().
 # lib-streaming is producer-only and does not run a Fiber HTTP server, so the
-# affected request-header code path is not reachable here; pulled transitively.
+# affected request-header code path is unreachable here; v2.52.14 contains the
+# upstream fix, and the dependency remains transitively pinned at v2.52.13.
 # Mirrors the accepted ignore in tenant-manager (same CVE, same justification).
-# No fixed version is published yet.
 #
 # Severity: MEDIUM (CVE-2026-45045)
 # Review by: 2026-09-01
