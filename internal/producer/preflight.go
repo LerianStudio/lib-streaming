@@ -3,7 +3,14 @@ package producer
 import (
 	"context"
 	"encoding/json"
+	"mime"
+	"strings"
+
+	"github.com/LerianStudio/lib-streaming/internal/contract"
 )
+
+// maxKafkaTopicNameBytes is Kafka's protocol-level topic-name limit.
+const maxKafkaTopicNameBytes = 249
 
 // preFlightWithPayload runs all caller-side validation on an Event before
 // it reaches the transport. Defaults must already be applied by the
@@ -15,11 +22,13 @@ import (
 //  1. SystemEvent capability gate: reject before any other work if the
 //     Producer did not opt into system events.
 //  2. Topic-forming fields: resource and event type must be populated.
-//  3. Source: required CloudEvents ce-source.
+//  3. Source: required CloudEvents ce-source, and must not fold to an empty
+//     topic-segment under sanitization.
 //  4. Header sanitization: TenantID / ResourceType / EventType / Source /
 //     Subject must be header-safe (no control chars, bounded length).
-//  5. Payload size: reject before JSON scan.
-//  6. Payload JSON validity: prevents DLQ poisoning downstream.
+//  5. Derived topic length: reject names Kafka cannot accept.
+//  6. Payload size: reject before JSON scan.
+//  7. Payload JSON validity: prevents DLQ poisoning downstream.
 //
 // TenantID is NOT required: an empty TenantID is a valid single-tenant scope
 // for business events.
@@ -70,6 +79,16 @@ func (p *Producer) preFlightWithPayload(ctx context.Context, event Event, valida
 		return ErrMissingSource
 	}
 
+	// Source must survive topic-segment sanitization. A non-empty Source made
+	// up entirely of separators/invalid runes (e.g. "---" or "://") folds to
+	// "" (see contract.SanitizeSourceSegment), which would let Event.Topic()
+	// build a leading-dot ".<resource>.<event>" topic that Kafka rejects at
+	// publish time. Reject it here so the caller config bug surfaces as a
+	// synchronous, caller-correctable error rather than a broker-side failure.
+	if contract.SanitizeSourceSegment(event.Source) == "" {
+		return ErrInvalidSource
+	}
+
 	// Header sanitization. Every field that travels as a CloudEvents
 	// context attribute (header) must be free of control characters and
 	// within a bounded length. Bypassing these checks would let malicious
@@ -77,6 +96,14 @@ func (p *Producer) preFlightWithPayload(ctx context.Context, event Event, valida
 	// into structured logs) or break OTEL label pipelines.
 	if err := p.validateHeaderSafeFields(event); err != nil {
 		return err
+	}
+
+	// Individual topic components can each satisfy their own header limits
+	// while the final source.resource.event[.vN] name exceeds Kafka's
+	// protocol limit. Reject the complete derived name synchronously rather
+	// than surfacing a broker-side unknown-topic failure.
+	if len(event.Topic()) > maxKafkaTopicNameBytes {
+		return ErrInvalidDestination
 	}
 
 	// Pre-flight size cap. 1 MiB is the Redpanda default; we check BEFORE
@@ -99,12 +126,15 @@ func (p *Producer) preFlightWithPayload(ctx context.Context, event Event, valida
 			return ErrPayloadTooLarge
 		}
 
-		// Payload must parse as JSON. This is the line of defense that keeps
-		// malformed bytes out of consumers and prevents DLQ replay from
-		// repeatedly re-poisoning the same topic. An empty payload is
-		// permitted ONLY when it's valid JSON (e.g. `null`, `{}`); a genuinely
-		// empty byte slice fails json.Valid and surfaces ErrNotJSON.
-		if !json.Valid(event.Payload) {
+		// Payload must parse as JSON — but only for JSON content types. This
+		// is the line of defense that keeps malformed bytes out of consumers
+		// and prevents DLQ replay from repeatedly re-poisoning the same topic.
+		// An empty payload is permitted ONLY when it's valid JSON (e.g. `null`,
+		// `{}`); a genuinely empty byte slice fails json.Valid and surfaces
+		// ErrNotJSON. A non-JSON content type (e.g. application/xml) ships its
+		// payload verbatim as the record value and skips the scan; the size
+		// cap above still protects Kafka's max.message.bytes.
+		if isJSONContentType(event.DataContentType) && !json.Valid(event.Payload) {
 			return ErrNotJSON
 		}
 	}
@@ -140,4 +170,30 @@ func (*Producer) validateHeaderSafeFields(event Event) error {
 	}
 
 	return nil
+}
+
+// isJSONContentType reports whether a CloudEvents DataContentType denotes a
+// JSON payload that must pass json.Valid. The recognition is media-type aware:
+// parameters are stripped (application/json; charset=utf-8) and the RFC 6839
+// structured "+json" suffix is honored (application/cloudevents+json,
+// application/hal+json). An empty value means the CloudEvents default
+// (application/json). A non-JSON media type (e.g. application/xml) is opaque:
+// the payload ships verbatim and the json.Valid scan is skipped.
+//
+// A parse error with no recoverable media type fails CLOSED: an unrecognizable
+// content type re-enters the json.Valid gate rather than silently skipping it.
+// If mime.ParseMediaType recovers the base media type but rejects malformed
+// parameters, classify from that base type so an opaque payload is not
+// incorrectly forced through json.Valid.
+func isJSONContentType(ct string) bool {
+	if ct == "" {
+		return true
+	}
+
+	mt, _, err := mime.ParseMediaType(ct)
+	if err != nil && mt == "" {
+		return true
+	}
+
+	return mt == "application/json" || strings.HasSuffix(mt, "+json")
 }

@@ -187,9 +187,9 @@ func TestProducer_EmitPreFlight_HeaderSanitization_RejectsInjections(t *testing.
 }
 
 // TestProducer_EmitPreFlight_HeaderSanitization_AcceptsAtLimits asserts that
-// fields exactly at their byte ceiling are ACCEPTED by preFlight. Checks
-// preFlight directly so the long-but-valid ResourceType / EventType don't
-// need to resolve to a pre-created kfake topic.
+// fields exactly at their individual header byte ceilings pass the header
+// gate. The composed topic limit is an independent, stricter constraint
+// covered by TestProducer_EmitPreFlight_TopicAtExactBoundary.
 func TestProducer_EmitPreFlight_HeaderSanitization_AcceptsAtLimits(t *testing.T) {
 	t.Parallel()
 
@@ -212,8 +212,49 @@ func TestProducer_EmitPreFlight_HeaderSanitization_AcceptsAtLimits(t *testing.T)
 	e.Subject = strings.Repeat("j", maxSubjectBytes)
 	(&e).ApplyDefaults()
 
-	if err := p.preFlightWithPayload(context.Background(), e, true); err != nil {
-		t.Errorf("preFlight at-limit fields err = %v; want nil", err)
+	if err := p.validateHeaderSafeFields(e); err != nil {
+		t.Errorf("validateHeaderSafeFields at-limit fields err = %v; want nil", err)
+	}
+}
+
+// TestProducer_EmitPreFlight_SanitizeEmptySource_Rejected asserts that a
+// non-empty Source made up entirely of separators/invalid runes (which
+// sanitizeSourceSegment folds to "") is rejected with ErrInvalidSource. Left
+// unguarded, Event.Topic() would build a leading-dot ".<resource>.<event>"
+// topic that Kafka rejects at publish time — a caller config bug should fail
+// synchronously as a caller-correctable error instead.
+func TestProducer_EmitPreFlight_SanitizeEmptySource_Rejected(t *testing.T) {
+	t.Parallel()
+
+	cfg, _ := kfakeConfig(t)
+
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
+	if err != nil {
+		t.Fatalf("New err = %v", err)
+	}
+
+	t.Cleanup(func() { _ = emitter.Close() })
+
+	p := asProducer(t, emitter)
+
+	cases := []string{"---", "!!!", "//", "://", "   "}
+	for _, src := range cases {
+		t.Run(src, func(t *testing.T) {
+			t.Parallel()
+
+			e := sampleEvent()
+			e.Source = src
+			(&e).ApplyDefaults()
+
+			err := p.preFlightWithPayload(context.Background(), e, true)
+			if !errors.Is(err, ErrInvalidSource) {
+				t.Errorf("preFlight(Source=%q) err = %v; want errors.Is(ErrInvalidSource)", src, err)
+			}
+
+			if !IsCallerError(err) {
+				t.Errorf("IsCallerError(%v) = false; want true", err)
+			}
+		})
 	}
 }
 
@@ -406,7 +447,7 @@ func TestProducer_Emit_CircuitOpen_OutboxFailure_MetricsOutboxFailed(t *testing.
 	fakeMgr.ForceTransition(p.targets["primary"].cbServiceName, circuitbreaker.StateOpen)
 
 	event := sampleRequest()
-	topic := "lerian.streaming.transaction.created"
+	topic := "test.transaction.created"
 
 	if err := emitter.Emit(context.Background(), event); err == nil {
 		t.Fatal("Emit err = nil; want non-nil (outbox failure must surface)")

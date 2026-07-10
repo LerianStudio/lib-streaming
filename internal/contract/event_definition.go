@@ -102,9 +102,16 @@ func NewEventDefinition(definition EventDefinition) (EventDefinition, error) {
 	return definition, nil
 }
 
-// Topic returns the Kafka topic derived from the definition.
-func (d EventDefinition) Topic() string {
+// Topic returns the Kafka topic derived from the definition for the given
+// producing service source (CloudEvents ce-source). The source is NOT stored
+// on the definition — the catalog is source-agnostic — so callers pass it
+// explicitly: the runtime uses the producer's configured source and manifest
+// generation uses PublisherDescriptor.SourceBase. See Event.Topic for the
+// derivation and sanitizeSourceSegment for how the source becomes the
+// namespace segment.
+func (d EventDefinition) Topic(source string) string {
 	return (&Event{
+		Source:        source,
 		ResourceType:  d.ResourceType,
 		EventType:     d.EventType,
 		SchemaVersion: d.SchemaVersion,

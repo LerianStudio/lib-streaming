@@ -1,5 +1,7 @@
 package producer
 
+import "encoding/json"
+
 // resolvedEvent is the internal output of resolving an EmitRequest against the
 // producer catalog and policy overrides.
 //
@@ -31,6 +33,17 @@ func (p *Producer) resolveEventWithPolicy(request EmitRequest, rejectDisabled bo
 	definition, err := p.catalog.Require(request.DefinitionKey)
 	if err != nil {
 		return resolvedEvent{}, err
+	}
+
+	// JSON-payload validity is content-type-aware and therefore runs AFTER the
+	// catalog lookup, once the definition's DataContentType is known. A JSON
+	// content type (or the empty default) must pass json.Valid to keep
+	// malformed bytes out of consumers and prevent DLQ re-poisoning; a non-JSON
+	// content type (e.g. application/xml for an ISO-8859-1 SFN message) ships
+	// its payload as an opaque blob and skips the scan. The size cap already
+	// fired in newEmitRequest, content-type-agnostic.
+	if isJSONContentType(definition.DataContentType) && !json.Valid(request.Payload) {
+		return resolvedEvent{}, ErrNotJSON
 	}
 
 	policy, err := ResolveDeliveryPolicy(

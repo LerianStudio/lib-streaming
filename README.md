@@ -70,7 +70,7 @@ Producer-only means this library publishes business facts. It does not consume K
 - **Three-method emitter contract**: `Emit(ctx, EmitRequest) error`, `Close() error`, and `Healthy(ctx) error`.
 - **Immutable catalog**: deterministic definition ordering, duplicate-key rejection, and duplicate contract-tuple rejection.
 - **Policy precedence**: definition default → config override → call override.
-- **Topic derivation**: `lerian.streaming.<resource>.<event>` with `.v<major>` suffix for schema major versions `>=2`.
+- **Topic derivation**: `{service}.<resource>.<event>` where `service` is the sanitized `ce-source` (e.g. `midaz-ledger.transaction.created`), with `.v<major>` suffix for schema major versions `>=2`.
 - **Tenant-aware partitioning**: tenant ID by default; system events use `system:<eventType>` and require explicit opt-in.
 - **Caller-error taxonomy**: `IsCallerError(err)` distinguishes correctable validation/auth/serialization failures from broker/runtime faults.
 - **Lifecycle integration**: `*Producer` implements `commons.App` for Launcher-owned startup and shutdown.
@@ -119,6 +119,12 @@ if err != nil {
     return err
 }
 
+eventTopic := (&streaming.Event{
+    Source:       cfg.CloudEventsSource,
+    ResourceType: "transaction",
+    EventType:    "created",
+}).Topic()
+
 if !cfg.Enabled {
     emitter := streaming.NewNoopEmitter()
     // inject emitter into services; skip launcher.Add for the no-op path
@@ -135,7 +141,7 @@ emitter, err := streaming.NewBuilder().
         Key:           "transaction.created.kafka.primary",
         DefinitionKey: "transaction.created",
         Target:        "primary",
-        Destination:   streaming.KafkaTopic("lerian.streaming.transaction.created"),
+        Destination:   streaming.KafkaTopic(eventTopic),
         Requirement:   streaming.RouteRequired,
     }).
     Target(streaming.TargetConfig{
@@ -218,14 +224,14 @@ A single Emit can dispatch to N routes. Route attempts run in deterministic rout
 
 ```go
 emitter, err := streaming.NewBuilder().
-    Source("svc://ledger").
+    Source("midaz-ledger").
     Catalog(catalog).
     Routes(
         streaming.RouteDefinition{
             Key:           "transaction.created.kafka.primary",
             DefinitionKey: "transaction.created",
             Target:        "kafka-primary",
-            Destination:   streaming.KafkaTopic("lerian.streaming.transaction.created"),
+            Destination:   streaming.KafkaTopic("midaz-ledger.transaction.created"),
             Requirement:   streaming.RouteRequired,
         },
         streaming.RouteDefinition{

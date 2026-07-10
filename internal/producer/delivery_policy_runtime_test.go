@@ -50,7 +50,7 @@ func TestProducer_Emit_OutboxAlwaysPolicySkipsDirectPublish(t *testing.T) {
 		t.Fatalf("row.EventType = %q; want %q", row.EventType, StreamingOutboxEventType)
 	}
 
-	consumer := newConsumer(t, cluster, "lerian.streaming.transaction.created")
+	consumer := newConsumer(t, cluster, "test.transaction.created")
 	fetchCtx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
@@ -117,7 +117,7 @@ func TestProducer_Emit_OutboxNeverPolicyReturnsCircuitOpenWhenBreakerOpen(t *tes
 
 func TestProducer_Emit_DLQNeverPolicySkipsDLQRoute(t *testing.T) {
 	cfg, cluster := kfakeDLQConfig(t)
-	sourceTopic := "lerian.streaming.transaction.created"
+	sourceTopic := "test.transaction.created"
 	injectProduceError(cluster, sourceTopic, kerr.MessageTooLarge.Code)
 
 	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))

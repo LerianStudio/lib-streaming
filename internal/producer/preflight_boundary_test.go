@@ -103,6 +103,70 @@ func TestProducer_EmitPreFlight_PayloadAtExactBoundary(t *testing.T) {
 	}
 }
 
+// TestProducer_EmitPreFlight_TopicAtExactBoundary pins Kafka's 249-byte
+// topic-name limit after source sanitization and the optional schema-major
+// suffix are applied.
+func TestProducer_EmitPreFlight_TopicAtExactBoundary(t *testing.T) {
+	tests := []struct {
+		name          string
+		source        string
+		schemaVersion string
+		wantLength    int
+		wantErr       error
+	}{
+		{
+			name:          "v1 at exact boundary",
+			source:        strings.Repeat("s", 7),
+			schemaVersion: "1.0.0",
+			wantLength:    maxKafkaTopicNameBytes,
+		},
+		{
+			name:          "v1 one byte above boundary",
+			source:        strings.Repeat("s", 8),
+			schemaVersion: "1.0.0",
+			wantLength:    maxKafkaTopicNameBytes + 1,
+			wantErr:       ErrInvalidDestination,
+		},
+		{
+			name:          "v2 at exact boundary including suffix",
+			source:        strings.Repeat("s", 4),
+			schemaVersion: "2.0.0",
+			wantLength:    maxKafkaTopicNameBytes,
+		},
+		{
+			name:          "v2 one byte above boundary including suffix",
+			source:        strings.Repeat("s", 5),
+			schemaVersion: "2.0.0",
+			wantLength:    maxKafkaTopicNameBytes + 1,
+			wantErr:       ErrInvalidDestination,
+		},
+	}
+
+	p := &Producer{}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			event := sampleEvent()
+			event.Source = tt.source
+			event.ResourceType = strings.Repeat("r", 120)
+			event.EventType = strings.Repeat("e", 120)
+			event.SchemaVersion = tt.schemaVersion
+			(&event).ApplyDefaults()
+
+			if got := len(event.Topic()); got != tt.wantLength {
+				t.Fatalf("topic length = %d; want %d", got, tt.wantLength)
+			}
+
+			err := p.preFlightWithPayload(context.Background(), event, true)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("preFlight err = %v; want errors.Is(%v)", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 // TestProducer_Emit_DoesNotMutateCaller pins the value-semantics invariant:
 // Emit receives Event by value and must never touch the caller's struct.
 // ApplyDefaults runs on a LOCAL copy inside Emit — this test proves the

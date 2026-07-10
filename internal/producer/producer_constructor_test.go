@@ -309,7 +309,7 @@ func TestProducer_New_WithPartitionKeyOverride(t *testing.T) {
 		t.Fatalf("Emit err = %v", err)
 	}
 
-	consumer := newConsumer(t, cluster, "lerian.streaming.transaction.created")
+	consumer := newConsumer(t, cluster, sourceTopicPrefix(cfg.CloudEventsSource)+"transaction.created")
 
 	fetchCtx, fetchCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer fetchCancel()

@@ -42,6 +42,11 @@
 //	    EventType:    "created",
 //	})
 //	if err != nil { return err }
+//	eventTopic := (&streaming.Event{
+//	    Source:       cfg.CloudEventsSource,
+//	    ResourceType: "transaction",
+//	    EventType:    "created",
+//	}).Topic()
 //	// Consuming services wire panic + assertion metrics once at bootstrap
 //	// after telemetry is initialized. lib-streaming uses lib-observability/assert
 //	// internally for post-construction invariant checks; without this call
@@ -68,7 +73,7 @@
 //	        Key:           "transaction.created.kafka.primary",
 //	        DefinitionKey: "transaction.created",
 //	        Target:        "primary",
-//	        Destination:   streaming.KafkaTopic("lerian.streaming.transaction.created"),
+//	        Destination:   streaming.KafkaTopic(eventTopic),
 //	        Requirement:   streaming.RouteRequired,
 //	    }).
 //	    Target(streaming.TargetConfig{
@@ -290,8 +295,13 @@
 // # Consumer responsibilities
 //
 // Topics are SHARED across tenants. The topic name derives from
-// <resource>.<event> only — NOT tenant. Partition keys give per-tenant FIFO
-// ordering within a topic but do NOT isolate tenants at the topic level.
+// {service}.<resource>.<event> — where {service} is the sanitized ce-source,
+// with a ".v<major>" suffix when the SchemaVersion major is >= 2 — and NEVER
+// from the tenant. The producing service IS the topic namespace (so Kafka ACLs
+// can scope a producer to "{service}.*"); it is NOT a fixed "lerian.streaming."
+// prefix and NOT derived from <resource>.<event> alone. Partition keys give
+// per-tenant FIFO ordering within a topic but do NOT isolate tenants at the
+// topic level.
 //
 // Every consumer MUST filter events by ce-tenantid (or Event.TenantID after
 // parsing) before dispatching to tenant-scoped business logic. A consumer
