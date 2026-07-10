@@ -1,5 +1,18 @@
 # Lib-streaming Changelog
 
+## [1.8.0](https://github.com/LerianStudio/lib-streaming/releases/tag/v1.8.0)
+
+Features:
+- Derive the topic from the service (ce-source) instead of using a fixed `lerian.streaming` prefix. (@jeffersonrodrigues92)
+
+Fixes:
+- Resolve promotion review findings in the streaming component. (@fredcamaral)
+- Allow opaque non-JSON payloads in the producer component. (@fredcamaral)
+
+[Compare changes](https://github.com/LerianStudio/lib-streaming/compare/v1.7.0...v1.8.0)
+
+---
+
 ## [1.7.0](https://github.com/LerianStudio/lib-streaming/releases/tag/v1.7.0)
 
 Features:
