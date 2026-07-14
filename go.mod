@@ -3,7 +3,7 @@ module github.com/LerianStudio/lib-streaming
 go 1.26.3
 
 require (
-	github.com/LerianStudio/lib-commons/v5 v5.8.0
+	github.com/LerianStudio/lib-commons/v5 v5.9.0
 	github.com/LerianStudio/lib-observability v1.0.1
 	github.com/Shopify/toxiproxy/v2 v2.12.0
 	github.com/cloudevents/sdk-go/v2 v2.16.2
@@ -56,7 +56,7 @@ require (
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/go-playground/validator/v10 v10.30.3 // indirect
-	github.com/gofiber/fiber/v2 v2.52.13 // indirect
+	github.com/gofiber/fiber/v2 v2.52.14 // indirect
 	github.com/golang-migrate/migrate/v4 v4.19.1 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
