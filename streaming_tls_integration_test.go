@@ -80,14 +80,13 @@ func TestBuilder_TLSFromConfig_ProduceConsumeOverTLS(t *testing.T) {
 		return
 	}
 	require.NoError(t, err, "docker provider")
+	t.Cleanup(func() { _ = provider.Close() })
 
 	daemonHost, err := provider.DaemonHost(ctx)
 	if skipIfNoDockerTLS(t, err) {
-		_ = provider.Close()
 		return
 	}
 	require.NoError(t, err, "daemon host")
-	_ = provider.Close()
 
 	// Private self-signed CA + a server certificate signed by that CA. Only
 	// the CA public certificate crosses into STREAMING_TLS_CA_CERT.
