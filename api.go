@@ -331,8 +331,10 @@ func (b *Builder) TLSFromConfig(cfg Config) *Builder {
 // variables without importing the franz-go sasl sub-packages.
 //
 // When cfg.SASLMechanism is empty the mechanism wiring is a no-op. A recognized
-// mechanism is appended via WithSASL. When cfg.SASLAllowPlaintext is true the
-// unsafe local/dev plaintext opt-in is appended via WithAllowPlaintextSASL. An
+// mechanism is appended via WithSASL, and only then — when cfg.SASLAllowPlaintext
+// is also true — is the unsafe local/dev plaintext opt-in appended via
+// WithAllowPlaintextSASL. With an empty mechanism the plaintext gate is left
+// closed so it cannot silently apply to a mechanism chained on separately. An
 // invalid mechanism or missing credentials are captured as a deferred build
 // error that Build surfaces as ErrInvalidSASLMechanism; only the first deferred
 // error is kept. The fail-closed SASL-requires-TLS gate still runs at Build.
@@ -352,10 +354,10 @@ func (b *Builder) SASLFromConfig(cfg Config) *Builder {
 
 	if mech != nil {
 		b.extraOptions = append(b.extraOptions, WithSASL(mech))
-	}
 
-	if cfg.SASLAllowPlaintext {
-		b.extraOptions = append(b.extraOptions, WithAllowPlaintextSASL())
+		if cfg.SASLAllowPlaintext {
+			b.extraOptions = append(b.extraOptions, WithAllowPlaintextSASL())
+		}
 	}
 
 	return b

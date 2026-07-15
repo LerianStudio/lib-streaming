@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	streaming "github.com/LerianStudio/lib-streaming"
+	"github.com/twmb/franz-go/pkg/sasl/plain"
 )
 
 func TestBuilder_SASLFromConfig_InvalidMechanismDefersToBuild(t *testing.T) {
@@ -212,4 +213,27 @@ func TestBuilder_SASLFromConfig_RequiresTLS(t *testing.T) {
 
 		t.Cleanup(func() { _ = emitter.Close() })
 	})
+}
+
+// TestBuilder_SASLFromConfig_EmptyMechanismDoesNotOpenPlaintextGate proves the
+// FIX A security invariant: SASLFromConfig with an EMPTY mechanism but
+// SASLAllowPlaintext=true must NOT open the fail-closed plaintext-SASL gate. If
+// it did, a mechanism chained on separately (here a manual .SASL(...)) with no
+// TLS would silently pass the gate. The Build must therefore still fail closed
+// with ErrPlaintextSASLNotAllowed.
+func TestBuilder_SASLFromConfig_EmptyMechanismDoesNotOpenPlaintextGate(t *testing.T) {
+	t.Parallel()
+
+	// Empty mechanism, but plaintext-allow flag set. Nothing about SASL is
+	// configured through the config path — the allow-plaintext opt-in must stay
+	// closed.
+	cfg := streaming.Config{SASLAllowPlaintext: true}
+
+	_, err := minimalValidBuilder(t).
+		SASLFromConfig(cfg).
+		SASL(plain.Auth{User: "alice", Pass: "secret"}.AsMechanism()).
+		Build(context.Background())
+	if !errors.Is(err, streaming.ErrPlaintextSASLNotAllowed) {
+		t.Fatalf("Build() err = %v; want ErrPlaintextSASLNotAllowed (empty-mechanism SASLFromConfig must NOT open the plaintext gate for a separately chained mechanism)", err)
+	}
 }
