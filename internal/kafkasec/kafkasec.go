@@ -185,7 +185,7 @@ func SASLRequiresTLS(hasSASL, hasTLS, allowPlaintext bool) error {
 // through ValidateTLSConfig; InsecureSkipVerify is never set.
 func BuildTLSConfigFromCA(enabled bool, caCertBase64 string) (*tls.Config, error) {
 	if !enabled {
-		return nil, nil
+		return nil, nil //nolint:nilnil // nil,nil is the documented "TLS disabled" signal; callers switch on a nil *tls.Config, not an error
 	}
 
 	var pool *x509.CertPool
@@ -231,7 +231,7 @@ func BuildTLSConfigFromCA(enabled bool, caCertBase64 string) (*tls.Config, error
 func BuildSASLMechanism(mechanism, username, password string) (sasl.Mechanism, error) {
 	normalized := strings.ToUpper(strings.TrimSpace(mechanism))
 	if normalized == "" {
-		return nil, nil
+		return nil, nil //nolint:nilnil // nil,nil is the documented "no SASL configured" signal; callers append WithSASL only when the mechanism is non-nil, not on an error
 	}
 
 	switch normalized {
