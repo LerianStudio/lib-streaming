@@ -8,6 +8,7 @@ require (
 	github.com/Shopify/toxiproxy/v2 v2.12.0
 	github.com/cloudevents/sdk-go/v2 v2.16.2
 	github.com/google/uuid v1.6.0
+	github.com/mdelapenya/tlscert v0.2.0
 	github.com/sony/gobreaker v1.0.0
 	github.com/stretchr/testify v1.11.1
 	github.com/testcontainers/testcontainers-go v0.42.0

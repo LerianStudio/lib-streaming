@@ -194,6 +194,18 @@
 //	STREAMING_CLOSE_TIMEOUT_S            | int(s)   | 30              | Max drain+flush window on Close in seconds
 //	STREAMING_CLOUDEVENTS_SOURCE         | string   | ""              | Default ce-source (required when Enabled=true)
 //	STREAMING_EVENT_POLICIES             | string   | ""              | "event.key.enabled=true,event.key.outbox=always,..." policy overrides
+//	STREAMING_TLS_ENABLED                | bool     | false           | Enable TLS broker dial
+//	STREAMING_TLS_CA_CERT                | string   | ""              | Base64 PEM CA added to RootCAs; empty uses system pool
+//	STREAMING_SASL_MECHANISM             | string   | ""              | PLAIN, SCRAM-SHA-256, or SCRAM-SHA-512; empty disables SASL
+//	STREAMING_SASL_USERNAME              | string   | ""              | SASL username; required when a mechanism is set
+//	STREAMING_SASL_PASSWORD              | string   | ""              | SASL password (SECRET; never logged)
+//	STREAMING_SASL_ALLOW_PLAINTEXT       | bool     | false           | Allow SASL without TLS (dev-only, unsafe)
+//
+// STREAMING_ALLOW_PLAINTEXT_SASL is a DEPRECATED alias for
+// STREAMING_SASL_ALLOW_PLAINTEXT. It is consulted only when the canonical
+// variable is unset and its use emits a deprecation warning from LoadConfig;
+// the canonical variable wins when both are set. Enable TLS/SASL from these
+// env vars via streaming.NewBuilder().TLSFromConfig(cfg).SASLFromConfig(cfg).
 //
 // Multi-transport wiring (multiple Kafka clusters, SQS / RabbitMQ /
 // EventBridge fan-out) is programmatic via streaming.Builder in code —

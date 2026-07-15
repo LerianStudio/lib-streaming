@@ -268,6 +268,14 @@ var (
 	// explicitly accepted.
 	ErrPlaintextSASLNotAllowed = errors.New("streaming: SASL without TLS is not allowed")
 
+	// ErrInvalidSASLMechanism is returned when the configured SASL mechanism is
+	// not one of PLAIN, SCRAM-SHA-256, SCRAM-SHA-512, or when a recognized
+	// mechanism is configured without a username and password. Surfaced by
+	// LoadConfig (STREAMING_SASL_MECHANISM validation) and by
+	// kafkasec.BuildSASLMechanism. Caller-correctable. The error message never
+	// includes the SASL password.
+	ErrInvalidSASLMechanism = errors.New("streaming: invalid SASL mechanism")
+
 	// ErrNilProducer is returned when a method is invoked on a nil *Producer.
 	// Parallels circuitbreaker.ErrNilCircuitBreaker. Callers should treat this
 	// as a programming error — a nil Producer indicates construction was
@@ -390,6 +398,7 @@ var callerErrorSentinels = []error{
 	ErrInvalidConfigField,
 	ErrInvalidTLSConfig,
 	ErrPlaintextSASLNotAllowed,
+	ErrInvalidSASLMechanism,
 	ErrInvalidTenantID,
 	ErrInvalidResourceType,
 	ErrInvalidEventType,
@@ -432,7 +441,7 @@ var callerErrorSentinels = []error{
 //     ErrInvalidDestination, ErrDuplicateRouteDefinition,
 //     ErrNoRoutesConfigured, ErrMissingTarget,
 //     ErrMultiTransportRuntimeNotConfigured, ErrInvalidTLSConfig,
-//     ErrPlaintextSASLNotAllowed
+//     ErrPlaintextSASLNotAllowed, ErrInvalidSASLMechanism
 //   - An *EmitError whose Class is ClassSerialization, ClassValidation, or
 //     ClassAuth.
 //
