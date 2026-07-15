@@ -11,9 +11,15 @@ package kafkasec
 
 import (
 	"crypto/tls"
+	"crypto/x509"
+	"encoding/base64"
 	"fmt"
+	"strings"
 
 	"github.com/LerianStudio/lib-streaming/internal/contract"
+	"github.com/twmb/franz-go/pkg/sasl"
+	"github.com/twmb/franz-go/pkg/sasl/plain"
+	"github.com/twmb/franz-go/pkg/sasl/scram"
 )
 
 // approvedTLS12CipherSuites is the AEAD/ECDHE allowlist enforced for
@@ -158,4 +164,94 @@ func SASLRequiresTLS(hasSASL, hasTLS, allowPlaintext bool) error {
 	}
 
 	return nil
+}
+
+// BuildTLSConfigFromCA constructs a fail-closed *tls.Config from an
+// environment-supplied base64-encoded PEM CA certificate. It exists so
+// consuming services can enable a private-CA TLS broker dial through the
+// STREAMING_TLS_* environment variables without hand-rolling a *tls.Config.
+//
+// Behavior:
+//   - enabled == false: returns (nil, nil) so the caller dials plaintext.
+//   - caCertBase64 == "": returns a TLS 1.2+ config with a nil RootCAs, i.e.
+//     the host's system trust pool. Use this for brokers served by a public /
+//     already-trusted CA.
+//   - caCertBase64 set: decodes the base64 PEM, adds it to a fresh
+//     x509.CertPool, and pins that pool as RootCAs. A decode failure or a PEM
+//     that yields no valid certificate returns an error wrapping
+//     ErrInvalidTLSConfig so bootstrap fails closed.
+//
+// The returned config always floors MinVersion at TLS 1.2 and is validated
+// through ValidateTLSConfig; InsecureSkipVerify is never set.
+func BuildTLSConfigFromCA(enabled bool, caCertBase64 string) (*tls.Config, error) {
+	if !enabled {
+		return nil, nil //nolint:nilnil // nil,nil is the documented "TLS disabled" signal; callers switch on a nil *tls.Config, not an error
+	}
+
+	var pool *x509.CertPool
+
+	if caCertBase64 != "" {
+		pemBytes, err := base64.StdEncoding.DecodeString(strings.TrimSpace(caCertBase64))
+		if err != nil {
+			return nil, fmt.Errorf("%w: CA certificate is not valid base64: %w", contract.ErrInvalidTLSConfig, err)
+		}
+
+		pool = x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(pemBytes) {
+			return nil, fmt.Errorf("%w: no valid certificate in PEM CA bundle", contract.ErrInvalidTLSConfig)
+		}
+	}
+
+	cfg := &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		RootCAs:    pool,
+	}
+
+	if err := ValidateTLSConfig(cfg); err != nil {
+		return nil, err
+	}
+
+	return cfg, nil
+}
+
+// BuildSASLMechanism constructs a franz-go sasl.Mechanism from the
+// environment-supplied mechanism name plus credentials. It exists so consuming
+// services can enable SASL through the STREAMING_SASL_* environment variables
+// without importing the franz-go sasl sub-packages themselves.
+//
+// Behavior:
+//   - mechanism == "": returns (nil, nil) so the caller configures no SASL.
+//   - PLAIN / SCRAM-SHA-256 / SCRAM-SHA-512 (case-insensitive, surrounding
+//     whitespace trimmed): returns the corresponding mechanism.
+//   - anything else: returns an error wrapping ErrInvalidSASLMechanism.
+//
+// A recognized mechanism configured without both a username and a password is
+// rejected with ErrInvalidSASLMechanism. The returned error never includes the
+// password value.
+func BuildSASLMechanism(mechanism, username, password string) (sasl.Mechanism, error) {
+	normalized := strings.ToUpper(strings.TrimSpace(mechanism))
+	if normalized == "" {
+		return nil, nil //nolint:nilnil // nil,nil is the documented "no SASL configured" signal; callers append WithSASL only when the mechanism is non-nil, not on an error
+	}
+
+	switch normalized {
+	case "PLAIN", "SCRAM-SHA-256", "SCRAM-SHA-512":
+		// Credentials are required for every supported mechanism. Validate
+		// before constructing so a misconfigured deployment fails closed. Do
+		// NOT echo the password into the error.
+		if username == "" || password == "" {
+			return nil, fmt.Errorf("%w: mechanism %q requires a username and password", contract.ErrInvalidSASLMechanism, normalized)
+		}
+	default:
+		return nil, fmt.Errorf("%w: %q (want one of PLAIN, SCRAM-SHA-256, SCRAM-SHA-512)", contract.ErrInvalidSASLMechanism, mechanism)
+	}
+
+	switch normalized {
+	case "PLAIN":
+		return plain.Auth{User: username, Pass: password}.AsMechanism(), nil
+	case "SCRAM-SHA-256":
+		return scram.Auth{User: username, Pass: password}.AsSha256Mechanism(), nil
+	default: // "SCRAM-SHA-512"
+		return scram.Auth{User: username, Pass: password}.AsSha512Mechanism(), nil
+	}
 }

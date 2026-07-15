@@ -1,5 +1,16 @@
 # Lib-streaming Changelog
 
+## [1.9.0](https://github.com/LerianStudio/lib-streaming/releases/tag/v1.9.0)
+
+Features:
+- Configure broker TLS (private CA) and SASL entirely from `STREAMING_*` environment variables. `LoadConfig` now reads `STREAMING_TLS_ENABLED`, `STREAMING_TLS_CA_CERT`, `STREAMING_SASL_MECHANISM`, `STREAMING_SASL_USERNAME`, `STREAMING_SASL_PASSWORD`, and `STREAMING_SASL_ALLOW_PLAINTEXT`. New Builder setters `TLSFromConfig` and `SASLFromConfig` wire the parsed values without services hand-rolling a `*tls.Config` or importing the franz-go SASL sub-packages. All new variables default off, so existing deployments are unchanged, and the fail-closed SASL-requires-TLS posture is preserved.
+- Add `ErrInvalidSASLMechanism` (caller-correctable) for an unknown or credential-less SASL mechanism.
+- Accept `STREAMING_ALLOW_PLAINTEXT_SASL` as a deprecated alias for `STREAMING_SASL_ALLOW_PLAINTEXT`; the canonical variable wins when both are set and the alias emits a deprecation warning from `LoadConfig`.
+
+[Compare changes](https://github.com/LerianStudio/lib-streaming/compare/v1.8.0...v1.9.0)
+
+---
+
 ## [1.8.0](https://github.com/LerianStudio/lib-streaming/releases/tag/v1.8.0)
 
 Features:

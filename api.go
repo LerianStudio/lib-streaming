@@ -15,6 +15,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/LerianStudio/lib-streaming/internal/contract"
+	"github.com/LerianStudio/lib-streaming/internal/kafkasec"
 	"github.com/LerianStudio/lib-streaming/internal/producer"
 	"github.com/LerianStudio/lib-streaming/internal/transport"
 )
@@ -105,6 +106,13 @@ type Builder struct {
 	sqsHelpers         map[string]sqsHelperBinding
 	rabbitmqHelpers    map[string]rabbitmqHelperBinding
 	eventbridgeHelpers map[string]eventbridgeHelperBinding
+
+	// buildErr captures the FIRST deferred construction error produced by a
+	// chained config-derived setter (TLSFromConfig, SASLFromConfig). Those
+	// setters return *Builder to preserve the fluent chain, so they cannot
+	// return an error directly; Build surfaces buildErr before doing any
+	// other work. Only the first failure is retained.
+	buildErr error
 }
 
 // NewBuilder returns an empty programmatic streaming builder.
@@ -289,6 +297,72 @@ func (b *Builder) AllowPlaintextSASL() *Builder {
 	return b
 }
 
+// TLSFromConfig derives a broker TLS dial from a loaded Config and wires it,
+// so services can enable a private-CA TLS dial through STREAMING_TLS_*
+// environment variables without hand-rolling a *tls.Config.
+//
+// When cfg.TLSEnabled is false the call is a no-op (plaintext dial preserved).
+// When enabled, the *tls.Config built from cfg.TLSCACert is appended via
+// WithTLSConfig. A malformed CA is captured as a deferred build error that
+// Build surfaces as ErrInvalidTLSConfig; only the first deferred error is kept.
+func (b *Builder) TLSFromConfig(cfg Config) *Builder {
+	if b == nil {
+		return b
+	}
+
+	tc, err := cfg.BuildTLSConfig()
+	if err != nil {
+		if b.buildErr == nil {
+			b.buildErr = err
+		}
+
+		return b
+	}
+
+	if tc != nil {
+		b.extraOptions = append(b.extraOptions, WithTLSConfig(tc))
+	}
+
+	return b
+}
+
+// SASLFromConfig derives a broker SASL mechanism from a loaded Config and wires
+// it, so services can enable SASL through STREAMING_SASL_* environment
+// variables without importing the franz-go sasl sub-packages.
+//
+// When cfg.SASLMechanism is empty the mechanism wiring is a no-op. A recognized
+// mechanism is appended via WithSASL, and only then — when cfg.SASLAllowPlaintext
+// is also true — is the unsafe local/dev plaintext opt-in appended via
+// WithAllowPlaintextSASL. With an empty mechanism the plaintext gate is left
+// closed so it cannot silently apply to a mechanism chained on separately. An
+// invalid mechanism or missing credentials are captured as a deferred build
+// error that Build surfaces as ErrInvalidSASLMechanism; only the first deferred
+// error is kept. The fail-closed SASL-requires-TLS gate still runs at Build.
+func (b *Builder) SASLFromConfig(cfg Config) *Builder {
+	if b == nil {
+		return b
+	}
+
+	mech, err := kafkasec.BuildSASLMechanism(cfg.SASLMechanism, cfg.SASLUsername, cfg.SASLPassword)
+	if err != nil {
+		if b.buildErr == nil {
+			b.buildErr = err
+		}
+
+		return b
+	}
+
+	if mech != nil {
+		b.extraOptions = append(b.extraOptions, WithSASL(mech))
+
+		if cfg.SASLAllowPlaintext {
+			b.extraOptions = append(b.extraOptions, WithAllowPlaintextSASL())
+		}
+	}
+
+	return b
+}
+
 // Logger wires the structured logger for the producer path AND for
 // transport adapter factories. The logger flows into both:
 //
@@ -416,6 +490,12 @@ func (b *Builder) CBTimeout(timeout time.Duration) *Builder {
 func (b *Builder) Build(ctx context.Context) (Emitter, error) {
 	if b == nil {
 		return nil, fmt.Errorf("%w: nil builder", ErrInvalidRouteDefinition)
+	}
+
+	// Surface any deferred error from a config-derived setter
+	// (TLSFromConfig / SASLFromConfig) before doing any other work.
+	if b.buildErr != nil {
+		return nil, b.buildErr
 	}
 
 	routeTable, err := NewRouteTable(b.routes...)
