@@ -81,6 +81,8 @@
 //	        Kind:    streaming.TransportKafkaLike,
 //	        Brokers: cfg.Brokers,
 //	    }).
+//	    TLSFromConfig(cfg).  // applies STREAMING_TLS_* (no-op when TLS disabled)
+//	    SASLFromConfig(cfg). // applies STREAMING_SASL_* (no-op when mechanism empty)
 //	    Logger(logger).
 //	    MetricsFactory(metricsFactory).
 //	    Tracer(tracer).
@@ -230,7 +232,7 @@
 //     ErrInvalidDestination, ErrDuplicateRouteDefinition,
 //     ErrNoRoutesConfigured, ErrMissingTarget,
 //     ErrMultiTransportRuntimeNotConfigured, ErrInvalidTLSConfig,
-//     ErrPlaintextSASLNotAllowed.
+//     ErrPlaintextSASLNotAllowed, ErrInvalidSASLMechanism.
 //   - Config validation (LoadConfig): ErrMissingBrokers, ErrMissingSource,
 //     ErrInvalidCompression, ErrInvalidAcks.
 //   - Lifecycle / wiring (NOT caller errors — IsCallerError returns false):
