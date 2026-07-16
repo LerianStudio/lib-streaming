@@ -9,8 +9,8 @@ import (
 
 	"github.com/twmb/franz-go/pkg/kgo"
 
-	"github.com/LerianStudio/lib-streaming/internal/contract"
-	"github.com/LerianStudio/lib-streaming/internal/transport/fake"
+	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v2/internal/transport/fake"
 )
 
 // TestPublishDLQ_PreservesKey proves the DLQ copy carries the original record Key

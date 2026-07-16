@@ -16,7 +16,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/LerianStudio/lib-streaming/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
 	"github.com/twmb/franz-go/pkg/sasl"
 	"github.com/twmb/franz-go/pkg/sasl/plain"
 	"github.com/twmb/franz-go/pkg/sasl/scram"

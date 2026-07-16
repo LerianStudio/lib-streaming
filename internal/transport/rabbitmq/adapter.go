@@ -5,7 +5,7 @@
 // lib-streaming is a producer for *business events* meant for third-party /
 // SaaS subscribers. RabbitMQ remains the recommended primitive for *internal
 // command queues*, which continue to live on
-// `github.com/LerianStudio/lib-commons/v5/commons/rabbitmq`. The two are
+// `github.com/LerianStudio/lib-commons/v6/commons/rabbitmq`. The two are
 // orthogonal — neither replaces the other.
 //
 // The adapter does NOT depend on streadway/amqp or amqp091-go. Callers
@@ -19,8 +19,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/LerianStudio/lib-streaming/internal/contract"
-	"github.com/LerianStudio/lib-streaming/internal/transport"
+	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
 )
 
 // DefaultContentType is the wire content-type the adapter sends when the

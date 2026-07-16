@@ -19,11 +19,11 @@ import (
 	mongooptions "go.mongodb.org/mongo-driver/v2/mongo/options"
 	"go.opentelemetry.io/otel/trace/noop"
 
-	"github.com/LerianStudio/lib-commons/v5/commons"
-	libMongo "github.com/LerianStudio/lib-commons/v5/commons/mongo"
-	"github.com/LerianStudio/lib-commons/v5/commons/outbox"
-	outboxmongo "github.com/LerianStudio/lib-commons/v5/commons/outbox/mongo"
-	"github.com/LerianStudio/lib-observability/log"
+	"github.com/LerianStudio/lib-commons/v6/commons"
+	libMongo "github.com/LerianStudio/lib-commons/v6/commons/mongo"
+	"github.com/LerianStudio/lib-commons/v6/commons/outbox"
+	outboxmongo "github.com/LerianStudio/lib-commons/v6/commons/outbox/mongo"
+	"github.com/LerianStudio/lib-observability/v2/log"
 )
 
 // mongoImage pins the MongoDB container image used by the Mongo-backed outbox

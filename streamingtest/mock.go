@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	streaming "github.com/LerianStudio/lib-streaming"
+	streaming "github.com/LerianStudio/lib-streaming/v2"
 )
 
 type EmitRequest = streaming.EmitRequest

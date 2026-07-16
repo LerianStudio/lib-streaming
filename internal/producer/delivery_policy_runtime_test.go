@@ -11,8 +11,8 @@ import (
 	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kgo"
 
-	"github.com/LerianStudio/lib-commons/v5/commons/circuitbreaker"
-	"github.com/LerianStudio/lib-observability/log"
+	"github.com/LerianStudio/lib-commons/v6/commons/circuitbreaker"
+	"github.com/LerianStudio/lib-observability/v2/log"
 )
 
 func TestProducer_Emit_OutboxAlwaysPolicySkipsDirectPublish(t *testing.T) {

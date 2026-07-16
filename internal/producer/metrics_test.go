@@ -16,9 +16,9 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
-	"github.com/LerianStudio/lib-commons/v5/commons/circuitbreaker"
-	"github.com/LerianStudio/lib-observability/log"
-	libMetrics "github.com/LerianStudio/lib-observability/metrics"
+	"github.com/LerianStudio/lib-commons/v6/commons/circuitbreaker"
+	"github.com/LerianStudio/lib-observability/v2/log"
+	libMetrics "github.com/LerianStudio/lib-observability/v2/metrics"
 )
 
 // --- Shared T6 helpers. ---

@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/LerianStudio/lib-observability/log"
+	"github.com/LerianStudio/lib-observability/v2/log"
 )
 
 // captureContractLogger records every Log call so the asserter trident's

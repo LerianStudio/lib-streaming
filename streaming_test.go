@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	streaming "github.com/LerianStudio/lib-streaming"
+	streaming "github.com/LerianStudio/lib-streaming/v2"
 )
 
 // TestIsCallerError exercises the caller-vs-infrastructure fault truth table

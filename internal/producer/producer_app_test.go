@@ -14,10 +14,10 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"go.uber.org/goleak"
 
-	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
-	commonsHttp "github.com/LerianStudio/lib-commons/v5/commons/net/http"
-	"github.com/LerianStudio/lib-commons/v5/commons/outbox"
-	"github.com/LerianStudio/lib-observability/log"
+	libCommons "github.com/LerianStudio/lib-commons/v6/commons"
+	commonsHttp "github.com/LerianStudio/lib-commons/v6/commons/net/http"
+	"github.com/LerianStudio/lib-commons/v6/commons/outbox"
+	"github.com/LerianStudio/lib-observability/v2/log"
 )
 
 // --- T7: commons.App integration, paired lifecycle, close semantics. ---

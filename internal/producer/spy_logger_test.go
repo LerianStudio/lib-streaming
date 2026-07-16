@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/LerianStudio/lib-observability/log"
+	"github.com/LerianStudio/lib-observability/v2/log"
 )
 
 // spyEntry is the shared shape captured by debug-style logger spies in unit

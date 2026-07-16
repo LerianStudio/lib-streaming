@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/LerianStudio/lib-commons/v5/commons/circuitbreaker"
-	"github.com/LerianStudio/lib-observability/runtime"
+	"github.com/LerianStudio/lib-commons/v6/commons/circuitbreaker"
+	"github.com/LerianStudio/lib-observability/v2/runtime"
 )
 
 var globalCBRecoveryLiveness = cbRecoveryLivenessRegistry{states: map[string]bool{}}

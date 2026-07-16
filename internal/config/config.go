@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/LerianStudio/lib-commons/v5/commons"
-	"github.com/LerianStudio/lib-observability/assert"
-	"github.com/LerianStudio/lib-observability/log"
-	"github.com/LerianStudio/lib-streaming/internal/kafkasec"
+	"github.com/LerianStudio/lib-commons/v6/commons"
+	"github.com/LerianStudio/lib-observability/v2/assert"
+	"github.com/LerianStudio/lib-observability/v2/log"
+	"github.com/LerianStudio/lib-streaming/v2/internal/kafkasec"
 )
 
 // configAsserterComponent matches internal/producer.asserterComponent so

@@ -11,10 +11,10 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/LerianStudio/lib-commons/v5/commons"
-	"github.com/LerianStudio/lib-commons/v5/commons/circuitbreaker"
-	"github.com/LerianStudio/lib-observability/log"
-	"github.com/LerianStudio/lib-streaming/internal/contract"
+	"github.com/LerianStudio/lib-commons/v6/commons"
+	"github.com/LerianStudio/lib-commons/v6/commons/circuitbreaker"
+	"github.com/LerianStudio/lib-observability/v2/log"
+	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
 )
 
 // tracerName + emitSpanName live in emit_span.go (colocated with the
