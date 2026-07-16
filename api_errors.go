@@ -59,6 +59,7 @@ var (
 	ErrInvalidConfigField                 = contract.ErrInvalidConfigField
 	ErrInvalidTLSConfig                   = contract.ErrInvalidTLSConfig
 	ErrPlaintextSASLNotAllowed            = contract.ErrPlaintextSASLNotAllowed
+	ErrInvalidSASLMechanism               = contract.ErrInvalidSASLMechanism
 	ErrNilProducer                        = contract.ErrNilProducer
 	ErrCircuitOpen                        = contract.ErrCircuitOpen
 	ErrOutboxNotConfigured                = contract.ErrOutboxNotConfigured

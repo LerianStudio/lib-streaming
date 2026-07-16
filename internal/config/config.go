@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"os"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 	"github.com/LerianStudio/lib-commons/v5/commons"
 	"github.com/LerianStudio/lib-observability/assert"
 	"github.com/LerianStudio/lib-observability/log"
+	"github.com/LerianStudio/lib-streaming/internal/kafkasec"
 )
 
 // configAsserterComponent matches internal/producer.asserterComponent so
@@ -78,6 +80,31 @@ type Config struct {
 	// PolicyOverrides is a map of event definition key -> delivery policy
 	// override. Parsed from STREAMING_EVENT_POLICIES.
 	PolicyOverrides map[string]DeliveryPolicyOverride
+
+	// TLSEnabled turns on a TLS broker dial. Default: false. When true, the
+	// producer dials brokers over TLS using the config built by
+	// BuildTLSConfig. Maps to STREAMING_TLS_ENABLED.
+	TLSEnabled bool
+	// TLSCACert is a base64-encoded PEM CA certificate added to the dial's
+	// RootCAs. Empty means the host's system trust pool is used. Maps to
+	// STREAMING_TLS_CA_CERT.
+	TLSCACert string
+	// SASLMechanism is one of PLAIN, SCRAM-SHA-256, SCRAM-SHA-512
+	// (case-insensitive). Empty means no SASL. Maps to
+	// STREAMING_SASL_MECHANISM.
+	SASLMechanism string
+	// SASLUsername is the SASL username. Required when SASLMechanism is set.
+	// Maps to STREAMING_SASL_USERNAME.
+	SASLUsername string
+	// SASLPassword is the SASL password. Required when SASLMechanism is set.
+	// SECRET — never logged or rendered into errors. Maps to
+	// STREAMING_SASL_PASSWORD.
+	SASLPassword string
+	// SASLAllowPlaintext permits SASL without TLS. Default: false. This is
+	// unsafe and intended only for local/dev brokers. Maps to the canonical
+	// STREAMING_SASL_ALLOW_PLAINTEXT (with the deprecated
+	// STREAMING_ALLOW_PLAINTEXT_SASL accepted as a fallback alias).
+	SASLAllowPlaintext bool
 }
 
 // Default values used by LoadConfig when an environment variable is unset.
@@ -187,6 +214,22 @@ func LoadConfig() (Config, []string, error) {
 		policyOverrides = map[string]DeliveryPolicyOverride{}
 	}
 
+	// Resolve SASL plaintext opt-in. The canonical env var is
+	// STREAMING_SASL_ALLOW_PLAINTEXT. STREAMING_ALLOW_PLAINTEXT_SASL is a
+	// deprecated alias kept for services that adopted the earlier name; it is
+	// consulted ONLY when the canonical var is unset/empty, and using it emits
+	// a deprecation warning. The canonical value wins when both are set.
+	saslAllowPlaintext := commons.GetenvBoolOrDefault("STREAMING_SASL_ALLOW_PLAINTEXT", false)
+
+	if strings.TrimSpace(os.Getenv("STREAMING_SASL_ALLOW_PLAINTEXT")) == "" {
+		if commons.GetenvBoolOrDefault("STREAMING_ALLOW_PLAINTEXT_SASL", false) {
+			saslAllowPlaintext = true
+
+			warnings = append(warnings,
+				"STREAMING_ALLOW_PLAINTEXT_SASL is deprecated; use STREAMING_SASL_ALLOW_PLAINTEXT")
+		}
+	}
+
 	cfg := Config{
 		Enabled:               enabled,
 		Brokers:               brokers,
@@ -204,6 +247,12 @@ func LoadConfig() (Config, []string, error) {
 		CloseTimeout:          time.Duration(closeTimeoutS) * time.Second,
 		CloudEventsSource:     commons.GetenvOrDefault("STREAMING_CLOUDEVENTS_SOURCE", ""),
 		PolicyOverrides:       policyOverrides,
+		TLSEnabled:            commons.GetenvBoolOrDefault("STREAMING_TLS_ENABLED", false),
+		TLSCACert:             commons.GetenvOrDefault("STREAMING_TLS_CA_CERT", ""),
+		SASLMechanism:         commons.GetenvOrDefault("STREAMING_SASL_MECHANISM", ""),
+		SASLUsername:          commons.GetenvOrDefault("STREAMING_SASL_USERNAME", ""),
+		SASLPassword:          commons.GetenvOrDefault("STREAMING_SASL_PASSWORD", ""),
+		SASLAllowPlaintext:    saslAllowPlaintext,
 	}
 
 	if !cfg.Enabled {
@@ -255,7 +304,46 @@ func (c Config) validate() error {
 		return fmt.Errorf("%w: %q", ErrInvalidAcks, c.RequiredAcks)
 	}
 
+	if err := c.validateSASL(); err != nil {
+		return err
+	}
+
+	if err := c.validateTLS(); err != nil {
+		return err
+	}
+
 	return c.validateRanges()
+}
+
+// validateSASL enforces the SASL configuration contract when a mechanism is
+// set. It delegates to kafkasec.BuildSASLMechanism so the accepted mechanism
+// set and the surfaced sentinel live in exactly one place: an unknown
+// mechanism OR a recognized mechanism missing its username or password is
+// rejected with ErrInvalidSASLMechanism, matching the Build path. An
+// empty/whitespace-only mechanism is treated as "no SASL" (BuildSASLMechanism
+// trims to "" and returns nil). The constructed mechanism is discarded — only
+// the validation error matters here. The password value is never rendered
+// into an error.
+func (c Config) validateSASL() error {
+	_, err := kafkasec.BuildSASLMechanism(c.SASLMechanism, c.SASLUsername, c.SASLPassword)
+
+	return err
+}
+
+// validateTLS fails startup closed when TLS is enabled with a CA certificate
+// that cannot be decoded into a valid trust pool. Building the config once at
+// bootstrap surfaces a bad STREAMING_TLS_CA_CERT as ErrInvalidTLSConfig instead
+// of a confusing dial-time failure later.
+func (c Config) validateTLS() error {
+	if !c.TLSEnabled || c.TLSCACert == "" {
+		return nil
+	}
+
+	if _, err := c.BuildTLSConfig(); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // validateRanges enforces the numeric/duration field contracts. Split out
@@ -360,6 +448,17 @@ func (c Config) validateRanges() error {
 // Validate enforces the fields that must be present when Enabled=true.
 func (c Config) Validate() error {
 	return c.validate()
+}
+
+// BuildTLSConfig constructs the *tls.Config implied by TLSEnabled / TLSCACert.
+//
+// It returns (nil, nil) when TLSEnabled is false so the caller dials plaintext.
+// When enabled with an empty TLSCACert the returned config uses the host's
+// system trust pool; with a base64 PEM TLSCACert the certificate is pinned into
+// RootCAs. A malformed CA returns an error wrapping ErrInvalidTLSConfig.
+// InsecureSkipVerify is never set.
+func (c Config) BuildTLSConfig() (*tls.Config, error) {
+	return kafkasec.BuildTLSConfigFromCA(c.TLSEnabled, c.TLSCACert)
 }
 
 func getenvIntOrDefaultStrict(key string, defaultValue int, strict bool) (int, error) {
