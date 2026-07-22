@@ -7,11 +7,11 @@ import (
 
 	"github.com/twmb/franz-go/pkg/sasl"
 
-	"github.com/LerianStudio/lib-observability/log"
-	"github.com/LerianStudio/lib-observability/metrics"
+	"github.com/LerianStudio/lib-observability/v2/log"
+	"github.com/LerianStudio/lib-observability/v2/metrics"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/LerianStudio/lib-streaming/internal/consumer"
+	"github.com/LerianStudio/lib-streaming/v2/internal/consumer"
 )
 
 // Handler is the only interface a consuming service implements. The library

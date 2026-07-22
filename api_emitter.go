@@ -3,12 +3,12 @@ package streaming
 import (
 	"context"
 
-	"github.com/LerianStudio/lib-commons/v5/commons"
-	"github.com/LerianStudio/lib-commons/v5/commons/outbox"
+	"github.com/LerianStudio/lib-commons/v6/commons"
+	"github.com/LerianStudio/lib-commons/v6/commons/outbox"
 
-	"github.com/LerianStudio/lib-streaming/internal/contract"
-	"github.com/LerianStudio/lib-streaming/internal/emitter"
-	"github.com/LerianStudio/lib-streaming/internal/producer"
+	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v2/internal/emitter"
+	"github.com/LerianStudio/lib-streaming/v2/internal/producer"
 )
 
 // Emitter publishes cataloged domain events and exposes lifecycle/health hooks.

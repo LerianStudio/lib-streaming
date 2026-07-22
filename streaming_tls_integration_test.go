@@ -32,8 +32,8 @@ import (
 	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kgo"
 
-	streaming "github.com/LerianStudio/lib-streaming"
-	"github.com/LerianStudio/lib-streaming/internal/config"
+	streaming "github.com/LerianStudio/lib-streaming/v2"
+	"github.com/LerianStudio/lib-streaming/v2/internal/config"
 )
 
 const (

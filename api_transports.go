@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/LerianStudio/lib-streaming/internal/transport"
-	"github.com/LerianStudio/lib-streaming/internal/transport/eventbridge"
-	"github.com/LerianStudio/lib-streaming/internal/transport/rabbitmq"
-	"github.com/LerianStudio/lib-streaming/internal/transport/sqs"
+	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
+	"github.com/LerianStudio/lib-streaming/v2/internal/transport/eventbridge"
+	"github.com/LerianStudio/lib-streaming/v2/internal/transport/rabbitmq"
+	"github.com/LerianStudio/lib-streaming/v2/internal/transport/sqs"
 )
 
 // SQSPublisherClient is the caller-supplied client interface used by the
@@ -121,7 +121,7 @@ func (b *Builder) SQSTarget(name string, client SQSPublisherClient, defaultQueue
 //
 // The lib-streaming RabbitMQ transport is for *business events* aimed at
 // third-party / SaaS subscribers. Internal command queues remain on
-// `github.com/LerianStudio/lib-commons/v5/commons/rabbitmq`.
+// `github.com/LerianStudio/lib-commons/v6/commons/rabbitmq`.
 type RabbitMQPublisher = rabbitmq.RabbitMQPublisher
 
 // RabbitMQPingClient is the optional health capability production RabbitMQ

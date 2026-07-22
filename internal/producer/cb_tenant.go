@@ -6,10 +6,10 @@ import (
 	"encoding/hex"
 	"fmt"
 
-	"github.com/LerianStudio/lib-commons/v5/commons/circuitbreaker"
-	tmcore "github.com/LerianStudio/lib-commons/v5/commons/tenant-manager/core"
+	"github.com/LerianStudio/lib-commons/v6/commons/circuitbreaker"
+	tmcore "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/core"
 
-	"github.com/LerianStudio/lib-streaming/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
 )
 
 const circuitBreakerTenantPrefix = "streaming-"

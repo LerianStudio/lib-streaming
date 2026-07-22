@@ -6,9 +6,9 @@ import (
 
 	"github.com/twmb/franz-go/pkg/kgo"
 
-	"github.com/LerianStudio/lib-streaming/internal/cloudevents"
-	"github.com/LerianStudio/lib-streaming/internal/contract"
-	"github.com/LerianStudio/lib-streaming/internal/emitter"
+	"github.com/LerianStudio/lib-streaming/v2/internal/cloudevents"
+	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v2/internal/emitter"
 )
 
 // NOTE: This file deliberately carries NO build tag, unlike the

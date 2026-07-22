@@ -1,5 +1,17 @@
 # Lib-streaming Changelog
 
+## [Unreleased]
+
+BREAKING CHANGES:
+- Migrate to `github.com/LerianStudio/lib-commons/v6` (and `github.com/LerianStudio/lib-observability/v2`). Because the public lifecycle surface exposes lib-commons types — `(*Producer).Run(launcher *commons.Launcher) error` and `(*Producer).RunContext(ctx, launcher *commons.Launcher) error`, plus the `commons.App` compile-time assertion — the underlying `commons.Launcher` / `commons.App` types now resolve to their lib-commons/v6 identities. This is a source-incompatible change for consumers that pass a v5 `*commons.Launcher`.
+- Cut the `/v2` module major: the module path is now `github.com/LerianStudio/lib-streaming/v2`. Consumers MUST update their import paths from `github.com/LerianStudio/lib-streaming[...]` to `github.com/LerianStudio/lib-streaming/v2[...]` and pass a lib-commons/v6 `*commons.Launcher` to `Run`/`RunContext`.
+
+Migration note: bump imports to the `/v2` path, upgrade to lib-commons/v6, and wire the producer into a v6 `commons.Launcher` exactly as before — no method-signature shape changes beyond the underlying package major.
+
+[Compare changes](https://github.com/LerianStudio/lib-streaming/compare/v1.9.0...HEAD)
+
+---
+
 ## [1.9.0](https://github.com/LerianStudio/lib-streaming/releases/tag/v1.9.0)
 
 Features:

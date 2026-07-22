@@ -3,8 +3,8 @@ package producer
 import (
 	"context"
 
-	libCommons "github.com/LerianStudio/lib-commons/v5/commons"
-	"github.com/LerianStudio/lib-observability/log"
+	libCommons "github.com/LerianStudio/lib-commons/v6/commons"
+	"github.com/LerianStudio/lib-observability/v2/log"
 )
 
 // Compile-time assertion: *Producer must satisfy commons.App. A missing

@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	streaming "github.com/LerianStudio/lib-streaming"
+	streaming "github.com/LerianStudio/lib-streaming/v2"
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
