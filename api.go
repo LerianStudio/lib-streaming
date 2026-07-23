@@ -78,6 +78,7 @@ type Builder struct {
 	source             string
 	catalog            Catalog
 	routes             []RouteDefinition
+	routeOverrides     []RouteDefinition
 	targets            []TargetConfig
 	targetExtras       map[string]any
 	transportFactories map[TransportKind]TransportAdapterFactory
@@ -141,6 +142,22 @@ func (b *Builder) Routes(routes ...RouteDefinition) *Builder {
 	}
 
 	b.routes = append([]RouteDefinition(nil), routes...)
+
+	return b
+}
+
+// RouteOverrides stores route definitions that override or extend the routes
+// resolved at Build time. The overrides are held verbatim (no validation here
+// — NewRouteTable validates them downstream) and consumed when Build assembles
+// the route table. Follows the same contract as Routes: nil-receiver safe and
+// defensively copies the variadic slice so later caller mutation cannot affect
+// the stored overrides.
+func (b *Builder) RouteOverrides(routes ...RouteDefinition) *Builder {
+	if b == nil {
+		return b
+	}
+
+	b.routeOverrides = append([]RouteDefinition(nil), routes...)
 
 	return b
 }
@@ -418,12 +435,28 @@ func (b *Builder) Build(ctx context.Context) (Emitter, error) {
 		return nil, fmt.Errorf("%w: nil builder", ErrInvalidRouteDefinition)
 	}
 
-	routeTable, err := NewRouteTable(b.routes...)
+	routeTable, err := NewRouteTable(b.mergedRoutes()...)
 	if err != nil {
 		return nil, err
 	}
 
 	return b.buildMulti(ctx, routeTable)
+}
+
+// mergedRoutes returns the route set the multi-target Build path feeds to
+// NewRouteTable: the configured routes with RouteOverrides merged in by
+// DefinitionKey. An override REPLACES a configured route sharing its
+// DefinitionKey; an override with a new DefinitionKey is appended. Precedence
+// is resolved by the shared contract.MergeRouteOverrides helper — the SAME
+// logic the single-target auto-generate path uses — so the two paths cannot
+// diverge (leaving both a base and an override route for one DefinitionKey
+// would double-publish, since the runtime fans out every route per
+// DefinitionKey). Catalog membership of the result is validated downstream in
+// the producer's validateRoutesAgainstTargets. b.routes is never mutated; the
+// result is always a fresh slice, including when only overrides or only base
+// routes are set.
+func (b *Builder) mergedRoutes() []RouteDefinition {
+	return contract.MergeRouteOverrides(b.routes, b.routeOverrides)
 }
 
 // buildMulti constructs the multi-target Producer. Validates targets,
