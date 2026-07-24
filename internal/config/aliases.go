@@ -17,4 +17,6 @@ var (
 	ErrInvalidDeliveryPolicy = contract.ErrInvalidDeliveryPolicy
 	ErrInvalidConfigField    = contract.ErrInvalidConfigField
 	ErrInvalidSASLMechanism  = contract.ErrInvalidSASLMechanism
+
+	ErrInvalidSchemaRegistryConfig = contract.ErrInvalidSchemaRegistryConfig
 )

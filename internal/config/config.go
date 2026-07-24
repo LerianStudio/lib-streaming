@@ -105,6 +105,20 @@ type Config struct {
 	// STREAMING_SASL_ALLOW_PLAINTEXT (with the deprecated
 	// STREAMING_ALLOW_PLAINTEXT_SASL accepted as a fallback alias).
 	SASLAllowPlaintext bool
+
+	// SchemaRegistryURL is the Schema Registry endpoint used by the billing
+	// serialize path. Empty means no registry is configured — the registry is
+	// optional and only that path needs it. Maps to
+	// STREAMING_SCHEMA_REGISTRY_URL.
+	SchemaRegistryURL string
+	// SchemaRegistryUsername is the Schema Registry basic-auth username.
+	// Optional; when set, a password is required. Maps to
+	// STREAMING_SCHEMA_REGISTRY_USERNAME.
+	SchemaRegistryUsername string
+	// SchemaRegistryPassword is the Schema Registry basic-auth password.
+	// SECRET — never logged or rendered into errors. Maps to
+	// STREAMING_SCHEMA_REGISTRY_PASSWORD.
+	SchemaRegistryPassword string
 }
 
 // Default values used by LoadConfig when an environment variable is unset.
@@ -253,6 +267,10 @@ func LoadConfig() (Config, []string, error) {
 		SASLUsername:          commons.GetenvOrDefault("STREAMING_SASL_USERNAME", ""),
 		SASLPassword:          commons.GetenvOrDefault("STREAMING_SASL_PASSWORD", ""),
 		SASLAllowPlaintext:    saslAllowPlaintext,
+
+		SchemaRegistryURL:      commons.GetenvOrDefault("STREAMING_SCHEMA_REGISTRY_URL", ""),
+		SchemaRegistryUsername: commons.GetenvOrDefault("STREAMING_SCHEMA_REGISTRY_USERNAME", ""),
+		SchemaRegistryPassword: commons.GetenvOrDefault("STREAMING_SCHEMA_REGISTRY_PASSWORD", ""),
 	}
 
 	if !cfg.Enabled {
@@ -312,6 +330,10 @@ func (c Config) validate() error {
 		return err
 	}
 
+	if err := c.validateSchemaRegistry(); err != nil {
+		return err
+	}
+
 	return c.validateRanges()
 }
 
@@ -341,6 +363,26 @@ func (c Config) validateTLS() error {
 
 	if _, err := c.BuildTLSConfig(); err != nil {
 		return err
+	}
+
+	return nil
+}
+
+// validateSchemaRegistry enforces the Schema Registry credential-pairing
+// contract. The registry is optional (only the billing serialize path needs
+// it), so an empty SchemaRegistryURL is not an error and the gate is a no-op.
+// When a URL is configured, a username without a matching password is a
+// partial credential — a misconfiguration that would silently produce
+// unauthenticated requests — and is rejected with ErrInvalidSchemaRegistryConfig,
+// mirroring validateSASL's username/password pairing rule. The password value
+// is never rendered into the error.
+func (c Config) validateSchemaRegistry() error {
+	if c.SchemaRegistryURL == "" {
+		return nil
+	}
+
+	if c.SchemaRegistryUsername != "" && c.SchemaRegistryPassword == "" {
+		return fmt.Errorf("%w: STREAMING_SCHEMA_REGISTRY_USERNAME set without STREAMING_SCHEMA_REGISTRY_PASSWORD", ErrInvalidSchemaRegistryConfig)
 	}
 
 	return nil

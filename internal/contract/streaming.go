@@ -276,6 +276,16 @@ var (
 	// includes the SASL password.
 	ErrInvalidSASLMechanism = errors.New("streaming: invalid SASL mechanism")
 
+	// ErrInvalidSchemaRegistryConfig is returned when the Schema Registry
+	// configuration is unusable: an empty registry URL passed to
+	// kafkasec.BuildSchemaRegistryClient, or (surfaced by LoadConfig) a
+	// STREAMING_SCHEMA_REGISTRY_USERNAME set without a matching
+	// STREAMING_SCHEMA_REGISTRY_PASSWORD. The registry is optional overall —
+	// only the billing serialize path needs it — so an entirely unset
+	// STREAMING_SCHEMA_REGISTRY_* group is NOT an error. Caller-correctable.
+	// The error message never includes the registry password.
+	ErrInvalidSchemaRegistryConfig = errors.New("streaming: invalid schema registry config")
+
 	// ErrNilProducer is returned when a method is invoked on a nil *Producer.
 	// Parallels circuitbreaker.ErrNilCircuitBreaker. Callers should treat this
 	// as a programming error — a nil Producer indicates construction was
@@ -399,6 +409,7 @@ var callerErrorSentinels = []error{
 	ErrInvalidTLSConfig,
 	ErrPlaintextSASLNotAllowed,
 	ErrInvalidSASLMechanism,
+	ErrInvalidSchemaRegistryConfig,
 	ErrInvalidTenantID,
 	ErrInvalidResourceType,
 	ErrInvalidEventType,
