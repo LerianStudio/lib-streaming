@@ -1,19 +1,17 @@
 package billing
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"strings"
-	"time"
+
+	billingv1 "github.com/LerianStudio/lib-streaming/v2/billing/gen/lerian/streaming/billing/v1"
 )
 
 // Anti-abuse ceilings. These are DoS guards, NOT business rules: they are sized
 // generously so a realistic Lago billable event never trips them, and exist
-// only to bound the work Validate (and, in Phase 2, untrusted inbound Kafka
-// payloads) will do on a hostile input. Adjust if a legitimate event ever
-// exceeds one.
+// only to bound the work Validate (and, in Phase 2, untrusted inbound payloads)
+// will do on a hostile input. Adjust if a legitimate event ever exceeds one.
 const (
 	maxMetricBytes                  = 255
 	maxSubscriptionIDBytes          = 255
@@ -23,86 +21,68 @@ const (
 	maxPreciseTotalAmountCentsBytes = 64
 )
 
-// Validate reports whether the payload satisfies the billable-event invariants
-// Lago enforces at ingestion: a non-empty metric code and external subscription
-// id, property values restricted to JSON-safe finite scalars, and a well-formed
-// decimal amount when present. It also enforces the anti-abuse size ceilings
-// above.
+// Validate reports whether p satisfies the residual billable-event invariants
+// the protobuf schema cannot express structurally: a non-empty metric code and
+// external subscription id, a well-formed decimal precise_total_amount_cents
+// when present, and the anti-abuse size ceilings above.
+//
+// Property value TYPES (string OR number) are enforced by the proto `oneof` at
+// the schema layer, so Validate no longer re-checks them — only the string
+// value length cap remains, as a size guard.
 //
 // It returns a descriptive error rather than a sentinel: a failing payload is a
 // construction-time caller bug — the emit path assembles these values, so a
 // violation is a programming error to fix, not a runtime condition to branch on
-// with errors.Is.
-//
-// Marshalability guarantee: when Validate returns nil, json.Marshal(p) is
-// guaranteed to succeed. Every accepted property value is a finite number or a
-// bounded string, and PreciseTotalAmountCents is a plain decimal string — none
-// of the inputs json.Marshal rejects (non-finite floats, malformed json.Number)
-// can pass Validate. MustMarshal relies on this.
-func (p BillablePayload) Validate() error {
-	if strings.TrimSpace(p.Metric) == "" {
+// with errors.Is. A nil payload is reported as an error, never a panic: the
+// generated getters are nil-safe, so it degrades to "Metric is required".
+func Validate(p *BillablePayload) error {
+	if strings.TrimSpace(p.GetMetric()) == "" {
 		return errors.New("billing: Metric is required")
 	}
 
-	if len(p.Metric) > maxMetricBytes {
+	if len(p.GetMetric()) > maxMetricBytes {
 		return fmt.Errorf("billing: Metric exceeds %d bytes", maxMetricBytes)
 	}
 
-	if strings.TrimSpace(p.SubscriptionID) == "" {
+	if strings.TrimSpace(p.GetSubscriptionId()) == "" {
 		return errors.New("billing: SubscriptionID is required")
 	}
 
-	if len(p.SubscriptionID) > maxSubscriptionIDBytes {
+	if len(p.GetSubscriptionId()) > maxSubscriptionIDBytes {
 		return fmt.Errorf("billing: SubscriptionID exceeds %d bytes", maxSubscriptionIDBytes)
 	}
 
-	if err := validateTimestamp(p.Timestamp); err != nil {
+	if err := validateProperties(p.GetProperties()); err != nil {
 		return err
 	}
 
-	if err := validateProperties(p.Properties); err != nil {
-		return err
-	}
-
-	return validatePreciseTotalAmountCents(p.PreciseTotalAmountCents)
+	return validatePreciseTotalAmountCents(p.GetPreciseTotalAmountCents(), p.PreciseTotalAmountCents != nil)
 }
 
-// validateTimestamp keeps the marshalability guarantee honest: time.Time.
-// MarshalJSON (RFC 3339) rejects years outside [0,9999], so a Timestamp beyond
-// that range would pass Validate yet fail json.Marshal. Reject it here.
-func validateTimestamp(ts *time.Time) error {
-	if ts == nil {
+// validatePreciseTotalAmountCents enforces the size cap and decimal-string shape
+// only when the field is present. present distinguishes an absent optional field
+// (valid) from a present empty string (rejected).
+func validatePreciseTotalAmountCents(cents string, present bool) error {
+	if !present {
 		return nil
 	}
 
-	if y := ts.Year(); y < 0 || y > 9999 {
-		return fmt.Errorf("billing: Timestamp year %d is out of the RFC 3339 range [0,9999]", y)
-	}
-
-	return nil
-}
-
-func validatePreciseTotalAmountCents(cents *string) error {
-	if cents == nil {
-		return nil
-	}
-
-	if len(*cents) > maxPreciseTotalAmountCentsBytes {
+	if len(cents) > maxPreciseTotalAmountCentsBytes {
 		return fmt.Errorf("billing: PreciseTotalAmountCents exceeds %d bytes", maxPreciseTotalAmountCentsBytes)
 	}
 
-	if !isDecimalString(*cents) {
-		return fmt.Errorf("billing: PreciseTotalAmountCents %q is not a valid decimal string", *cents)
+	if !isDecimalString(cents) {
+		return fmt.Errorf("billing: PreciseTotalAmountCents %q is not a valid decimal string", cents)
 	}
 
 	return nil
 }
 
-// validateProperties rejects any property value that is not a JSON-safe scalar
-// Lago accepts (a bounded string or a finite number) and enforces the property
-// count/key/value ceilings. bool, complex, slices (including []byte), maps, and
-// nil are rejected; the error names the offending key and its Go type.
-func validateProperties(properties map[string]any) error {
+// validateProperties enforces the property count ceiling, the key-length cap,
+// and the string value-length cap. Number values carry no length, and the proto
+// oneof already guarantees every value is a string or a number, so no type check
+// is performed here. A nil property value is tolerated (nil-safe getters).
+func validateProperties(properties map[string]*billingv1.PropertyValue) error {
 	if len(properties) > maxProperties {
 		return fmt.Errorf("billing: too many properties: %d (max %d)", len(properties), maxProperties)
 	}
@@ -112,73 +92,11 @@ func validateProperties(properties map[string]any) error {
 			return fmt.Errorf("billing: property key %q exceeds %d bytes", key, maxPropertyKeyBytes)
 		}
 
-		if err := validatePropertyValue(key, value); err != nil {
-			return err
+		if sv, ok := value.GetValue().(*billingv1.PropertyValue_StringValue); ok {
+			if len(sv.StringValue) > maxPropertyStringValueBytes {
+				return fmt.Errorf("billing: property %q string value exceeds %d bytes", key, maxPropertyStringValueBytes)
+			}
 		}
-	}
-
-	return nil
-}
-
-// validatePropertyValue accepts a bounded string, any built-in integer kind, a
-// finite float32/float64, or a parseable finite json.Number; everything else is
-// rejected. Accepting every integer/float kind (not just int/int64/float64)
-// matches the numeric types a Go producer naturally hands over.
-func validatePropertyValue(key string, value any) error {
-	switch v := value.(type) {
-	case string:
-		if len(v) > maxPropertyStringValueBytes {
-			return fmt.Errorf("billing: property %q string value exceeds %d bytes", key, maxPropertyStringValueBytes)
-		}
-
-		return nil
-	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
-		return nil
-	case float32:
-		return validateFiniteFloat(key, float64(v))
-	case float64:
-		return validateFiniteFloat(key, v)
-	case json.Number:
-		return validateJSONNumber(key, v)
-	default:
-		return fmt.Errorf("billing: property %q has unsupported type %T (want string or number)", key, value)
-	}
-}
-
-// validateFiniteFloat rejects NaN and ±Inf, which json.Marshal cannot encode.
-func validateFiniteFloat(key string, f float64) error {
-	if math.IsNaN(f) || math.IsInf(f, 0) {
-		return fmt.Errorf("billing: property %q is a non-finite number", key)
-	}
-
-	return nil
-}
-
-// validateJSONNumber guarantees the json.Number is something json.Marshal will
-// accept: it must parse as a finite float AND be a valid JSON number literal.
-// This rejects gibberish ("not-a-number"), the empty string, non-finite forms
-// ("NaN", "Inf"), and grammar json.Marshal disallows (leading '+', ".5",
-// hex floats) — all of which strconv/ParseFloat would otherwise tolerate.
-func validateJSONNumber(key string, n json.Number) error {
-	s := n.String()
-
-	// Bound the literal before parsing, mirroring the string-value cap so a
-	// json.Number cannot smuggle an unbounded value past the DoS guards.
-	if len(s) > maxPropertyStringValueBytes {
-		return fmt.Errorf("billing: property %q json.Number value exceeds %d bytes", key, maxPropertyStringValueBytes)
-	}
-
-	f, err := n.Float64()
-	if err != nil {
-		return fmt.Errorf("billing: property %q json.Number %q is not a valid number: %w", key, s, err)
-	}
-
-	if math.IsNaN(f) || math.IsInf(f, 0) {
-		return fmt.Errorf("billing: property %q json.Number %q is non-finite", key, s)
-	}
-
-	if !json.Valid([]byte(s)) {
-		return fmt.Errorf("billing: property %q json.Number %q is not a valid JSON number literal", key, s)
 	}
 
 	return nil

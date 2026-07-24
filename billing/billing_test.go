@@ -3,10 +3,7 @@
 package billing_test
 
 import (
-	"encoding/json"
-	"reflect"
 	"testing"
-	"time"
 
 	streaming "github.com/LerianStudio/lib-streaming/v2"
 	"github.com/LerianStudio/lib-streaming/v2/billing"
@@ -34,6 +31,7 @@ func TestBilling_Definition(t *testing.T) {
 		{name: "Key", got: def.Key, want: "billing_recorded"},
 		{name: "ResourceType", got: def.ResourceType, want: "billing"},
 		{name: "EventType", got: def.EventType, want: "recorded"},
+		{name: "DataContentType", got: def.DataContentType, want: "application/vnd.confluent.protobuf"},
 		{name: "Description", got: def.Description, want: "Billable usage event for Lago metering"},
 	}
 
@@ -88,91 +86,27 @@ func TestBilling_Route(t *testing.T) {
 	}
 }
 
-func TestBilling_MustMarshal_RoundTrips(t *testing.T) {
+func TestBilling_StringProperty(t *testing.T) {
 	t.Parallel()
 
-	ts := time.Date(2026, time.July, 23, 10, 30, 0, 0, time.UTC)
-	cents := "12345"
-	payload := billing.BillablePayload{
-		Metric:                  "api_calls",
-		SubscriptionID:          "sub_123",
-		Timestamp:               &ts,
-		Properties:              map[string]any{"region": "br"},
-		PreciseTotalAmountCents: &cents,
+	pv := billing.StringProperty("br")
+	if got := pv.GetStringValue(); got != "br" {
+		t.Errorf("StringProperty().GetStringValue() = %q, want %q", got, "br")
 	}
-
-	raw := billing.MustMarshal(payload)
-
-	var got billing.BillablePayload
-	if err := json.Unmarshal(raw, &got); err != nil {
-		t.Fatalf("json.Unmarshal() error = %v", err)
-	}
-
-	if got.Metric != payload.Metric {
-		t.Errorf("Metric = %q, want %q", got.Metric, payload.Metric)
-	}
-
-	if got.SubscriptionID != payload.SubscriptionID {
-		t.Errorf("SubscriptionID = %q, want %q", got.SubscriptionID, payload.SubscriptionID)
-	}
-
-	if got.Timestamp == nil || !got.Timestamp.Equal(ts) {
-		t.Errorf("Timestamp = %v, want %v", got.Timestamp, ts)
-	}
-
-	if got.PreciseTotalAmountCents == nil || *got.PreciseTotalAmountCents != cents {
-		t.Errorf("PreciseTotalAmountCents = %v, want %q", got.PreciseTotalAmountCents, cents)
-	}
-
-	if !reflect.DeepEqual(got.Properties, payload.Properties) {
-		t.Errorf("Properties = %#v, want %#v", got.Properties, payload.Properties)
+	// A string property must not read back as a number.
+	if got := pv.GetNumberValue(); got != 0 {
+		t.Errorf("StringProperty().GetNumberValue() = %v, want 0", got)
 	}
 }
 
-func TestBilling_MustMarshal_PanicsOnInvalidJSONNumber(t *testing.T) {
+func TestBilling_NumberProperty(t *testing.T) {
 	t.Parallel()
 
-	// An invalid json.Number literal is rejected by Validate (which now
-	// guarantees marshalability), so MustMarshal panics at the Validate gate.
-	// This locks that MustMarshal refuses a payload json.Marshal would choke
-	// on rather than emitting a broken record.
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatalf("MustMarshal did not panic on an invalid json.Number payload")
-		}
-	}()
-
-	_ = billing.MustMarshal(billing.BillablePayload{
-		Metric:         "api_calls",
-		SubscriptionID: "sub_123",
-		Properties:     map[string]any{"bad": json.Number("not-a-number")},
-	})
-}
-
-func TestBilling_MustMarshal_OmitsEmptyOptionalFields(t *testing.T) {
-	t.Parallel()
-
-	raw := billing.MustMarshal(billing.BillablePayload{
-		Metric:         "api_calls",
-		SubscriptionID: "sub_123",
-	})
-
-	var envelope map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &envelope); err != nil {
-		t.Fatalf("json.Unmarshal() error = %v", err)
-	}
-
-	for _, key := range []string{"timestamp", "properties", "preciseTotalAmountCents"} {
-		if _, present := envelope[key]; present {
-			t.Errorf("expected optional field %q to be omitted, but it was present", key)
-		}
-	}
-
-	if _, present := envelope["metric"]; !present {
-		t.Errorf("expected required field %q to be present", "metric")
-	}
-
-	if _, present := envelope["subscriptionId"]; !present {
-		t.Errorf("expected required field %q to be present", "subscriptionId")
+	pv := billing.NumberProperty(12.5)
+	if got := pv.GetNumberValue(); got != 12.5 {
+		t.Errorf("NumberProperty().GetNumberValue() = %v, want %v", got, 12.5)
 	}
 }
+
+// Serialization is provided by the Schema-Registry Confluent-Protobuf
+// Serializer; its coverage lives in serializer_test.go.

@@ -3,14 +3,17 @@
 // package for the single source of truth on the event's payload shape,
 // catalog definition, and transport route — so the wire contract stays
 // consistent across every service that emits or consumes it.
+//
+// The payload type is the generated protobuf message
+// (billing/gen/lerian/streaming/billing/v1). This package re-exports it under
+// the ergonomic name producers already import and adds small constructor
+// helpers so callers build the property bag without hand-assembling the proto
+// oneof.
 package billing
 
 import (
-	"encoding/json"
-	"fmt"
-	"time"
-
 	streaming "github.com/LerianStudio/lib-streaming/v2"
+	billingv1 "github.com/LerianStudio/lib-streaming/v2/billing/gen/lerian/streaming/billing/v1"
 )
 
 // Topic is the Kafka-like topic billable usage events are published to. It is
@@ -18,21 +21,42 @@ import (
 // physical topic never drift apart.
 const Topic = "lerian.streaming.billing.recorded"
 
+// DataContentType is the CloudEvents datacontenttype for a billable usage event.
+// The payload is Confluent-framed binary protobuf (see Serializer), not JSON, so
+// Definition advertises this content type: the produce path's JSON-validity
+// preflight is content-type-aware and skips the opaque, non-JSON payload,
+// shipping the Confluent bytes to the broker verbatim.
+const DataContentType = "application/vnd.confluent.protobuf"
+
 // definitionKey is the catalog key that ties Definition and Route together.
 // Route.DefinitionKey must equal Definition().Key for the route to resolve
 // against the event it describes.
 const definitionKey = "billing_recorded"
 
-// BillablePayload is the wire payload for a billable usage event. Field
-// serialization mirrors the Lago ingestion contract: metric and subscription
-// are always present; timestamp, properties, and the precise amount are
-// optional and omitted from the wire when unset.
-type BillablePayload struct {
-	Metric                  string         `json:"metric"`
-	SubscriptionID          string         `json:"subscriptionId"`
-	Timestamp               *time.Time     `json:"timestamp,omitempty"`
-	Properties              map[string]any `json:"properties,omitempty"`
-	PreciseTotalAmountCents *string        `json:"preciseTotalAmountCents,omitempty"`
+// BillablePayload is the wire payload for a billable usage event. It is a type
+// alias for the generated protobuf message: the generated type IS the wire
+// contract, and the alias keeps the ergonomic billing.BillablePayload name that
+// producers already import. Serialization mirrors the Lago ingestion contract —
+// metric and subscription_id are always present; timestamp, properties, and
+// precise_total_amount_cents are optional and omitted from the wire when unset.
+type BillablePayload = billingv1.BillablePayload
+
+// PropertyValue is a single Lago metric property value, constrained by the proto
+// schema to a string OR a number. It aliases the generated oneof message; build
+// one with StringProperty or NumberProperty rather than assembling the oneof by
+// hand.
+type PropertyValue = billingv1.PropertyValue
+
+// StringProperty builds a string-valued PropertyValue for the properties bag,
+// hiding the generated oneof wrapper from callers.
+func StringProperty(s string) *PropertyValue {
+	return &PropertyValue{Value: &billingv1.PropertyValue_StringValue{StringValue: s}}
+}
+
+// NumberProperty builds a number-valued PropertyValue for the properties bag,
+// hiding the generated oneof wrapper from callers.
+func NumberProperty(n float64) *PropertyValue {
+	return &PropertyValue{Value: &billingv1.PropertyValue_NumberValue{NumberValue: n}}
 }
 
 // Definition returns the static catalog contract for the billable usage event.
@@ -40,10 +64,11 @@ type BillablePayload struct {
 // be composed into a streaming.Catalog by the producing service at bootstrap.
 func Definition() streaming.EventDefinition {
 	return streaming.EventDefinition{
-		Key:          definitionKey,
-		ResourceType: "billing",
-		EventType:    "recorded",
-		Description:  "Billable usage event for Lago metering",
+		Key:             definitionKey,
+		ResourceType:    "billing",
+		EventType:       "recorded",
+		DataContentType: DataContentType,
+		Description:     "Billable usage event for Lago metering",
 	}
 }
 
@@ -62,32 +87,4 @@ func Route() streaming.RouteDefinition {
 		},
 		Requirement: streaming.RouteRequired,
 	}
-}
-
-// MustMarshal validates p and returns its JSON encoding, panicking on error.
-//
-// This is a construction/init-time convenience helper in the spirit of
-// regexp.MustCompile: it panics ONLY on a caller bug — a payload that fails
-// Validate or a value the standard library cannot encode — both of which are
-// deterministic and surface at the first call during development, never as a
-// runtime condition on the hot path. Production emit paths that build payloads
-// from dynamic input MUST call p.Validate() and json.Marshal directly and
-// handle the returned error instead of using MustMarshal.
-func MustMarshal(p BillablePayload) json.RawMessage {
-	if err := p.Validate(); err != nil {
-		panic(fmt.Errorf("billing: MustMarshal on invalid payload: %w", err))
-	}
-
-	// Defensive belt-and-suspenders. Validate guarantees marshalability — it
-	// rejects the only inputs json.Marshal would choke on (non-finite floats,
-	// malformed json.Number, out-of-RFC-3339-range Timestamp) — so this branch
-	// is not reachable through a Validate-passing payload and is intentionally
-	// left uncovered. It stays as a hard stop against a future construction bug
-	// where Validate and the payload shape drift apart.
-	raw, err := json.Marshal(p)
-	if err != nil {
-		panic(fmt.Errorf("billing: MustMarshal encode failed: %w", err))
-	}
-
-	return raw
 }

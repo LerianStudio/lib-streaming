@@ -91,6 +91,10 @@ GOTESTSUM_VERSION ?= v1.13.0
 GOSEC_VERSION ?= v2.26.1
 GOLANGCI_LINT_VERSION ?= v2.12.2
 GORELEASER_VERSION ?= v2.15.4
+BUF_VERSION ?= v1.72.0
+# Baseline the protobuf backward-compatibility check runs against. Defaults to
+# the tip of main via the local git repo; CI overrides it with the PR base ref.
+BUF_BREAKING_AGAINST ?= .git#branch=main
 ENABLE_PERFSPRINT ?= 0
 
 TEST_REPORTS_DIR ?= ./reports
@@ -159,6 +163,13 @@ help:
 	@echo "  make setup-git-hooks             - Install and configure git hooks"
 	@echo "  make check-hooks                 - Verify git hooks installation status"
 	@echo "  make check-envs                  - Check if github hooks are installed and secret env files are not exposed"
+	@echo ""
+	@echo ""
+	@echo "Protobuf Commands:"
+	@echo "  make buf-install                 - Install the buf CLI (pinned BUF_VERSION) if missing"
+	@echo "  make proto-lint                  - Lint the billing protobuf module (buf lint)"
+	@echo "  make proto-breaking              - Check protobuf backward compatibility (buf breaking)"
+	@echo "  make proto                       - Generate Go types from the billing protobuf module (buf generate)"
 	@echo ""
 	@echo ""
 	@echo "Release Commands:"
@@ -772,6 +783,41 @@ sec:
 	else \
 		echo "No Go files found, skipping security checks"; \
 	fi
+
+#-------------------------------------------------------
+# Protobuf / buf Commands
+#-------------------------------------------------------
+
+# buf drives the billing streaming contract: protos live under billing/proto
+# and generated Go types land under billing/gen (see buf.yaml / buf.gen.yaml).
+# BUF_VERSION is pinned for reproducibility; CI installs the same version.
+
+.PHONY: buf-install
+buf-install:
+	@if ! command -v buf >/dev/null 2>&1; then \
+		echo "Installing buf $(BUF_VERSION)..."; \
+		GO111MODULE=on go install github.com/bufbuild/buf/cmd/buf@$(BUF_VERSION); \
+	else \
+		echo "buf already installed: $$(command -v buf) ($$(buf --version))"; \
+	fi
+
+.PHONY: proto-lint
+proto-lint: buf-install
+	$(call print_title,Linting protobuf module)
+	@buf lint
+	@echo "$(GREEN)$(BOLD)[ok]$(NC) Protobuf lint passed$(GREEN) ✔️$(NC)"
+
+.PHONY: proto-breaking
+proto-breaking: buf-install
+	$(call print_title,Checking protobuf backward compatibility)
+	@buf breaking --against "$(BUF_BREAKING_AGAINST)"
+	@echo "$(GREEN)$(BOLD)[ok]$(NC) Protobuf backward compatibility check passed$(GREEN) ✔️$(NC)"
+
+.PHONY: proto
+proto: buf-install
+	$(call print_title,Generating protobuf Go types)
+	@buf generate
+	@echo "$(GREEN)$(BOLD)[ok]$(NC) Protobuf Go types generated$(GREEN) ✔️$(NC)"
 
 #-------------------------------------------------------
 # Release Commands
