@@ -444,17 +444,19 @@ func (b *Builder) Build(ctx context.Context) (Emitter, error) {
 }
 
 // mergedRoutes returns the route set the multi-target Build path feeds to
-// NewRouteTable: the configured routes with RouteOverrides merged in by
-// DefinitionKey. An override REPLACES a configured route sharing its
-// DefinitionKey; an override with a new DefinitionKey is appended. Precedence
-// is resolved by the shared contract.MergeRouteOverrides helper — the SAME
-// logic the single-target auto-generate path uses — so the two paths cannot
-// diverge (leaving both a base and an override route for one DefinitionKey
-// would double-publish, since the runtime fans out every route per
-// DefinitionKey). Catalog membership of the result is validated downstream in
-// the producer's validateRoutesAgainstTargets. b.routes is never mutated; the
-// result is always a fresh slice, including when only overrides or only base
-// routes are set.
+// NewRouteTable: the configured routes with RouteOverrides merged in by the
+// (DefinitionKey, Target) pair. An override REPLACES a configured route sharing
+// its (DefinitionKey, Target); sibling-target base routes for the same
+// DefinitionKey but a different Target are PRESERVED (an override for one target
+// does not drop the definition's routes to other targets). An override whose
+// (DefinitionKey, Target) is new is appended. Precedence is resolved by the
+// shared contract.MergeRouteOverrides helper — the SAME logic the single-target
+// auto-generate path uses — so the two paths cannot diverge (leaving two routes
+// for one (DefinitionKey, Target) would double-publish to that target, since the
+// runtime fans out every route per DefinitionKey). Catalog membership of the
+// result is validated downstream in the producer's validateRoutesAgainstTargets.
+// b.routes is never mutated; the result is always a fresh slice, including when
+// only overrides or only base routes are set.
 func (b *Builder) mergedRoutes() []RouteDefinition {
 	return contract.MergeRouteOverrides(b.routes, b.routeOverrides)
 }
