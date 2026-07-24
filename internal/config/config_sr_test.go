@@ -74,6 +74,81 @@ func TestLoadConfig_SchemaRegistryUsernameWithoutPasswordRejected(t *testing.T) 
 	}
 }
 
+func TestLoadConfig_SchemaRegistryPasswordWithoutUsernameRejected(t *testing.T) {
+	clearStreamingEnv(t)
+
+	t.Setenv("STREAMING_ENABLED", "true")
+	t.Setenv("STREAMING_BROKERS", "localhost:9092")
+	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.test/svc")
+	t.Setenv("STREAMING_SCHEMA_REGISTRY_URL", "https://sr.lerian.test")
+	t.Setenv("STREAMING_SCHEMA_REGISTRY_PASSWORD", "sr-secret")
+	// username intentionally omitted — a partial credential is a misconfig,
+	// symmetric to the username-without-password rejection above.
+
+	_, _, err := LoadConfig()
+	if !errors.Is(err, ErrInvalidSchemaRegistryConfig) {
+		t.Fatalf("LoadConfig() err = %v; want ErrInvalidSchemaRegistryConfig", err)
+	}
+}
+
+func TestLoadConfig_SchemaRegistryHTTPWithCredentialsWarns(t *testing.T) {
+	clearStreamingEnv(t)
+
+	const password = "sr-hunter2-secret"
+
+	t.Setenv("STREAMING_ENABLED", "true")
+	t.Setenv("STREAMING_BROKERS", "localhost:9092")
+	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.test/svc")
+	// Plaintext http:// endpoint carrying basic-auth credentials: defense-in-depth
+	// warning, not a hard reject (local dev may legitimately use http:// with creds).
+	t.Setenv("STREAMING_SCHEMA_REGISTRY_URL", "http://sr.lerian.test")
+	t.Setenv("STREAMING_SCHEMA_REGISTRY_USERNAME", "alice")
+	t.Setenv("STREAMING_SCHEMA_REGISTRY_PASSWORD", password)
+
+	_, warnings, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig() err = %v; want nil (http+creds warns, not rejects)", err)
+	}
+
+	var found bool
+
+	for _, w := range warnings {
+		if strings.Contains(w, "STREAMING_SCHEMA_REGISTRY_URL") && strings.Contains(w, "https") {
+			found = true
+		}
+
+		if strings.Contains(w, password) {
+			t.Errorf("warning leaks SR password: %q", w)
+		}
+	}
+
+	if !found {
+		t.Errorf("LoadConfig() warnings = %v; want an https-with-creds warning", warnings)
+	}
+}
+
+func TestLoadConfig_SchemaRegistryHTTPSWithCredentialsDoesNotWarn(t *testing.T) {
+	clearStreamingEnv(t)
+
+	t.Setenv("STREAMING_ENABLED", "true")
+	t.Setenv("STREAMING_BROKERS", "localhost:9092")
+	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.test/svc")
+	t.Setenv("STREAMING_SCHEMA_REGISTRY_URL", "https://sr.lerian.test")
+	t.Setenv("STREAMING_SCHEMA_REGISTRY_USERNAME", "alice")
+	t.Setenv("STREAMING_SCHEMA_REGISTRY_PASSWORD", "sr-secret")
+
+	_, warnings, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig() err = %v; want nil", err)
+	}
+
+	for _, w := range warnings {
+		if strings.Contains(w, "STREAMING_SCHEMA_REGISTRY_URL") && strings.Contains(w, "https") {
+			t.Errorf("LoadConfig() emitted an https warning for an https URL: %q", w)
+		}
+	}
+}
+
 func TestLoadConfig_SchemaRegistryDisabledSkipsValidation(t *testing.T) {
 	clearStreamingEnv(t)
 

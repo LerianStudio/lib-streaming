@@ -273,6 +273,8 @@ func LoadConfig() (Config, []string, error) {
 		SchemaRegistryPassword: commons.GetenvOrDefault("STREAMING_SCHEMA_REGISTRY_PASSWORD", ""),
 	}
 
+	warnings = appendSchemaRegistryWarnings(warnings, cfg)
+
 	if !cfg.Enabled {
 		return cfg, warnings, nil
 	}
@@ -369,23 +371,68 @@ func (c Config) validateTLS() error {
 }
 
 // validateSchemaRegistry enforces the Schema Registry credential-pairing
-// contract. The registry is optional (only the billing serialize path needs
-// it), so an empty SchemaRegistryURL is not an error and the gate is a no-op.
-// When a URL is configured, a username without a matching password is a
-// partial credential — a misconfiguration that would silently produce
-// unauthenticated requests — and is rejected with ErrInvalidSchemaRegistryConfig,
-// mirroring validateSASL's username/password pairing rule. The password value
-// is never rendered into the error.
+// contract at startup. The registry is optional (only the billing serialize
+// path needs it), so an empty SchemaRegistryURL is not an error and the gate is
+// a no-op. When a URL is configured, exactly one of username/password set is a
+// partial credential — a misconfiguration that would silently produce the wrong
+// authorization — and is rejected symmetrically with
+// ErrInvalidSchemaRegistryConfig, mirroring validateSASL's both-or-neither
+// pairing rule (and kafkasec.BuildSchemaRegistryClient, the authoritative
+// builder-level gate). Startup thus fails closed consistently with the runtime
+// path. The password value is never rendered into the error.
+//
+// The https-with-credentials defense-in-depth signal is a WARNING, not a
+// rejection (local dev may legitimately pair http:// with credentials); it is
+// emitted from LoadConfig, which owns the warnings channel — see
+// schemaRegistryHTTPSWarning.
 func (c Config) validateSchemaRegistry() error {
 	if c.SchemaRegistryURL == "" {
 		return nil
 	}
 
-	if c.SchemaRegistryUsername != "" && c.SchemaRegistryPassword == "" {
-		return fmt.Errorf("%w: STREAMING_SCHEMA_REGISTRY_USERNAME set without STREAMING_SCHEMA_REGISTRY_PASSWORD", ErrInvalidSchemaRegistryConfig)
+	if (c.SchemaRegistryUsername == "") != (c.SchemaRegistryPassword == "") {
+		return fmt.Errorf("%w: STREAMING_SCHEMA_REGISTRY_USERNAME and STREAMING_SCHEMA_REGISTRY_PASSWORD must be set together", ErrInvalidSchemaRegistryConfig)
 	}
 
 	return nil
+}
+
+// schemaRegistryHTTPSWarning returns a non-empty defense-in-depth warning when
+// Schema Registry credentials are configured against a non-https endpoint, and
+// "" otherwise. Basic-auth credentials sent over plaintext http:// are exposed
+// on the wire, so this surfaces the risk without hard-rejecting (local/dev
+// brokers may legitimately use http://). The returned string never includes the
+// password value. It lives here — not in validateSchemaRegistry — because the
+// warnings channel is owned by LoadConfig, matching the deprecation-warning
+// pattern already used for STREAMING_ALLOW_PLAINTEXT_SASL.
+// appendSchemaRegistryWarnings appends the https-with-credentials
+// defense-in-depth warning to warnings when schemaRegistryHTTPSWarning reports
+// one, returning the (possibly extended) slice. The branch lives here rather
+// than inline in LoadConfig so LoadConfig's cyclomatic complexity stays within
+// budget.
+func appendSchemaRegistryWarnings(warnings []string, cfg Config) []string {
+	if w := schemaRegistryHTTPSWarning(cfg); w != "" {
+		return append(warnings, w)
+	}
+
+	return warnings
+}
+
+func schemaRegistryHTTPSWarning(cfg Config) string {
+	if cfg.SchemaRegistryURL == "" {
+		return ""
+	}
+
+	if cfg.SchemaRegistryUsername == "" && cfg.SchemaRegistryPassword == "" {
+		return ""
+	}
+
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(cfg.SchemaRegistryURL)), "https://") {
+		return ""
+	}
+
+	return "STREAMING_SCHEMA_REGISTRY_URL is not https:// but Schema Registry credentials are set; " +
+		"basic-auth credentials will cross the network in cleartext — use https:// outside local/dev"
 }
 
 // validateRanges enforces the numeric/duration field contracts. Split out
