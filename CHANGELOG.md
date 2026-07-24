@@ -5,8 +5,13 @@
 BREAKING CHANGES:
 - Migrate to `github.com/LerianStudio/lib-commons/v6` (and `github.com/LerianStudio/lib-observability/v2`). Because the public lifecycle surface exposes lib-commons types — `(*Producer).Run(launcher *commons.Launcher) error` and `(*Producer).RunContext(ctx, launcher *commons.Launcher) error`, plus the `commons.App` compile-time assertion — the underlying `commons.Launcher` / `commons.App` types now resolve to their lib-commons/v6 identities. This is a source-incompatible change for consumers that pass a v5 `*commons.Launcher`.
 - Cut the `/v2` module major: the module path is now `github.com/LerianStudio/lib-streaming/v2`. Consumers MUST update their import paths from `github.com/LerianStudio/lib-streaming[...]` to `github.com/LerianStudio/lib-streaming/v2[...]` and pass a lib-commons/v6 `*commons.Launcher` to `Run`/`RunContext`.
+- Rework the `billing` package onto the Protobuf / Schema-Registry contract. The payload is now the generated Protobuf message and the wire format is Confluent-framed Protobuf (`application/vnd.confluent.protobuf`), not JSON. Public API migration:
+  - `billing.MustMarshal(p)` → `billing.NewSerializer(ctx, client)` then `serializer.Serialize(&p)` (build `client` via `streaming.NewSchemaRegistryClient(cfg)`).
+  - `BillablePayload.SubscriptionID` field → `SubscriptionId` (generated casing).
+  - `Properties map[string]any` → `map[string]*billing.PropertyValue`; build values with `billing.StringProperty(...)` / `billing.NumberProperty(...)`.
+  - `(p).Validate()` method → package function `billing.Validate(&p)`.
 
-Migration note: bump imports to the `/v2` path, upgrade to lib-commons/v6, and wire the producer into a v6 `commons.Launcher` exactly as before — no method-signature shape changes beyond the underlying package major.
+Migration note: bump imports to the `/v2` path, upgrade to lib-commons/v6, and wire the producer into a v6 `commons.Launcher` exactly as before — no method-signature shape changes beyond the underlying package major. For `billing`, replace `MustMarshal`/`Validate()` with the `NewSchemaRegistryClient` → `NewSerializer` → `Serialize` wiring (see `Example_billingSerializer`); emitted bytes are Confluent-framed Protobuf, so set `EmitRequest.Payload` to the serializer output.
 
 [Compare changes](https://github.com/LerianStudio/lib-streaming/compare/v1.9.0...HEAD)
 

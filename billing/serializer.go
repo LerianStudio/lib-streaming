@@ -71,6 +71,10 @@ func NewSerializer(ctx context.Context, client *sr.Client) (*Serializer, error) 
 	// top-level message in the .proto, so its message-index is [0]. The default
 	// ConfluentHeader then frames the id and index ahead of the body — no manual
 	// framing here.
+	//
+	// Only an EncodeFn is registered: the Serializer is an encode-only producer
+	// path (there is no Decode entry point), so a DecodeFn would be dead code.
+	// sr.Register accepts an encode-only registration.
 	serde.Register(
 		subjectSchema.ID,
 		&billingv1.BillablePayload{},
@@ -83,14 +87,6 @@ func NewSerializer(ctx context.Context, client *sr.Client) (*Serializer, error) 
 
 			return proto.Marshal(msg)
 		}),
-		sr.DecodeFn(func(b []byte, v any) error {
-			msg, ok := v.(*billingv1.BillablePayload)
-			if !ok {
-				return fmt.Errorf("billing: decode expected *BillablePayload, got %T", v)
-			}
-
-			return proto.Unmarshal(b, msg)
-		}),
 	)
 
 	return &Serializer{serde: serde}, nil
@@ -100,7 +96,19 @@ func NewSerializer(ctx context.Context, client *sr.Client) (*Serializer, error) 
 // Validate first and RETURNS any violation as an error — it never panics, even
 // on a caller-constructed invalid payload — so the emit path branches on the
 // error rather than crashing the producer.
+//
+// A nil receiver or an uninitialized serde (a Serializer not built through
+// NewSerializer) is reported as an error rather than a nil-dereference panic,
+// so a Phase 2 caller that mis-wires construction fails closed.
+//
+// Serialize is safe for concurrent use by multiple goroutines once the
+// Serializer is constructed: sr.Serde.Encode is concurrency-safe, and the
+// serde is not mutated after NewSerializer returns.
 func (s *Serializer) Serialize(p *BillablePayload) ([]byte, error) {
+	if s == nil || s.serde == nil {
+		return nil, errors.New("billing: serializer is not initialized; construct it with NewSerializer")
+	}
+
 	if err := Validate(p); err != nil {
 		return nil, err
 	}

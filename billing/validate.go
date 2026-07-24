@@ -3,6 +3,7 @@ package billing
 import (
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 
 	billingv1 "github.com/LerianStudio/lib-streaming/v2/billing/gen/lerian/streaming/billing/v1"
@@ -27,15 +28,21 @@ const (
 // when present, and the anti-abuse size ceilings above.
 //
 // Property value TYPES (string OR number) are enforced by the proto `oneof` at
-// the schema layer, so Validate no longer re-checks them — only the string
-// value length cap remains, as a size guard.
+// the schema layer, so Validate no longer re-checks the type discriminator —
+// only the string value length cap and the number finiteness guard remain, as
+// value guards the schema cannot express (see validateProperties).
 //
 // It returns a descriptive error rather than a sentinel: a failing payload is a
 // construction-time caller bug — the emit path assembles these values, so a
 // violation is a programming error to fix, not a runtime condition to branch on
 // with errors.Is. A nil payload is reported as an error, never a panic: the
-// generated getters are nil-safe, so it degrades to "Metric is required".
+// explicit nil guard below short-circuits to "Metric is required" so the
+// contract holds even if the field checks are ever reordered.
 func Validate(p *BillablePayload) error {
+	if p == nil {
+		return errors.New("billing: Metric is required")
+	}
+
 	if strings.TrimSpace(p.GetMetric()) == "" {
 		return errors.New("billing: Metric is required")
 	}
@@ -79,9 +86,13 @@ func validatePreciseTotalAmountCents(cents string, present bool) error {
 }
 
 // validateProperties enforces the property count ceiling, the key-length cap,
-// and the string value-length cap. Number values carry no length, and the proto
-// oneof already guarantees every value is a string or a number, so no type check
-// is performed here. A nil property value is tolerated (nil-safe getters).
+// the string value-length cap, and number finiteness. The proto oneof already
+// guarantees every value is a string or a number, so no type discriminator
+// check is performed here. Numbers still need a value guard the schema cannot
+// express: protobuf `double` fully round-trips NaN and ±Inf, but the downstream
+// Lago JSON step cannot represent them, so a non-finite number would silently
+// drop the billable event — Validate rejects it here instead. A nil property
+// value is tolerated (nil-safe getters).
 func validateProperties(properties map[string]*billingv1.PropertyValue) error {
 	if len(properties) > maxProperties {
 		return fmt.Errorf("billing: too many properties: %d (max %d)", len(properties), maxProperties)
@@ -92,9 +103,14 @@ func validateProperties(properties map[string]*billingv1.PropertyValue) error {
 			return fmt.Errorf("billing: property key %q exceeds %d bytes", key, maxPropertyKeyBytes)
 		}
 
-		if sv, ok := value.GetValue().(*billingv1.PropertyValue_StringValue); ok {
-			if len(sv.StringValue) > maxPropertyStringValueBytes {
+		switch v := value.GetValue().(type) {
+		case *billingv1.PropertyValue_StringValue:
+			if len(v.StringValue) > maxPropertyStringValueBytes {
 				return fmt.Errorf("billing: property %q string value exceeds %d bytes", key, maxPropertyStringValueBytes)
+			}
+		case *billingv1.PropertyValue_NumberValue:
+			if math.IsNaN(v.NumberValue) || math.IsInf(v.NumberValue, 0) {
+				return fmt.Errorf("billing: property %q must be a finite number", key)
 			}
 		}
 	}

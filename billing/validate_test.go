@@ -3,6 +3,7 @@
 package billing_test
 
 import (
+	"math"
 	"strconv"
 	"strings"
 	"testing"
@@ -254,13 +255,72 @@ func TestValidate(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "large number property value is accepted (numbers have no length cap)",
+			name: "large finite number property value is accepted (numbers have no length cap)",
 			payload: &billing.BillablePayload{
 				Metric:         "api_calls",
 				SubscriptionId: "sub_123",
 				Properties:     map[string]*billing.PropertyValue{"huge": billing.NumberProperty(1e300)},
 			},
 			wantErr: false,
+		},
+		{
+			name: "positive-infinity number property value is rejected",
+			payload: &billing.BillablePayload{
+				Metric:         "api_calls",
+				SubscriptionId: "sub_123",
+				Properties:     map[string]*billing.PropertyValue{"amount": billing.NumberProperty(math.Inf(1))},
+			},
+			wantErr:         true,
+			wantErrContains: "must be a finite number",
+		},
+		{
+			name: "negative-infinity number property value is rejected",
+			payload: &billing.BillablePayload{
+				Metric:         "api_calls",
+				SubscriptionId: "sub_123",
+				Properties:     map[string]*billing.PropertyValue{"amount": billing.NumberProperty(math.Inf(-1))},
+			},
+			wantErr:         true,
+			wantErrContains: "must be a finite number",
+		},
+		{
+			name: "NaN number property value is rejected",
+			payload: &billing.BillablePayload{
+				Metric:         "api_calls",
+				SubscriptionId: "sub_123",
+				Properties:     map[string]*billing.PropertyValue{"amount": billing.NumberProperty(math.NaN())},
+			},
+			wantErr:         true,
+			wantErrContains: "must be a finite number",
+		},
+		{
+			name: "nil property value is tolerated (nil-safe getters)",
+			payload: &billing.BillablePayload{
+				Metric:         "api_calls",
+				SubscriptionId: "sub_123",
+				Properties:     map[string]*billing.PropertyValue{"k": nil},
+			},
+			wantErr: false,
+		},
+		{
+			name: "PreciseTotalAmountCents with a sign is rejected",
+			payload: &billing.BillablePayload{
+				Metric:                  "api_calls",
+				SubscriptionId:          "sub_123",
+				PreciseTotalAmountCents: new("-5"),
+			},
+			wantErr:         true,
+			wantErrContains: "not a valid decimal string",
+		},
+		{
+			name: "PreciseTotalAmountCents in exponent form is rejected",
+			payload: &billing.BillablePayload{
+				Metric:                  "api_calls",
+				SubscriptionId:          "sub_123",
+				PreciseTotalAmountCents: new("1e5"),
+			},
+			wantErr:         true,
+			wantErrContains: "not a valid decimal string",
 		},
 	}
 
