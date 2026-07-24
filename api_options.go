@@ -68,3 +68,10 @@ func WithAllowSystemEvents() EmitterOption { return producer.WithAllowSystemEven
 
 // WithCatalog wires the immutable event catalog required by NewProducer.
 func WithCatalog(catalog Catalog) EmitterOption { return producer.WithCatalog(catalog) }
+
+// NOTE: there is intentionally no root re-export of WithRouteOverrides. The
+// root construction path is NewBuilder → buildMulti → NewProducerMulti, which
+// does not read emitterOptions.routeOverrides, so a root-level option would be
+// a silent no-op. Builder.RouteOverrides is the sole public root mechanism for
+// route overrides; producer.WithRouteOverrides remains internal to the
+// single-target NewProducer path that genuinely consumes it.
