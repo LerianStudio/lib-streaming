@@ -1,0 +1,38 @@
+name: Proto Validation
+
+on:
+  pull_request:
+    branches: [develop, release-candidate, main]
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'billing/proto/**'
+      - 'buf.yaml'
+      - 'buf.gen.yaml'
+      - 'buf.lock'
+      - '.github/workflows/proto-validation.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  proto:
+    name: Proto Validation
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6.0.3
+        with:
+          # buf breaking compares against the base branch, so the base history
+          # must be present in the checkout.
+          fetch-depth: 0
+      - uses: bufbuild/buf-setup-action@v1.50.0
+        with:
+          # Pinned to match BUF_VERSION in the Makefile so lint/breaking behave
+          # identically locally and in CI.
+          version: 1.72.0
+          github_token: ${{ github.token }}
+      - name: Lint protobuf module
+        run: make proto-lint
+      - name: Check protobuf backward compatibility
+        run: make proto-breaking BUF_BREAKING_AGAINST=".git#ref=origin/${{ github.base_ref }}"

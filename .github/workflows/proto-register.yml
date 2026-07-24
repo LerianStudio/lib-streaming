@@ -1,0 +1,95 @@
+# Schema registration for the billing protobuf contract.
+#
+# Registers billing/proto/lerian/streaming/billing/v1/billable_payload.proto
+# under the Confluent Schema Registry subject
+# "lerian.streaming.billing.recorded-value" (schemaType PROTOBUF,
+# compatibility BACKWARD). Runs on MERGE to main only — never on PR heads —
+# so an untrusted fork branch can never reach a real registry.
+#
+# DEFERRED / NO-OP BY DEFAULT: no Schema Registry or RedPanda endpoint is
+# reachable from CI today (no compose/service, and .env.reference lists only
+# Kafka brokers). Incompatible-change enforcement is ALREADY provided per-PR by
+# proto-validation.yml (`buf breaking`); the registry's own BACKWARD check here
+# is defense-in-depth that only fires on the 2nd registered version and needs
+# live infra. So every real step is gated on the STREAMING_SCHEMA_REGISTRY_URL
+# secret being present. On forks and on this repo until the secret + creds are
+# provisioned, SR_URL is empty, the real steps skip, and the job is a green
+# no-op that logs why. It becomes fully live the moment the three secrets
+# STREAMING_SCHEMA_REGISTRY_URL / _USERNAME / _PASSWORD are configured.
+#
+# Env-indirection is REQUIRED: GitHub does not expose the `secrets` context to a
+# step/job `if:`, so the secret is copied into a job-level `env` (SR_URL) and the
+# steps gate on `env.SR_URL != ''`. This mirrors validateSchemaRegistry() in
+# internal/config/config.go, where an empty URL is a no-op rather than an error.
+name: Proto Register
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'billing/proto/**'
+      - 'buf.yaml'
+      - 'buf.gen.yaml'
+      - 'buf.lock'
+      - '.github/workflows/proto-register.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  register-schema:
+    name: Register billing schema
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      # Copied from secrets so the steps can gate on env (secrets are not
+      # available to `if:`). Absent secret => empty string => steps skip.
+      SR_URL: ${{ secrets.STREAMING_SCHEMA_REGISTRY_URL }}
+      SR_USER: ${{ secrets.STREAMING_SCHEMA_REGISTRY_USERNAME }}
+      SR_PASS: ${{ secrets.STREAMING_SCHEMA_REGISTRY_PASSWORD }}
+      SUBJECT: lerian.streaming.billing.recorded-value
+      PROTO_PATH: billing/proto/lerian/streaming/billing/v1/billable_payload.proto
+    steps:
+      - name: Report deferral when no registry is configured
+        if: ${{ env.SR_URL == '' }}
+        run: |
+          echo "No Schema Registry configured (STREAMING_SCHEMA_REGISTRY_URL is empty)."
+          echo "Live schema registration is deferred: no SR/RedPanda endpoint is reachable in CI,"
+          echo "and incompatible-change enforcement is already provided by proto-validation.yml (buf breaking)."
+          echo "Provision STREAMING_SCHEMA_REGISTRY_URL/_USERNAME/_PASSWORD to enable registration."
+
+      - name: Checkout
+        if: ${{ env.SR_URL != '' }}
+        uses: actions/checkout@v6.0.3
+
+      - name: Set subject compatibility to BACKWARD
+        if: ${{ env.SR_URL != '' }}
+        run: |
+          set -euo pipefail
+          auth_args=()
+          if [ -n "${SR_USER:-}" ]; then
+            auth_args=(-u "${SR_USER}:${SR_PASS}")
+          fi
+          curl --fail -sS -X PUT "${auth_args[@]}" \
+            -H 'Content-Type: application/vnd.schemaregistry.v1+json' \
+            --data '{"compatibility":"BACKWARD"}' \
+            "${SR_URL%/}/config/${SUBJECT}"
+
+      - name: Register PROTOBUF schema (idempotent)
+        if: ${{ env.SR_URL != '' }}
+        run: |
+          set -euo pipefail
+          # jq -Rs reads the whole .proto as one raw string and JSON-escapes it
+          # into the request body. The registry returns the existing id when the
+          # schema is unchanged, so re-running is a no-op — mirroring the runtime
+          # register-if-absent path in the serializer.
+          body="$(jq -Rs '{schemaType:"PROTOBUF", schema:.}' < "${PROTO_PATH}")"
+          auth_args=()
+          if [ -n "${SR_USER:-}" ]; then
+            auth_args=(-u "${SR_USER}:${SR_PASS}")
+          fi
+          curl --fail -sS -X POST "${auth_args[@]}" \
+            -H 'Content-Type: application/vnd.schemaregistry.v1+json' \
+            --data "${body}" \
+            "${SR_URL%/}/subjects/${SUBJECT}/versions"
