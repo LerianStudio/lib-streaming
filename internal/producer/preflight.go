@@ -6,7 +6,7 @@ import (
 	"mime"
 	"strings"
 
-	"github.com/LerianStudio/lib-streaming/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
 )
 
 // maxKafkaTopicNameBytes is Kafka's protocol-level topic-name limit.

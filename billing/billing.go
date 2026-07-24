@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"time"
 
-	streaming "github.com/LerianStudio/lib-streaming"
+	streaming "github.com/LerianStudio/lib-streaming/v2"
 )
 
 // Topic is the Kafka-like topic billable usage events are published to. It is

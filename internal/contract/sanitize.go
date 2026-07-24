@@ -5,8 +5,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/LerianStudio/lib-observability/constants"
-	"github.com/LerianStudio/lib-observability/redaction"
+	"github.com/LerianStudio/lib-observability/v2/constants"
+	"github.com/LerianStudio/lib-observability/v2/redaction"
 )
 
 var streamingSensitiveFieldExtras = []string{
@@ -30,7 +30,7 @@ var streamingSensitiveFieldExtras = []string{
 }
 
 // urlPattern matches scheme://rest-of-URL sequences. Kept intentionally simple
-// to mirror github.com/LerianStudio/lib-commons/v5/commons/rabbitmq/rabbitmq.go:129. Credential redaction is applied
+// to mirror github.com/LerianStudio/lib-commons/v6/commons/rabbitmq/rabbitmq.go:129. Credential redaction is applied
 // per-match via url.Parse and a fallback regex.
 var urlPattern = regexp.MustCompile(`[a-zA-Z][a-zA-Z0-9+.-]*://[^\s]+`)
 

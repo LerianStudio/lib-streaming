@@ -11,7 +11,7 @@
 // streaming is the entry point for past-tense domain facts intended for
 // external consumers (e.g. "transaction.created"). It is NOT for internal
 // command dispatch or work queues — for those, use
-// github.com/LerianStudio/lib-commons/v5/commons/rabbitmq.
+// github.com/LerianStudio/lib-commons/v6/commons/rabbitmq.
 //
 // As of the consumer wave, streaming is no longer producer-only. The hardened
 // at-least-once group consumer (streaming.NewConsumer / streaming.Consumer /
@@ -26,7 +26,7 @@
 // responsibilities" below for why the tenant check is still the single biggest
 // operational invariant — the consumer makes it first-class, not optional.
 //
-// lib-streaming and github.com/LerianStudio/lib-commons/v5/commons/rabbitmq
+// lib-streaming and github.com/LerianStudio/lib-commons/v6/commons/rabbitmq
 // are orthogonal. Neither deprecates the other.
 //
 // # Quick start
@@ -81,6 +81,8 @@
 //	        Kind:    streaming.TransportKafkaLike,
 //	        Brokers: cfg.Brokers,
 //	    }).
+//	    TLSFromConfig(cfg).  // applies STREAMING_TLS_* (no-op when TLS disabled)
+//	    SASLFromConfig(cfg). // applies STREAMING_SASL_* (no-op when mechanism empty)
 //	    Logger(logger).
 //	    MetricsFactory(metricsFactory).
 //	    Tracer(tracer).
@@ -146,7 +148,7 @@
 //
 // RabbitMQ events-only: the RabbitMQ adapter publishes business events for
 // third-party / SaaS subscribers. Internal command queues remain on
-// github.com/LerianStudio/lib-commons/v5/commons/rabbitmq.
+// github.com/LerianStudio/lib-commons/v6/commons/rabbitmq.
 //
 // For SDK shapes lib-streaming does not cover (Kinesis, Pub/Sub, NATS, ...),
 // declare TransportCustom on the route Destination and register the adapter
@@ -194,6 +196,18 @@
 //	STREAMING_CLOSE_TIMEOUT_S            | int(s)   | 30              | Max drain+flush window on Close in seconds
 //	STREAMING_CLOUDEVENTS_SOURCE         | string   | ""              | Default ce-source (required when Enabled=true)
 //	STREAMING_EVENT_POLICIES             | string   | ""              | "event.key.enabled=true,event.key.outbox=always,..." policy overrides
+//	STREAMING_TLS_ENABLED                | bool     | false           | Enable TLS broker dial
+//	STREAMING_TLS_CA_CERT                | string   | ""              | Base64 PEM CA added to RootCAs; empty uses system pool
+//	STREAMING_SASL_MECHANISM             | string   | ""              | PLAIN, SCRAM-SHA-256, or SCRAM-SHA-512; empty disables SASL
+//	STREAMING_SASL_USERNAME              | string   | ""              | SASL username; required when a mechanism is set
+//	STREAMING_SASL_PASSWORD              | string   | ""              | SASL password (SECRET; never logged)
+//	STREAMING_SASL_ALLOW_PLAINTEXT       | bool     | false           | Allow SASL without TLS (dev-only, unsafe)
+//
+// STREAMING_ALLOW_PLAINTEXT_SASL is a DEPRECATED alias for
+// STREAMING_SASL_ALLOW_PLAINTEXT. It is consulted only when the canonical
+// variable is unset and its use emits a deprecation warning from LoadConfig;
+// the canonical variable wins when both are set. Enable TLS/SASL from these
+// env vars via streaming.NewBuilder().TLSFromConfig(cfg).SASLFromConfig(cfg).
 //
 // Multi-transport wiring (multiple Kafka clusters, SQS / RabbitMQ /
 // EventBridge fan-out) is programmatic via streaming.Builder in code —
@@ -218,7 +232,7 @@
 //     ErrInvalidDestination, ErrDuplicateRouteDefinition,
 //     ErrNoRoutesConfigured, ErrMissingTarget,
 //     ErrMultiTransportRuntimeNotConfigured, ErrInvalidTLSConfig,
-//     ErrPlaintextSASLNotAllowed.
+//     ErrPlaintextSASLNotAllowed, ErrInvalidSASLMechanism.
 //   - Config validation (LoadConfig): ErrMissingBrokers, ErrMissingSource,
 //     ErrInvalidCompression, ErrInvalidAcks.
 //   - Lifecycle / wiring (NOT caller errors — IsCallerError returns false):
@@ -356,20 +370,20 @@
 // consuming services. Go does not provide a separate dev-dependency section,
 // so those packages can still appear in module-graph or SCA reports.
 //
-// # Relation to github.com/LerianStudio/lib-commons/v5/commons/dlq
+// # Relation to github.com/LerianStudio/lib-commons/v6/commons/dlq
 //
-// github.com/LerianStudio/lib-commons/v5/commons/dlq is a Redis-backed
+// github.com/LerianStudio/lib-commons/v6/commons/dlq is a Redis-backed
 // retriable work-item queue with consumer-driven dequeue semantics. This
 // package's per-topic Kafka DLQ (<source>.dlq) is an immutable,
 // consumer-pull, append-only quarantine log for failed event publications.
 // They are orthogonal and not substitutes:
 //
-//   - github.com/LerianStudio/lib-commons/v5/commons/dlq: work items that
+//   - github.com/LerianStudio/lib-commons/v6/commons/dlq: work items that
 //     need retry with exponential backoff.
 //   - streaming Kafka DLQ: events that failed to publish and need forensic
 //     analysis or manual replay.
 //
-// Choose github.com/LerianStudio/lib-commons/v5/commons/dlq for operational
+// Choose github.com/LerianStudio/lib-commons/v6/commons/dlq for operational
 // work queues; streaming's DLQ is automatic and scoped to publish failures.
 //
 // Note: x-lerian-dlq-retry-count is currently 0 because franz-go does not

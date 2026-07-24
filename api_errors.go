@@ -1,8 +1,8 @@
 package streaming
 
 import (
-	"github.com/LerianStudio/lib-streaming/internal/cloudevents"
-	"github.com/LerianStudio/lib-streaming/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v2/internal/cloudevents"
+	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
 )
 
 type (
@@ -59,6 +59,7 @@ var (
 	ErrInvalidConfigField                 = contract.ErrInvalidConfigField
 	ErrInvalidTLSConfig                   = contract.ErrInvalidTLSConfig
 	ErrPlaintextSASLNotAllowed            = contract.ErrPlaintextSASLNotAllowed
+	ErrInvalidSASLMechanism               = contract.ErrInvalidSASLMechanism
 	ErrNilProducer                        = contract.ErrNilProducer
 	ErrCircuitOpen                        = contract.ErrCircuitOpen
 	ErrOutboxNotConfigured                = contract.ErrOutboxNotConfigured

@@ -8,11 +8,11 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/LerianStudio/lib-observability/log"
+	"github.com/LerianStudio/lib-observability/v2/log"
 
-	streaming "github.com/LerianStudio/lib-streaming"
-	"github.com/LerianStudio/lib-streaming/internal/producer"
-	"github.com/LerianStudio/lib-streaming/internal/transport"
+	streaming "github.com/LerianStudio/lib-streaming/v2"
+	"github.com/LerianStudio/lib-streaming/v2/internal/producer"
+	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
 )
 
 // captureEmptyTenantAdapter records every published message so the test can

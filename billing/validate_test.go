@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LerianStudio/lib-streaming/billing"
+	"github.com/LerianStudio/lib-streaming/v2/billing"
 )
 
 func TestBillablePayload_Validate(t *testing.T) {

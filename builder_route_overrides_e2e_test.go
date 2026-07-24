@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	streaming "github.com/LerianStudio/lib-streaming"
-	"github.com/LerianStudio/lib-streaming/billing"
+	streaming "github.com/LerianStudio/lib-streaming/v2"
+	"github.com/LerianStudio/lib-streaming/v2/billing"
 	"github.com/twmb/franz-go/pkg/kfake"
 	"github.com/twmb/franz-go/pkg/kgo"
 )

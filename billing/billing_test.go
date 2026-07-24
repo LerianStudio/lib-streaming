@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	streaming "github.com/LerianStudio/lib-streaming"
-	"github.com/LerianStudio/lib-streaming/billing"
+	streaming "github.com/LerianStudio/lib-streaming/v2"
+	"github.com/LerianStudio/lib-streaming/v2/billing"
 )
 
 func TestBilling_Topic(t *testing.T) {
