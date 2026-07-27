@@ -1,6 +1,6 @@
 package emitter
 
-import "github.com/LerianStudio/lib-streaming/internal/contract"
+import "github.com/LerianStudio/lib-streaming/v2/internal/contract"
 
 type (
 	Emitter     = contract.Emitter

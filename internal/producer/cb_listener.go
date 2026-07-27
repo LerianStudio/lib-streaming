@@ -5,10 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 
-	"github.com/LerianStudio/lib-commons/v5/commons/circuitbreaker"
-	"github.com/LerianStudio/lib-observability/assert"
-	"github.com/LerianStudio/lib-observability/log"
-	"github.com/LerianStudio/lib-observability/runtime"
+	"github.com/LerianStudio/lib-commons/v6/commons/circuitbreaker"
+	"github.com/LerianStudio/lib-observability/v2/assert"
+	"github.com/LerianStudio/lib-observability/v2/log"
+	"github.com/LerianStudio/lib-observability/v2/runtime"
 )
 
 // streamingStateListener satisfies circuitbreaker.StateChangeListener for a

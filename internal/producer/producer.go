@@ -11,10 +11,10 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/LerianStudio/lib-commons/v5/commons"
-	"github.com/LerianStudio/lib-commons/v5/commons/circuitbreaker"
-	"github.com/LerianStudio/lib-observability/log"
-	"github.com/LerianStudio/lib-streaming/internal/contract"
+	"github.com/LerianStudio/lib-commons/v6/commons"
+	"github.com/LerianStudio/lib-commons/v6/commons/circuitbreaker"
+	"github.com/LerianStudio/lib-observability/v2/log"
+	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
 )
 
 // tracerName + emitSpanName live in emit_span.go (colocated with the
@@ -207,8 +207,10 @@ func NewProducer(ctx context.Context, cfg Config, opts ...EmitterOption) (*Produ
 	}
 
 	// Auto-generate a RouteTable: one required Kafka route per catalog
-	// definition, all pointing at the synthesized "primary" target.
-	routes, err := autoGenerateKafkaRoutes(resolvedOpts.catalog, cfg.CloudEventsSource)
+	// definition, all pointing at the synthesized "primary" target. Any
+	// caller-supplied route overrides (WithRouteOverrides) replace the
+	// auto-generated route sharing their DefinitionKey and extend the set.
+	routes, err := autoGenerateKafkaRoutes(resolvedOpts.catalog, cfg.CloudEventsSource, resolvedOpts.routeOverrides)
 	if err != nil {
 		_ = adapter.Close(context.Background())
 		return nil, err
@@ -232,9 +234,10 @@ func NewProducer(ctx context.Context, cfg Config, opts ...EmitterOption) (*Produ
 }
 
 // autoGenerateKafkaRoutes synthesizes one required Kafka route per catalog
-// definition, all pointing at the conventional "primary" target. Used by
-// NewProducer so the single-Kafka-target convenience constructor builds a
-// route table the multi-target runtime can consume.
+// definition (all pointing at the conventional "primary" target), applies any
+// caller-supplied overrides via contract.MergeRouteOverrides, and builds the validated
+// RouteTable. Used by NewProducer so the single-Kafka-target convenience
+// constructor builds a route table the multi-target runtime can consume.
 //
 // The synthesized route key replaces any underscore in the definition key
 // with a hyphen to satisfy the canonical lower-case dot-and-hyphen route
@@ -245,7 +248,17 @@ func NewProducer(ctx context.Context, cfg Config, opts ...EmitterOption) (*Produ
 // source is the producer's configured CloudEvents ce-source; it becomes the
 // service namespace segment of each derived topic (see Event.Topic), so the
 // synthesized route destinations match the topics runtime Emit publishes to.
-func autoGenerateKafkaRoutes(catalog Catalog, source string) (contract.RouteTable, error) {
+func autoGenerateKafkaRoutes(catalog Catalog, source string, overrides []contract.RouteDefinition) (contract.RouteTable, error) {
+	routes := kafkaRoutesForCatalog(catalog, source)
+	merged := contract.MergeRouteOverrides(routes, overrides)
+
+	return contract.NewRouteTable(merged...)
+}
+
+// kafkaRoutesForCatalog synthesizes one required Kafka route per catalog
+// definition, all pointing at the conventional "primary" target. It is the
+// pre-merge, pre-validation route slice consumed by autoGenerateKafkaRoutes.
+func kafkaRoutesForCatalog(catalog Catalog, source string) []contract.RouteDefinition {
 	defs := catalog.Definitions()
 	routes := make([]contract.RouteDefinition, 0, len(defs))
 
@@ -262,7 +275,7 @@ func autoGenerateKafkaRoutes(catalog Catalog, source string) (contract.RouteTabl
 		})
 	}
 
-	return contract.NewRouteTable(routes...)
+	return routes
 }
 
 // canonicalRouteKey replaces underscores in a definition key with hyphens

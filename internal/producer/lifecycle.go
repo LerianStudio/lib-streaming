@@ -6,7 +6,7 @@ import (
 )
 
 // healthPingTimeout caps the per-Healthy broker Ping. 500ms is aligned with
-// github.com/LerianStudio/lib-commons/v5/commons/rabbitmq and the `net/http.HealthWithDependencies` conventions —
+// github.com/LerianStudio/lib-commons/v6/commons/rabbitmq and the `net/http.HealthWithDependencies` conventions —
 // readiness probes should return fast.
 const healthPingTimeout = 500 * time.Millisecond
 

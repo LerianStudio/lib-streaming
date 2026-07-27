@@ -7,8 +7,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/LerianStudio/lib-streaming/internal/contract"
-	"github.com/LerianStudio/lib-streaming/internal/transport/fake"
+	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v2/internal/transport/fake"
 )
 
 // TestValidateRoutesAgainstTargets_KindMismatch_FiresAssertion pins T5

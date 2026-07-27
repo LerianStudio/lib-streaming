@@ -6,7 +6,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/LerianStudio/lib-streaming/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
 )
 
 // TestDeliveryPolicyReportsDeliveryPaths exercises the public predicate

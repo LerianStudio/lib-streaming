@@ -15,7 +15,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/LerianStudio/lib-observability/log"
+	"github.com/LerianStudio/lib-observability/v2/log"
 )
 
 // newSpanRecorder builds a TracerProvider backed by an in-memory exporter
@@ -345,7 +345,7 @@ func spanEventNames(s tracetest.SpanStub) []string {
 // must fall back to the global tracer provider (otel.Tracer("streaming")).
 // If no global provider is set, otel returns a no-op tracer and spans
 // are silently dropped — this is the correct behaviour for library code
-// and matches the conventions in github.com/LerianStudio/lib-commons/v5/commons/rabbitmq / github.com/LerianStudio/lib-commons/v5/commons/postgres.
+// and matches the conventions in github.com/LerianStudio/lib-commons/v6/commons/rabbitmq / github.com/LerianStudio/lib-commons/v6/commons/postgres.
 //
 // This test is NOT asserting a span is visible (no global provider set);
 // it's asserting the Producer does not panic and the Emit succeeds.

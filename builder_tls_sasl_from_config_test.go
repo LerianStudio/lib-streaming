@@ -7,7 +7,7 @@ import (
 	"errors"
 	"testing"
 
-	streaming "github.com/LerianStudio/lib-streaming"
+	streaming "github.com/LerianStudio/lib-streaming/v2"
 	"github.com/twmb/franz-go/pkg/sasl/plain"
 )
 

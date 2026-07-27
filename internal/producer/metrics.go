@@ -4,8 +4,8 @@ import (
 	"context"
 	"sync"
 
-	"github.com/LerianStudio/lib-observability/log"
-	"github.com/LerianStudio/lib-observability/metrics"
+	"github.com/LerianStudio/lib-observability/v2/log"
+	"github.com/LerianStudio/lib-observability/v2/metrics"
 )
 
 // Outcome label values. The "outcome" label on streaming metrics is a closed
@@ -49,7 +49,7 @@ const (
 const labelTopic = "topic"
 
 // streamingMetrics holds lazy-initialised OTEL instruments for the streaming
-// package. Mirrors the pattern in github.com/LerianStudio/lib-commons/v5/commons/circuitbreaker/manager.go:85-103
+// package. Mirrors the pattern in github.com/LerianStudio/lib-commons/v6/commons/circuitbreaker/manager.go:85-103
 // but per-instrument-lazy (instead of one-shot init) so a nil factory logs
 // once and subsequent callers pay zero cost beyond the sync.Once check.
 //

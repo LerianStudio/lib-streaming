@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	streaming "github.com/LerianStudio/lib-streaming"
+	streaming "github.com/LerianStudio/lib-streaming/v2"
 )
 
 func TestMultiEmitError_NilSafeError(t *testing.T) {

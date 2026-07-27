@@ -5,7 +5,7 @@ package transport
 import (
 	"testing"
 
-	"github.com/LerianStudio/lib-streaming/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
 )
 
 // TestIsNilInterface_Matrix pins every nilable / non-nilable Kind that

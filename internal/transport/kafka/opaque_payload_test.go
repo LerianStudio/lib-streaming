@@ -11,8 +11,8 @@ import (
 	"github.com/twmb/franz-go/pkg/kfake"
 	"github.com/twmb/franz-go/pkg/kgo"
 
-	"github.com/LerianStudio/lib-streaming/internal/contract"
-	"github.com/LerianStudio/lib-streaming/internal/transport"
+	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
 )
 
 // TestAdapter_Publish_NonUTF8Payload_ByteEqual proves the Kafka adapter is

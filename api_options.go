@@ -4,14 +4,14 @@ import (
 	"crypto/tls"
 	"time"
 
-	"github.com/LerianStudio/lib-commons/v5/commons/circuitbreaker"
-	"github.com/LerianStudio/lib-commons/v5/commons/outbox"
-	"github.com/LerianStudio/lib-observability/log"
-	"github.com/LerianStudio/lib-observability/metrics"
+	"github.com/LerianStudio/lib-commons/v6/commons/circuitbreaker"
+	"github.com/LerianStudio/lib-commons/v6/commons/outbox"
+	"github.com/LerianStudio/lib-observability/v2/log"
+	"github.com/LerianStudio/lib-observability/v2/metrics"
 	"github.com/twmb/franz-go/pkg/sasl"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/LerianStudio/lib-streaming/internal/producer"
+	"github.com/LerianStudio/lib-streaming/v2/internal/producer"
 )
 
 // EmitterOption configures a Producer at construction time.
@@ -68,3 +68,10 @@ func WithAllowSystemEvents() EmitterOption { return producer.WithAllowSystemEven
 
 // WithCatalog wires the immutable event catalog required by NewProducer.
 func WithCatalog(catalog Catalog) EmitterOption { return producer.WithCatalog(catalog) }
+
+// NOTE: there is intentionally no root re-export of WithRouteOverrides. The
+// root construction path is NewBuilder → buildMulti → NewProducerMulti, which
+// does not read emitterOptions.routeOverrides, so a root-level option would be
+// a silent no-op. Builder.RouteOverrides is the sole public root mechanism for
+// route overrides; producer.WithRouteOverrides remains internal to the
+// single-target NewProducer path that genuinely consumes it.

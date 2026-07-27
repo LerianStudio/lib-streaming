@@ -2,7 +2,7 @@
 
 package config
 
-import "github.com/LerianStudio/lib-streaming/internal/contract"
+import "github.com/LerianStudio/lib-streaming/v2/internal/contract"
 
 const (
 	DirectModeSkip   = contract.DirectModeSkip

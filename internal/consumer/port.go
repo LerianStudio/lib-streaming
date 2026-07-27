@@ -7,10 +7,10 @@ import (
 
 	"github.com/twmb/franz-go/pkg/kgo"
 
-	"github.com/LerianStudio/lib-streaming/internal/cloudevents"
-	"github.com/LerianStudio/lib-streaming/internal/contract"
-	"github.com/LerianStudio/lib-streaming/internal/dlqheader"
-	"github.com/LerianStudio/lib-streaming/internal/transport"
+	"github.com/LerianStudio/lib-streaming/v2/internal/cloudevents"
+	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v2/internal/dlqheader"
+	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
 )
 
 // Handler is the ONLY interface a consuming service implements. The library

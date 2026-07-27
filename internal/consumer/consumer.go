@@ -10,14 +10,14 @@ import (
 
 	"github.com/twmb/franz-go/pkg/kgo"
 
-	"github.com/LerianStudio/lib-observability/log"
-	"github.com/LerianStudio/lib-observability/metrics"
+	"github.com/LerianStudio/lib-observability/v2/log"
+	"github.com/LerianStudio/lib-observability/v2/metrics"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/LerianStudio/lib-streaming/internal/contract"
-	"github.com/LerianStudio/lib-streaming/internal/transport"
-	"github.com/LerianStudio/lib-streaming/internal/transport/kafka"
+	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
+	"github.com/LerianStudio/lib-streaming/v2/internal/transport/kafka"
 )
 
 // errTerminalQuarantine is the stable cause stamped on a DLQ forensic header

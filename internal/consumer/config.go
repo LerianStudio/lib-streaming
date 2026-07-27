@@ -9,10 +9,10 @@ import (
 
 	"github.com/twmb/franz-go/pkg/sasl"
 
-	"github.com/LerianStudio/lib-commons/v5/commons"
+	"github.com/LerianStudio/lib-commons/v6/commons"
 
-	"github.com/LerianStudio/lib-streaming/internal/kafkasec"
-	"github.com/LerianStudio/lib-streaming/internal/transport"
+	"github.com/LerianStudio/lib-streaming/v2/internal/kafkasec"
+	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
 )
 
 // Config validation sentinels. Callers use errors.Is to branch on a specific
