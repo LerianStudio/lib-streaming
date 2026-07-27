@@ -1,5 +1,22 @@
 # Lib-streaming Changelog
 
+## [2.0.0](https://github.com/LerianStudio/lib-streaming/releases/tag/v2.0.0)
+
+Features:
+- Add Lago billing event contract to the streaming module. (@caioaletroca)
+- Introduce RouteOverrides route merging in the producer component. (@caioaletroca)
+
+Fixes:
+- Ensure the route-override merge is target-aware in the producer component. (@caioaletroca)
+
+Improvements:
+- Migrate to `lib-commons/v6` and update to the `/v2` major release. (@rodrigodh)
+- Use stable releases of `lib-commons/v6` and `lib-observability/v2`. (@rodrigodh)
+
+[Compare changes](https://github.com/LerianStudio/lib-streaming/compare/v1.9.0...v2.0.0)
+
+---
+
 ## [Unreleased]
 
 BREAKING CHANGES:
