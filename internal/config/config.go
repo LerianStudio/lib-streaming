@@ -397,14 +397,6 @@ func (c Config) validateSchemaRegistry() error {
 	return nil
 }
 
-// schemaRegistryHTTPSWarning returns a non-empty defense-in-depth warning when
-// Schema Registry credentials are configured against a non-https endpoint, and
-// "" otherwise. Basic-auth credentials sent over plaintext http:// are exposed
-// on the wire, so this surfaces the risk without hard-rejecting (local/dev
-// brokers may legitimately use http://). The returned string never includes the
-// password value. It lives here — not in validateSchemaRegistry — because the
-// warnings channel is owned by LoadConfig, matching the deprecation-warning
-// pattern already used for STREAMING_ALLOW_PLAINTEXT_SASL.
 // appendSchemaRegistryWarnings appends the https-with-credentials
 // defense-in-depth warning to warnings when schemaRegistryHTTPSWarning reports
 // one, returning the (possibly extended) slice. The branch lives here rather
@@ -418,6 +410,14 @@ func appendSchemaRegistryWarnings(warnings []string, cfg Config) []string {
 	return warnings
 }
 
+// schemaRegistryHTTPSWarning returns a non-empty defense-in-depth warning when
+// Schema Registry credentials are configured against a non-https endpoint, and
+// "" otherwise. Basic-auth credentials sent over plaintext http:// are exposed
+// on the wire, so this surfaces the risk without hard-rejecting (local/dev
+// brokers may legitimately use http://). The returned string never includes the
+// password value. It lives here — not in validateSchemaRegistry — because the
+// warnings channel is owned by LoadConfig, matching the deprecation-warning
+// pattern already used for STREAMING_ALLOW_PLAINTEXT_SASL.
 func schemaRegistryHTTPSWarning(cfg Config) string {
 	if cfg.SchemaRegistryURL == "" {
 		return ""
