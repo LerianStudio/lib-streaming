@@ -9,6 +9,7 @@ on:
       - 'buf.yaml'
       - 'buf.gen.yaml'
       - 'buf.lock'
+      - 'Makefile'
       - '.github/workflows/proto-validation.yml'
 
 permissions:
@@ -26,6 +27,9 @@ jobs:
           # buf breaking compares against the base branch, so the base history
           # must be present in the checkout.
           fetch-depth: 0
+          # This job only reads the tree (lint + breaking check), so the
+          # checkout token does not need to persist in the worktree.
+          persist-credentials: false
       - uses: bufbuild/buf-setup-action@v1.50.0
         with:
           # Pinned to match BUF_VERSION in the Makefile so lint/breaking behave
