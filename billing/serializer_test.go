@@ -157,6 +157,10 @@ func TestSerializer_Serialize_ReturnsErrorOnInvalid(t *testing.T) {
 			name:    "empty subscription id",
 			payload: &billing.BillablePayload{Metric: "api_calls", SubscriptionId: ""},
 		},
+		{
+			name:    "nil payload",
+			payload: nil,
+		},
 	}
 
 	for _, tt := range tests {

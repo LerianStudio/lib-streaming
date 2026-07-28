@@ -294,13 +294,24 @@ func TestValidate(t *testing.T) {
 			wantErrContains: "must be a finite number",
 		},
 		{
-			name: "nil property value is tolerated (nil-safe getters)",
+			name: "nil property value is rejected",
 			payload: &billing.BillablePayload{
 				Metric:         "api_calls",
 				SubscriptionId: "sub_123",
 				Properties:     map[string]*billing.PropertyValue{"k": nil},
 			},
-			wantErr: false,
+			wantErr:         true,
+			wantErrContains: "value is nil",
+		},
+		{
+			name: "unset-oneof property value is rejected",
+			payload: &billing.BillablePayload{
+				Metric:         "api_calls",
+				SubscriptionId: "sub_123",
+				Properties:     map[string]*billing.PropertyValue{"k": {}},
+			},
+			wantErr:         true,
+			wantErrContains: "has no value set",
 		},
 		{
 			name: "PreciseTotalAmountCents with a sign is rejected",

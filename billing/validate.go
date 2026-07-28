@@ -87,18 +87,26 @@ func validatePreciseTotalAmountCents(cents string, present bool) error {
 
 // validateProperties enforces the property count ceiling, the key-length cap,
 // the string value-length cap, and number finiteness. The proto oneof already
-// guarantees every value is a string or a number, so no type discriminator
+// guarantees every SET value is a string or a number, so no type discriminator
 // check is performed here. Numbers still need a value guard the schema cannot
 // express: protobuf `double` fully round-trips NaN and ±Inf, but the downstream
 // Lago JSON step cannot represent them, so a non-finite number would silently
-// drop the billable event — Validate rejects it here instead. A nil property
-// value is tolerated (nil-safe getters).
+// drop the billable event — Validate rejects it here instead.
+//
+// A nil *PropertyValue, and a present PropertyValue whose oneof variant is unset
+// (proto3 cannot structurally require a oneof arm be set), are BOTH rejected:
+// either would serialize as an empty PropertyValue that the consumer's
+// flattenProperties then drops, silently losing the property.
 func validateProperties(properties map[string]*billingv1.PropertyValue) error {
 	if len(properties) > maxProperties {
 		return fmt.Errorf("billing: too many properties: %d (max %d)", len(properties), maxProperties)
 	}
 
 	for key, value := range properties {
+		if value == nil {
+			return fmt.Errorf("billing: property %q value is nil", key)
+		}
+
 		if len(key) > maxPropertyKeyBytes {
 			return fmt.Errorf("billing: property key %q exceeds %d bytes", key, maxPropertyKeyBytes)
 		}
@@ -112,6 +120,8 @@ func validateProperties(properties map[string]*billingv1.PropertyValue) error {
 			if math.IsNaN(v.NumberValue) || math.IsInf(v.NumberValue, 0) {
 				return fmt.Errorf("billing: property %q must be a finite number", key)
 			}
+		default:
+			return fmt.Errorf("billing: property %q has no value set (string or number required)", key)
 		}
 	}
 

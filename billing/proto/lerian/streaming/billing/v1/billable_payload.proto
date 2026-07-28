@@ -61,6 +61,11 @@ message BillablePayload {
 // because the legacy contract accepted any finite JSON number (integer or float)
 // in a single untyped slot; `double` is the widest single proto scalar that
 // round-trips that set.
+//
+// Note: proto3 cannot structurally require that a oneof variant be set, so a
+// PropertyValue with NEITHER arm populated is valid on the wire. billing.Validate
+// rejects that unset case (and a nil PropertyValue) at the application layer,
+// because an empty PropertyValue is silently dropped downstream.
 message PropertyValue {
   oneof value {
     string string_value = 1;
