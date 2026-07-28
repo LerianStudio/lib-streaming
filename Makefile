@@ -794,11 +794,21 @@ sec:
 
 .PHONY: buf-install
 buf-install:
-	@if ! command -v buf >/dev/null 2>&1; then \
-		echo "Installing buf $(BUF_VERSION)..."; \
-		GO111MODULE=on go install github.com/bufbuild/buf/cmd/buf@$(BUF_VERSION); \
+	@want="$(BUF_VERSION)"; want="$${want#v}"; \
+	if command -v buf >/dev/null 2>&1; then \
+		have="$$(buf --version 2>/dev/null | head -n1 | tr -d '[:space:]')"; have="$${have#v}"; \
 	else \
-		echo "buf already installed: $$(command -v buf) ($$(buf --version))"; \
+		have=""; \
+	fi; \
+	if [ "$$have" = "$$want" ]; then \
+		echo "buf already installed: $$(command -v buf) (v$$have)"; \
+	else \
+		if [ -n "$$have" ]; then \
+			echo "buf version mismatch (have $$have, want $$want); installing buf $(BUF_VERSION)..."; \
+		else \
+			echo "Installing buf $(BUF_VERSION)..."; \
+		fi; \
+		GO111MODULE=on go install github.com/bufbuild/buf/cmd/buf@$(BUF_VERSION); \
 	fi
 
 .PHONY: proto-lint
