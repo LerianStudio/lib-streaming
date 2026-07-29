@@ -4,3 +4,7 @@
 
 # Auto-generated mocks
 *_mock.go
+
+# Generated Protobuf code (billing schema)
+billing/gen/*
+*.pb.go

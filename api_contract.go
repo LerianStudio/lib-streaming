@@ -1,8 +1,11 @@
 package streaming
 
 import (
+	"github.com/twmb/franz-go/pkg/sr"
+
 	"github.com/LerianStudio/lib-streaming/v2/internal/config"
 	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v2/internal/kafkasec"
 	"github.com/LerianStudio/lib-streaming/v2/internal/manifest"
 )
 
@@ -140,4 +143,20 @@ func LoadConfig() (Config, []string, error) {
 // NewHealthError constructs a readiness error with state and cause.
 func NewHealthError(state HealthState, cause error) *HealthError {
 	return contract.NewHealthError(state, cause)
+}
+
+// NewSchemaRegistryClient builds a Schema Registry client from cfg's
+// SchemaRegistry* fields for the billing serialize path. It is the public entry
+// point producers (billing-api etc.) use to obtain the *sr.Client that
+// billing.NewSerializer requires — the internal kafkasec builder is not
+// importable from outside this module, so this re-export is the single
+// reachable, hardened construction path.
+//
+// It delegates verbatim to the authoritative builder, inheriting its fail-closed
+// guards: an empty URL and a partial (XOR) username/password credential both
+// return an error wrapping ErrInvalidSchemaRegistryConfig. Constructing the
+// client performs no network I/O. The returned error never includes the
+// registry password.
+func NewSchemaRegistryClient(cfg Config) (*sr.Client, error) {
+	return kafkasec.BuildSchemaRegistryClient(cfg.SchemaRegistryURL, cfg.SchemaRegistryUsername, cfg.SchemaRegistryPassword)
 }

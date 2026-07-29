@@ -20,6 +20,7 @@ import (
 	"github.com/twmb/franz-go/pkg/sasl"
 	"github.com/twmb/franz-go/pkg/sasl/plain"
 	"github.com/twmb/franz-go/pkg/sasl/scram"
+	"github.com/twmb/franz-go/pkg/sr"
 )
 
 // approvedTLS12CipherSuites is the AEAD/ECDHE allowlist enforced for
@@ -254,4 +255,53 @@ func BuildSASLMechanism(mechanism, username, password string) (sasl.Mechanism, e
 	default: // "SCRAM-SHA-512"
 		return scram.Auth{User: username, Pass: password}.AsSha512Mechanism(), nil
 	}
+}
+
+// BuildSchemaRegistryClient constructs a franz-go schema-registry client from
+// an environment-supplied URL plus optional basic-auth credentials. It exists
+// so consuming services can reach a Schema Registry through the
+// STREAMING_SCHEMA_REGISTRY_* environment variables without importing the
+// franz-go pkg/sr package themselves. Constructing the client performs no
+// network I/O — connectivity is exercised lazily on first use by the caller.
+//
+// This builder is the single authoritative credential gate for the Schema
+// Registry: both the startup path (config.validateSchemaRegistry) and any
+// direct/public constructor (streaming.NewSchemaRegistryClient) reach the
+// registry through here, so the both-or-neither rule cannot be bypassed.
+//
+// Behavior:
+//   - url is empty/whitespace-only: returns an error wrapping
+//     ErrInvalidSchemaRegistryConfig. A registry client with no endpoint
+//     cannot serialize, so this fails closed rather than returning a client
+//     pinned to franz-go's http://localhost:8081 default.
+//   - exactly one of username/password set: returns an error wrapping
+//     ErrInvalidSchemaRegistryConfig. A partial credential silently produces
+//     the wrong authorization, so it fails closed — mirroring
+//     BuildSASLMechanism's both-or-neither rule.
+//   - url set, username == "" && password == "": constructs a client with no
+//     authorization.
+//   - url set, username != "" && password != "": applies HTTP basic auth with
+//     the supplied credentials.
+//
+// The returned error never includes the password value.
+func BuildSchemaRegistryClient(url, username, password string) (*sr.Client, error) {
+	if strings.TrimSpace(url) == "" {
+		return nil, fmt.Errorf("%w: schema registry URL is required", contract.ErrInvalidSchemaRegistryConfig)
+	}
+
+	if (username == "") != (password == "") {
+		return nil, fmt.Errorf("%w: schema registry username and password must be set together", contract.ErrInvalidSchemaRegistryConfig)
+	}
+
+	opts := []sr.ClientOpt{sr.URLs(url)}
+	if username != "" {
+		opts = append(opts, sr.BasicAuth(username, password))
+	}
+
+	client, err := sr.NewClient(opts...)
+	if err != nil {
+		return nil, fmt.Errorf("build schema registry client: %w", err)
+	}
+
+	return client, nil
 }
