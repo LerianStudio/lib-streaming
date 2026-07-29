@@ -49,6 +49,15 @@ jobs:
           # new), there is nothing to break against and buf errors with
           # "had no .proto files". Skip the check in that case; it engages on every
           # later PR once the module exists on the base branch.
+          #
+          # First make sure the base ref actually resolves — a lookup failure
+          # (missing/unfetched ref) must FAIL the gate, not be mistaken for an
+          # absent buf.yaml and silently skipped.
+          if ! git rev-parse --verify --quiet "origin/${BASE_REF}^{commit}" >/dev/null; then
+            echo "::error::Base ref origin/${BASE_REF} could not be resolved (check fetch-depth / base branch)."
+            exit 1
+          fi
+          # Ref resolves — skip ONLY when buf.yaml is genuinely absent on it.
           if git cat-file -e "origin/${BASE_REF}:buf.yaml" 2>/dev/null; then
             make proto-breaking BUF_BREAKING_AGAINST=".git#ref=origin/${BASE_REF}"
           else
