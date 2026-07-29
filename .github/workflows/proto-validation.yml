@@ -39,14 +39,18 @@ jobs:
       - name: Lint protobuf module
         run: make proto-lint
       - name: Check protobuf backward compatibility
+        env:
+          # Pass the untrusted context value via env (not inline ${{ }}) to avoid
+          # shell injection into the run block.
+          BASE_REF: ${{ github.base_ref }}
         run: |
           # buf breaking needs a proto MODULE on the base ref to compare against.
           # On the PR that first introduces the module (buf.yaml + the .proto are
           # new), there is nothing to break against and buf errors with
           # "had no .proto files". Skip the check in that case; it engages on every
           # later PR once the module exists on the base branch.
-          if git cat-file -e "origin/${{ github.base_ref }}:buf.yaml" 2>/dev/null; then
-            make proto-breaking BUF_BREAKING_AGAINST=".git#ref=origin/${{ github.base_ref }}"
+          if git cat-file -e "origin/${BASE_REF}:buf.yaml" 2>/dev/null; then
+            make proto-breaking BUF_BREAKING_AGAINST=".git#ref=origin/${BASE_REF}"
           else
-            echo "buf.yaml not present on origin/${{ github.base_ref }} — proto module is new in this PR; backward-compatibility check skipped (no baseline to compare)."
+            echo "buf.yaml not present on origin/${BASE_REF} — proto module is new in this PR; backward-compatibility check skipped (no baseline to compare)."
           fi
