@@ -68,7 +68,7 @@ jobs:
 
       - name: Checkout
         if: ${{ env.SR_URL != '' }}
-        uses: actions/checkout@v6.0.3
+        uses: actions/checkout@v7.0.1
         with:
           # No push uses the checkout token here (schema is registered over
           # HTTP against the registry), so don't persist it in the worktree.
