@@ -1,5 +1,14 @@
 # Lib-streaming Changelog
 
+## [2.0.1](https://github.com/LerianStudio/lib-streaming/releases/tag/v2.0.1)
+
+Improvements:
+- Migrated `.github/workflows/pr-security-scan.yml` to use Blacksmith runners. (@fredcamaral)
+
+[Compare changes](https://github.com/LerianStudio/lib-streaming/compare/v2.0.0...v2.0.1)
+
+---
+
 ## [2.0.0](https://github.com/LerianStudio/lib-streaming/releases/tag/v2.0.0)
 
 Features:
