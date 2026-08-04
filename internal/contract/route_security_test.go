@@ -35,6 +35,7 @@ func TestDestinationValidate_RejectsSecuritySensitiveTopology(t *testing.T) {
 		{name: "credential fragment", destination: Destination{Kind: TransportSQS, Address: "https://sqs.us-east-1.amazonaws.com/123/queue#token=secret"}},
 		{name: "compound credential fragment", destination: Destination{Kind: TransportSQS, Address: "https://sqs.us-east-1.amazonaws.com/123/queue#X-Amz-Credential=redacted"}},
 		{name: "credential attribute key", destination: Destination{Kind: TransportCustom, Name: "custom", Attributes: map[string]string{"authorization": "Bearer redacted"}}},
+		{name: "bare key attribute with secret value", destination: Destination{Kind: TransportCustom, Name: "custom", Attributes: map[string]string{"key": "literal-secret"}}},
 		{name: "PII attribute key from lib-observability defaults", destination: Destination{Kind: TransportCustom, Name: "custom", Attributes: map[string]string{"account_number": "redacted"}}},
 		{name: "dotted headers authorization attribute key", destination: Destination{Kind: TransportCustom, Name: "custom", Attributes: map[string]string{"headers.Authorization": "redacted"}}},
 		{name: "underscored auth header attribute key", destination: Destination{Kind: TransportCustom, Name: "custom", Attributes: map[string]string{"auth_header": "redacted"}}},
