@@ -1,5 +1,19 @@
 # Lib-streaming Changelog
 
+## [2.0.2](https://github.com/LerianStudio/lib-streaming/releases/tag/v2.0.2)
+
+Features:
+
+Fixes:
+- Allow key as a topology domain segment to enhance flexibility in domain management. (@fredcamaral)
+
+Improvements:
+- Merged hotfix for `v2.0.2` to address issues with the topology credential scanner, ensuring more robust credential handling. (@fredcamaral)
+
+[Compare changes](https://github.com/LerianStudio/lib-streaming/compare/v2.0.1...v2.0.2)
+
+---
+
 ## [2.0.1](https://github.com/LerianStudio/lib-streaming/releases/tag/v2.0.1)
 
 Improvements:
