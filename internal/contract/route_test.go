@@ -501,7 +501,32 @@ func TestCredentialLikeMaterial_RejectionBalance(t *testing.T) {
 		})
 	}
 
+	topologyAllowed := []string{
+		"br-spi.dict.key",
+		"br-spi.dict-key",
+		"br.spi.dict.key",
+		"dict.key.registered",
+	}
+	for _, value := range topologyAllowed {
+		value := value
+		t.Run("allow topology/"+value, func(t *testing.T) {
+			t.Parallel()
+
+			if containsCredentialLikeTopologyMaterial(value) {
+				t.Fatalf("containsCredentialLikeTopologyMaterial(%q) = true; want false", value)
+			}
+		})
+	}
+
 	rejected := []string{
+		"key",
+		"key=literal-secret",
+		"api_key=ak_live_abcdef",
+		"secret_key",
+		"access_key_id",
+		"private_key",
+		"token=secret-token",
+		"password=hunter2",
 		"primary-api_key=secret",
 		"target-bearer=redacted",
 		"Authorization: Bearer redacted",
@@ -531,6 +556,77 @@ func TestCredentialLikeMaterial_RejectionBalance(t *testing.T) {
 
 			if !ContainsCredentialLikeMaterial(value) {
 				t.Fatalf("ContainsCredentialLikeMaterial(%q) = false; want true", value)
+			}
+		})
+	}
+
+	topologyRejected := []string{
+		"api.key.rotated",
+		"secret.key.rotated",
+		"access.key.id",
+		"private.key.material",
+		"key=literal-secret",
+	}
+	for _, value := range topologyRejected {
+		value := value
+		t.Run("reject topology/"+value, func(t *testing.T) {
+			t.Parallel()
+
+			if !containsCredentialLikeTopologyMaterial(value) {
+				t.Fatalf("containsCredentialLikeTopologyMaterial(%q) = false; want true", value)
+			}
+		})
+	}
+}
+
+func TestRouteDefinition_AllowsKeyAsDomainSegment(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		definitionKey string
+		routeKey      string
+		topic         string
+	}{
+		{
+			name:          "Pix key topic",
+			definitionKey: "dict.key.registered",
+			routeKey:      "dict.key.registered.kafka",
+			topic:         "br-spi.dict.key",
+		},
+		{
+			name:          "hyphenated Pix key topic",
+			definitionKey: "dict.key.updated",
+			routeKey:      "dict-key.updated.kafka",
+			topic:         "br-spi.dict-key",
+		},
+		{
+			name:          "dotted rail and Pix key topic",
+			definitionKey: "pix.key.deleted",
+			routeKey:      "pix.key.deleted.kafka",
+			topic:         "br.spi.dict.key",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			definition, err := NewEventDefinition(EventDefinition{
+				Key:          tt.definitionKey,
+				ResourceType: "pix_key",
+				EventType:    "changed",
+			})
+			if err != nil {
+				t.Fatalf("NewEventDefinition() error = %v; want nil", err)
+			}
+
+			route := routeForTest(tt.routeKey, definition.Key)
+			route.Destination.Name = tt.topic
+
+			if _, err := NewRouteDefinition(route); err != nil {
+				t.Fatalf("NewRouteDefinition() error = %v; want nil", err)
 			}
 		})
 	}
