@@ -434,7 +434,7 @@ func validateDestinationSecurity(destination Destination) error {
 		return fmt.Errorf("%w: tenant-scoped destination topology is not allowed", ErrInvalidDestination)
 	}
 
-	if containsCredentialLikeMaterial(destination.Name) || containsCredentialLikeMaterial(destination.Address) {
+	if containsCredentialLikeTopologyMaterial(destination.Name) || containsCredentialLikeMaterial(destination.Address) {
 		return fmt.Errorf("%w: credential-like destination material is not allowed", ErrInvalidDestination)
 	}
 
@@ -703,7 +703,7 @@ func validateRouteHeaderFields(route RouteDefinition) error {
 		return fmt.Errorf("%w: tenant-scoped route topology is not allowed", ErrInvalidRouteDefinition)
 	}
 
-	if containsCredentialLikeMaterial(route.Key) ||
+	if containsCredentialLikeTopologyMaterial(route.Key) ||
 		containsCredentialLikeMaterial(route.Target) ||
 		containsCredentialLikeMaterial(route.Description) {
 		return fmt.Errorf("%w: credential-like route material is not allowed", ErrInvalidRouteDefinition)
@@ -746,6 +746,14 @@ func ContainsCredentialLikeMaterial(value string) bool {
 }
 
 func containsCredentialLikeMaterial(value string) bool {
+	return containsCredentialMaterial(value) || isCredentialLikeFieldName(value, false)
+}
+
+func containsCredentialLikeTopologyMaterial(value string) bool {
+	return containsCredentialMaterial(value) || isCredentialLikeFieldName(value, true)
+}
+
+func containsCredentialMaterial(value string) bool {
 	if containsSensitiveAssignment(value) || authSchemeCredentialPattern.MatchString(value) || awsAccessKeyIDPattern.MatchString(value) {
 		return true
 	}
@@ -760,10 +768,6 @@ func containsCredentialLikeMaterial(value string) bool {
 		slackTokenPattern.MatchString(value) ||
 		pemPrivateKeyPattern.MatchString(value) ||
 		jwtBarePattern.MatchString(value) {
-		return true
-	}
-
-	if isCredentialLikeFieldName(value) {
 		return true
 	}
 
@@ -785,7 +789,7 @@ func isCanonicalRouteKey(value string) bool {
 	return routeKeyPattern.MatchString(value)
 }
 
-func isCredentialLikeFieldName(value string) bool {
+func isCredentialLikeFieldName(value string, allowDomainKey bool) bool {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" || strings.ContainsAny(trimmed, " /\\") {
 		return false
@@ -793,11 +797,11 @@ func isCredentialLikeFieldName(value string) bool {
 
 	components := splitRouteFieldName(trimmed)
 	if isSensitiveFieldName(trimmed) {
-		return !isAllowedBusinessSensitivePhrase(components)
+		return !isAllowedBusinessSensitivePhrase(components, allowDomainKey)
 	}
 
 	if slices.ContainsFunc(components, isSensitiveFieldName) {
-		return true
+		return !isAllowedBusinessSensitivePhrase(components, allowDomainKey)
 	}
 
 	return false
@@ -809,8 +813,8 @@ func splitRouteFieldName(value string) []string {
 	})
 }
 
-func isAllowedBusinessSensitivePhrase(components []string) bool {
-	if len(components) < 3 {
+func isAllowedBusinessSensitivePhrase(components []string, allowDomainKey bool) bool {
+	if len(components) < 2 {
 		return false
 	}
 
@@ -828,6 +832,16 @@ func isAllowedBusinessSensitivePhrase(components []string) bool {
 
 		switch lower {
 		case "authorization", "token":
+			if len(components) < 3 {
+				return false
+			}
+
+			hasAllowedBusinessToken = true
+		case "key":
+			if !allowDomainKey {
+				return false
+			}
+
 			hasAllowedBusinessToken = true
 		default:
 			return false
@@ -839,7 +853,8 @@ func isAllowedBusinessSensitivePhrase(components []string) bool {
 
 func isCredentialContextComponent(component string) bool {
 	switch component {
-	case "auth", "header", "headers", "proxy", "x", "aws", "amz", "access", "session", "security":
+	case "api", "auth", "header", "headers", "proxy", "x", "aws", "amz", "access", "session", "security",
+		"client", "credential", "credentials", "password", "private", "secret":
 		return true
 	default:
 		return false
