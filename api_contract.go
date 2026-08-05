@@ -42,6 +42,8 @@ type (
 	RouteTable = contract.RouteTable
 	// OutboxEnvelope is the persisted streaming outbox payload shape.
 	OutboxEnvelope = contract.OutboxEnvelope
+	// TraceCarrier is the bounded W3C trace context persisted with an outbox envelope.
+	TraceCarrier = contract.TraceCarrier
 	// HealthState classifies producer readiness.
 	HealthState = contract.HealthState
 	// HealthError carries readiness state and the underlying health failure.
@@ -74,6 +76,10 @@ const (
 	RouteRequired                   = contract.RouteRequired
 	RouteOptional                   = contract.RouteOptional
 	StreamingOutboxEventType        = contract.StreamingOutboxEventType
+	TraceParentHeader               = contract.TraceParentHeader
+	TraceStateHeader                = contract.TraceStateHeader
+	MaxTraceCarrierEntries          = contract.MaxTraceCarrierEntries
+	MaxTraceCarrierValueBytes       = contract.MaxTraceCarrierValueBytes
 	Healthy                         = contract.Healthy
 	Degraded                        = contract.Degraded
 	Down                            = contract.Down

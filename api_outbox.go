@@ -12,6 +12,8 @@ type (
 	OutboxWriter = producer.OutboxWriter
 	// TransactionalOutboxWriter can write streaming envelopes inside an ambient SQL transaction.
 	TransactionalOutboxWriter = producer.TransactionalOutboxWriter
+	// TransactionalBatchOutboxWriter writes an envelope batch atomically in one set-wise operation.
+	TransactionalBatchOutboxWriter = producer.TransactionalBatchOutboxWriter
 )
 
 // WithOutboxTx stores an ambient SQL transaction on ctx for transactional outbox writes.

@@ -39,6 +39,7 @@ var (
 	ErrInvalidDataSchema                  = contract.ErrInvalidDataSchema
 	ErrInvalidEventDefinition             = contract.ErrInvalidEventDefinition
 	ErrInvalidOutboxEnvelope              = contract.ErrInvalidOutboxEnvelope
+	ErrInvalidTraceCarrier                = contract.ErrInvalidTraceCarrier
 	ErrDuplicateEventDefinition           = contract.ErrDuplicateEventDefinition
 	ErrUnknownEventDefinition             = contract.ErrUnknownEventDefinition
 	ErrInvalidDeliveryPolicy              = contract.ErrInvalidDeliveryPolicy

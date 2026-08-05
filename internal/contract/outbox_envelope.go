@@ -40,6 +40,7 @@ type OutboxEnvelope struct {
 	AggregateID   uuid.UUID        `json:"aggregate_id"`
 	Requirement   RouteRequirement `json:"requirement"`
 	Policy        DeliveryPolicy   `json:"policy"`
+	TraceCarrier  TraceCarrier     `json:"trace_carrier,omitempty"`
 	Event         Event            `json:"event"`
 }
 
@@ -157,6 +158,10 @@ func (e OutboxEnvelope) ValidateShape() error {
 
 	if err := e.Policy.Validate(); err != nil {
 		return err
+	}
+
+	if err := e.TraceCarrier.Validate(); err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidOutboxEnvelope, err)
 	}
 
 	if err := validateOutboxEventShape(e.Event); err != nil {
