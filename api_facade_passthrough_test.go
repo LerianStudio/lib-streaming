@@ -32,6 +32,10 @@ func TestProducer_NilReceiverGuards(t *testing.T) {
 		t.Error("Emit() on nil Producer = nil; want ErrNilProducer")
 	}
 
+	if err := p.EmitBatch(context.Background(), nil); !errors.Is(err, streaming.ErrNilProducer) {
+		t.Errorf("EmitBatch() on nil Producer = %v; want ErrNilProducer", err)
+	}
+
 	if err := p.Healthy(context.Background()); err == nil {
 		t.Error("Healthy() on nil Producer = nil; want a Down health error")
 	}
@@ -104,5 +108,14 @@ func TestContractReExports(t *testing.T) {
 
 	if _, err := streaming.NewPublisherDescriptor(streaming.PublisherDescriptor{}); err == nil {
 		t.Error("NewPublisherDescriptor(empty) = nil error; want a validation error")
+	}
+}
+
+func TestWithOutboxTx_ReturnsUsableContext(t *testing.T) {
+	t.Parallel()
+
+	ctx := streaming.WithOutboxTx(context.Background(), nil)
+	if ctx == nil {
+		t.Fatal("WithOutboxTx() returned nil context")
 	}
 }

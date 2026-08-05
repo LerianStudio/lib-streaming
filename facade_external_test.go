@@ -101,6 +101,10 @@ func TestFacade_BuilderDescriptorAndClose(t *testing.T) {
 		t.Fatalf("Build() emitter type = %T; want *streaming.Producer", emitter)
 	}
 
+	if err := producer.EmitBatch(context.Background(), nil); err != nil {
+		t.Fatalf("EmitBatch(empty) error = %v; want nil", err)
+	}
+
 	descriptor, err := producer.Descriptor(streaming.PublisherDescriptor{
 		ServiceName: "svc",
 		SourceBase:  "//test/source",
@@ -123,6 +127,9 @@ func TestFacade_NilProducerMethodsAreSafe(t *testing.T) {
 
 	if err := producer.Emit(context.Background(), streaming.EmitRequest{}); !errors.Is(err, streaming.ErrNilProducer) {
 		t.Fatalf("nil Emit() error = %v; want ErrNilProducer", err)
+	}
+	if err := producer.EmitBatch(context.Background(), nil); !errors.Is(err, streaming.ErrNilProducer) {
+		t.Fatalf("nil EmitBatch() error = %v; want ErrNilProducer", err)
 	}
 	if err := producer.Close(); err != nil {
 		t.Fatalf("nil Close() error = %v; want nil", err)

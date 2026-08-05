@@ -1,0 +1,74 @@
+// Package lerian.streaming.billing.v1 defines the wire contract for a billable
+// usage event published to the Kafka-like subject
+// "lerian.streaming.billing.recorded-value".
+//
+// This schema is the protobuf successor to the shipped Go BillablePayload
+// (github.com/LerianStudio/lib-streaming/v2/billing) and mirrors its JSON field
+// semantics one-to-one so producers and consumers share a single, registry-
+// enforced source of truth. Field names, numbers, and optionality below ARE the
+// wire contract — do not renumber or repurpose an existing field. New fields
+// take the next free number; retired fields are `reserved` (see below).
+syntax = "proto3";
+
+package lerian.streaming.billing.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// BillablePayload is the payload of a billable usage event. Serialization mirrors
+// the Lago ingestion contract: `metric` and `subscription_id` are always present;
+// `timestamp`, `properties`, and `precise_total_amount_cents` are optional and
+// omitted from the wire when unset.
+//
+// Lago field mapping (right-hand side is the Lago ingestion field):
+//   metric                     -> "code" (the billable metric code)
+//   subscription_id            -> "external_subscription_id"
+//   timestamp                  -> "timestamp" (RFC 3339 instant; was *time.Time)
+//   properties                 -> "properties" (Lago metric properties bag)
+//   precise_total_amount_cents -> "precise_total_amount_cents"
+message BillablePayload {
+  // metric is the billable metric code. Required, non-empty. Maps to Lago "code".
+  string metric = 1;
+
+  // subscription_id is the external subscription identifier. Required, non-empty.
+  // Maps to Lago "external_subscription_id".
+  string subscription_id = 2;
+
+  // timestamp is the event instant (RFC 3339 in the legacy JSON, *time.Time in
+  // the shipped Go). Optional: when absent, Lago stamps ingestion time.
+  optional google.protobuf.Timestamp timestamp = 3;
+
+  // properties is the Lago metric properties bag. Each value is constrained to a
+  // string or number by PropertyValue (see below).
+  map<string, PropertyValue> properties = 4;
+
+  // precise_total_amount_cents carries the precise monetary amount as a decimal
+  // STRING (not a numeric type) to preserve arbitrary precision without float
+  // rounding — matching the shipped *string and Lago's own string field.
+  // Optional. Maps to Lago "precise_total_amount_cents".
+  optional string precise_total_amount_cents = 5;
+
+  // Field numbers 1-5 are in active use. No numbers are reserved yet: the
+  // schema has never dropped a field, so there is nothing to protect against
+  // accidental reuse. When a field is ever retired, `reserve` its number AND
+  // name here to keep the registry's compatibility checks honest.
+}
+
+// PropertyValue models a single Lago metric property value. It uses a `oneof` to
+// encode today's Go billing.Validate() "string OR number" rule directly INTO the
+// schema: the registry then rejects any other property type (bool, list, nested
+// object, null) structurally at publish/validation time, instead of relying on
+// producer-side validation that a consumer cannot trust. Numbers use `double`
+// because the legacy contract accepted any finite JSON number (integer or float)
+// in a single untyped slot; `double` is the widest single proto scalar that
+// round-trips that set.
+//
+// Note: proto3 cannot structurally require that a oneof variant be set, so a
+// PropertyValue with NEITHER arm populated is valid on the wire. billing.Validate
+// rejects that unset case (and a nil PropertyValue) at the application layer,
+// because an empty PropertyValue is silently dropped downstream.
+message PropertyValue {
+  oneof value {
+    string string_value = 1;
+    double number_value = 2;
+  }
+}

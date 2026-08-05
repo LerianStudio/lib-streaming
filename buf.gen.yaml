@@ -1,0 +1,16 @@
+version: v2
+# Managed mode owns the go_package file option so individual .proto files do not
+# hard-code an import path. The prefix is the Go import path of the generated
+# output tree (billing/gen), keeping generated import paths and on-disk layout
+# in lockstep with paths=source_relative below.
+managed:
+  enabled: true
+  override:
+    - file_option: go_package_prefix
+      value: github.com/LerianStudio/lib-streaming/v2/billing/gen
+plugins:
+  # Remote BSR plugin (no local protoc toolchain required). Pinned for
+  # reproducible generation; Task 1.1.3 runs `buf generate` against it.
+  - remote: buf.build/protocolbuffers/go:v1.36.6
+    out: billing/gen
+    opt: paths=source_relative

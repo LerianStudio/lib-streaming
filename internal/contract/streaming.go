@@ -168,6 +168,10 @@ var (
 	// concerns catalog entries, not persisted envelopes.
 	ErrInvalidOutboxEnvelope = errors.New("streaming: invalid outbox envelope")
 
+	// ErrInvalidTraceCarrier is returned when durable outbox trace context
+	// contains non-W3C keys, unsafe values, or malformed trace metadata.
+	ErrInvalidTraceCarrier = errors.New("streaming: invalid trace carrier")
+
 	// ErrDuplicateEventDefinition is returned by NewCatalog when two event
 	// definitions use the same key or resolve to the same resource/event
 	// contract. Catalogs are immutable and must be unambiguous.
@@ -275,6 +279,16 @@ var (
 	// kafkasec.BuildSASLMechanism. Caller-correctable. The error message never
 	// includes the SASL password.
 	ErrInvalidSASLMechanism = errors.New("streaming: invalid SASL mechanism")
+
+	// ErrInvalidSchemaRegistryConfig is returned when the Schema Registry
+	// configuration is unusable: an empty registry URL passed to
+	// kafkasec.BuildSchemaRegistryClient, or (surfaced by LoadConfig) a
+	// STREAMING_SCHEMA_REGISTRY_USERNAME set without a matching
+	// STREAMING_SCHEMA_REGISTRY_PASSWORD. The registry is optional overall —
+	// only the billing serialize path needs it — so an entirely unset
+	// STREAMING_SCHEMA_REGISTRY_* group is NOT an error. Caller-correctable.
+	// The error message never includes the registry password.
+	ErrInvalidSchemaRegistryConfig = errors.New("streaming: invalid schema registry config")
 
 	// ErrNilProducer is returned when a method is invoked on a nil *Producer.
 	// Parallels circuitbreaker.ErrNilCircuitBreaker. Callers should treat this
@@ -399,6 +413,7 @@ var callerErrorSentinels = []error{
 	ErrInvalidTLSConfig,
 	ErrPlaintextSASLNotAllowed,
 	ErrInvalidSASLMechanism,
+	ErrInvalidSchemaRegistryConfig,
 	ErrInvalidTenantID,
 	ErrInvalidResourceType,
 	ErrInvalidEventType,
@@ -410,6 +425,7 @@ var callerErrorSentinels = []error{
 	ErrInvalidDataSchema,
 	ErrInvalidEventDefinition,
 	ErrInvalidOutboxEnvelope,
+	ErrInvalidTraceCarrier,
 	ErrDuplicateEventDefinition,
 	ErrUnknownEventDefinition,
 	ErrInvalidDeliveryPolicy,
@@ -435,7 +451,8 @@ var callerErrorSentinels = []error{
 //     ErrInvalidEventType, ErrInvalidSource, ErrInvalidSubject,
 //     ErrInvalidEventID, ErrInvalidSchemaVersion, ErrInvalidDataContentType,
 //     ErrInvalidDataSchema, ErrInvalidEventDefinition,
-//     ErrInvalidOutboxEnvelope, ErrDuplicateEventDefinition,
+//     ErrInvalidOutboxEnvelope, ErrInvalidTraceCarrier,
+//     ErrDuplicateEventDefinition,
 //     ErrUnknownEventDefinition, ErrInvalidDeliveryPolicy,
 //     ErrInvalidPublisherDescriptor, ErrInvalidRouteDefinition,
 //     ErrInvalidDestination, ErrDuplicateRouteDefinition,

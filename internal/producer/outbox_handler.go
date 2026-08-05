@@ -7,6 +7,7 @@ import (
 
 	"github.com/LerianStudio/lib-commons/v6/commons/outbox"
 	"github.com/LerianStudio/lib-observability/v2/log"
+	"github.com/LerianStudio/lib-observability/v2/tracing"
 
 	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
 	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
@@ -96,6 +97,8 @@ func (p *Producer) handleOutboxRow(ctx context.Context, row *outbox.OutboxEvent)
 	if err := envelope.Validate(); err != nil {
 		return fmt.Errorf("streaming: invalid outbox envelope row %s: %w", row.ID, err)
 	}
+
+	ctx = tracing.ExtractQueueTraceContext(ctx, map[string]string(envelope.TraceCarrier))
 
 	if err := p.preFlightWithPayload(ctx, envelope.Event, true); err != nil {
 		return fmt.Errorf("streaming: outbox replay preflight rejected row %s: %w", row.ID, err)
