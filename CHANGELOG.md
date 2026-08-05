@@ -1,5 +1,23 @@
 # Lib-streaming Changelog
 
+## [2.1.0](https://github.com/LerianStudio/lib-streaming/releases/tag/v2.1.0)
+
+Features:
+- Implement batch transactional envelopes for the outbox. (@fredcamaral)
+- Introduce a Protobuf/Schema-Registry billing payload contract. (@caioaletroca)
+
+Fixes:
+- Allow the key to be used as a topology domain segment in streaming. (@fredcamaral)
+- Reject nil/unset billing `PropertyValue` in streaming. (@caioaletroca)
+- Reject non-finite billing property numbers and enhance the serializer in streaming. (@caioaletroca)
+
+Improvements:
+- Harden the Schema-Registry credential guard and expose a public client constructor. (@caioaletroca)
+
+[Compare changes](https://github.com/LerianStudio/lib-streaming/compare/v2.0.2...v2.1.0)
+
+---
+
 ## [2.0.2](https://github.com/LerianStudio/lib-streaming/releases/tag/v2.0.2)
 
 Features:
@@ -259,3 +277,4 @@ Contributors: @bedatty, @fredcamaral
 - Production SQS, RabbitMQ, and EventBridge clients must implement `Ping(ctx) error`. `Adapter.Healthy` now fails closed when the caller-supplied client has no health probe; update existing wrappers before relying on `Emitter.Healthy` for readiness.
 - The new CB recovery goroutine is intentionally not directly customizable. The interval is derived from the configured `CBTimeout` and clamped to `[500ms, 5s]`. If your service has reason to override this envelope, raise an issue with the use case before adding a `WithCBRecoveryInterval(...)` option — every additional knob on the public API surface ages.
 - `Healthy(ctx)` reports adapter readiness, outbox viability, and CB recovery-loop liveness. Recovery-loop liveness is dashboard-visible through `streaming_cb_recovery_liveness`, `assertion_failed_total{component="streaming",operation="cb_recovery.start"}` for invariant violations at start, `panic_recovered_total{component="streaming",goroutine_name="cb_recovery_loop"}` if `GetState` panics after consuming services initialize panic metrics with `runtime.InitPanicMetrics(...)`, and sustained `streaming_emitted_total{outcome="circuit_open"}` / `streaming_outbox_routed_total{reason="circuit_open"}` after broker recovery. The implementation does not expose a public CB recovery interval or retry knob.
+
