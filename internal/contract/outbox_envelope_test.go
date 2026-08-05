@@ -5,6 +5,7 @@ package contract
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -40,6 +41,76 @@ func validOutboxEnvelope(t *testing.T) OutboxEnvelope {
 			EventID:         "01939c11-1d49-7abc-bd3f-1fa8cafe1234",
 			Payload:         json.RawMessage(`{}`),
 		},
+	}
+}
+
+func TestOutboxEnvelope_Validate_RejectsUnsafeTraceCarrier(t *testing.T) {
+	t.Parallel()
+
+	validParent := "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+	tests := []struct {
+		name    string
+		carrier TraceCarrier
+	}{
+		{name: "baggage key", carrier: TraceCarrier{"traceparent": validParent, "baggage": "customer.email=secret@example.com"}},
+		{name: "mixed-case key", carrier: TraceCarrier{"Traceparent": validParent}},
+		{name: "unknown key", carrier: TraceCarrier{"traceparent": validParent, "x-correlation-id": "unbounded"}},
+		{name: "oversized value", carrier: TraceCarrier{"traceparent": strings.Repeat("a", MaxTraceCarrierValueBytes+1)}},
+		{name: "empty value", carrier: TraceCarrier{"traceparent": ""}},
+		{name: "control character", carrier: TraceCarrier{"traceparent": validParent + "\n"}},
+		{name: "non-ASCII value", carrier: TraceCarrier{"traceparent": validParent, "tracestate": "vendor=café"}},
+		{name: "too many entries", carrier: TraceCarrier{"traceparent": validParent, "tracestate": "vendor=value", "extra": "value"}},
+		{name: "malformed traceparent", carrier: TraceCarrier{"traceparent": "00-not-a-trace"}},
+		{name: "uppercase traceparent", carrier: TraceCarrier{"traceparent": "00-4BF92F3577B34DA6A3CE929D0E0E4736-00f067aa0ba902b7-01"}},
+		{name: "invalid trace id", carrier: TraceCarrier{"traceparent": "00-00000000000000000000000000000000-00f067aa0ba902b7-01"}},
+		{name: "invalid span id", carrier: TraceCarrier{"traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-0000000000000000-01"}},
+		{name: "invalid flags", carrier: TraceCarrier{"traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-zz"}},
+		{name: "tracestate without traceparent", carrier: TraceCarrier{"tracestate": "vendor=value"}},
+		{name: "malformed tracestate", carrier: TraceCarrier{"traceparent": validParent, "tracestate": "vendor = value"}},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			envelope := validOutboxEnvelope(t)
+			envelope.TraceCarrier = tt.carrier
+
+			err := envelope.Validate()
+			if !errors.Is(err, ErrInvalidOutboxEnvelope) {
+				t.Fatalf("Validate() error = %v; want ErrInvalidOutboxEnvelope", err)
+			}
+			if !errors.Is(err, ErrInvalidTraceCarrier) {
+				t.Fatalf("Validate() error = %v; want ErrInvalidTraceCarrier", err)
+			}
+		})
+	}
+}
+
+func TestOutboxEnvelope_Validate_AcceptsBoundedW3CTraceCarrier(t *testing.T) {
+	t.Parallel()
+
+	envelope := validOutboxEnvelope(t)
+	envelope.TraceCarrier = TraceCarrier{
+		TraceParentHeader: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+		TraceStateHeader:  "vendor=value",
+	}
+
+	if err := envelope.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v; want nil", err)
+	}
+}
+
+func TestTraceCarrier_Validate_AcceptsReservedW3CTraceFlags(t *testing.T) {
+	t.Parallel()
+
+	carrier := TraceCarrier{
+		TraceParentHeader: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-03",
+	}
+
+	if err := carrier.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v; want nil for syntactically valid reserved trace flags", err)
 	}
 }
 

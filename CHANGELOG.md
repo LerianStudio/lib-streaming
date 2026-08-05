@@ -19,6 +19,13 @@ Improvements:
 
 ## [Unreleased]
 
+Features:
+- Add additive transactional outbox batch emission through `TransactionalBatchEmitter.EmitBatch`. A heterogeneous request batch is fully validated, expanded in deterministic request-and-route order, and persisted atomically through one `lib-commons/v6` `CreateManyWithTx` operation. Existing `Emitter.Emit` behavior and the shipped three-method `Emitter` interface are unchanged.
+- Preserve bounded W3C `traceparent` and `tracestate` context in outbox envelopes so relayed and redelivered events continue the originating trace. Baggage and non-W3C propagation fields are never persisted; carrier values are capped at 512 bytes.
+
+Improvements:
+- Upgrade `github.com/LerianStudio/lib-commons/v6` to stable `v6.4.0` for the transactional batch outbox repository contract.
+
 BREAKING CHANGES:
 - Migrate to `github.com/LerianStudio/lib-commons/v6` (and `github.com/LerianStudio/lib-observability/v2`). Because the public lifecycle surface exposes lib-commons types — `(*Producer).Run(launcher *commons.Launcher) error` and `(*Producer).RunContext(ctx, launcher *commons.Launcher) error`, plus the `commons.App` compile-time assertion — the underlying `commons.Launcher` / `commons.App` types now resolve to their lib-commons/v6 identities. This is a source-incompatible change for consumers that pass a v5 `*commons.Launcher`.
 - Cut the `/v2` module major: the module path is now `github.com/LerianStudio/lib-streaming/v2`. Consumers MUST update their import paths from `github.com/LerianStudio/lib-streaming[...]` to `github.com/LerianStudio/lib-streaming/v2[...]` and pass a lib-commons/v6 `*commons.Launcher` to `Run`/`RunContext`.
@@ -229,4 +236,3 @@ Contributors: @bedatty, @fredcamaral
 - Production SQS, RabbitMQ, and EventBridge clients must implement `Ping(ctx) error`. `Adapter.Healthy` now fails closed when the caller-supplied client has no health probe; update existing wrappers before relying on `Emitter.Healthy` for readiness.
 - The new CB recovery goroutine is intentionally not directly customizable. The interval is derived from the configured `CBTimeout` and clamped to `[500ms, 5s]`. If your service has reason to override this envelope, raise an issue with the use case before adding a `WithCBRecoveryInterval(...)` option — every additional knob on the public API surface ages.
 - `Healthy(ctx)` reports adapter readiness, outbox viability, and CB recovery-loop liveness. Recovery-loop liveness is dashboard-visible through `streaming_cb_recovery_liveness`, `assertion_failed_total{component="streaming",operation="cb_recovery.start"}` for invariant violations at start, `panic_recovered_total{component="streaming",goroutine_name="cb_recovery_loop"}` if `GetState` panics after consuming services initialize panic metrics with `runtime.InitPanicMetrics(...)`, and sustained `streaming_emitted_total{outcome="circuit_open"}` / `streaming_outbox_routed_total{reason="circuit_open"}` after broker recovery. The implementation does not expose a public CB recovery interval or retry knob.
-

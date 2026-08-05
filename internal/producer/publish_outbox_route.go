@@ -5,11 +5,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 
 	"github.com/LerianStudio/lib-commons/v6/commons"
 	"github.com/LerianStudio/lib-commons/v6/commons/outbox"
+	"github.com/LerianStudio/lib-observability/v2/tracing"
 	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
 )
 
@@ -65,18 +67,7 @@ func (p *Producer) publishRouteOutbox(
 		return ErrOutboxNotConfigured
 	}
 
-	envelope := contract.OutboxEnvelope{
-		Version:       contract.OutboxEnvelopeVersion,
-		RouteKey:      route.Key,
-		DefinitionKey: definitionKey,
-		Target:        route.Target,
-		Transport:     route.Destination.Kind,
-		Destination:   route.Destination,
-		AggregateID:   p.deriveOutboxAggregateID(event),
-		Requirement:   route.Requirement,
-		Policy:        policy,
-		Event:         event,
-	}
+	envelope := p.newOutboxEnvelope(ctx, event, definitionKey, route, policy)
 
 	// ValidateShape skips Destination.Validate (which performs DNS lookups
 	// and SSRF guards) on the synchronous persist path. The full Validate
@@ -122,6 +113,56 @@ func (p *Producer) publishRouteOutbox(
 	}
 
 	return nil
+}
+
+func (p *Producer) newOutboxEnvelope(
+	ctx context.Context,
+	event Event,
+	definitionKey string,
+	route contract.RouteDefinition,
+	policy contract.DeliveryPolicy,
+) contract.OutboxEnvelope {
+	return contract.OutboxEnvelope{
+		Version:       contract.OutboxEnvelopeVersion,
+		RouteKey:      route.Key,
+		DefinitionKey: definitionKey,
+		Target:        route.Target,
+		Transport:     route.Destination.Kind,
+		Destination:   route.Destination,
+		AggregateID:   p.deriveOutboxAggregateID(event),
+		Requirement:   route.Requirement,
+		Policy:        policy,
+		TraceCarrier:  captureTraceCarrier(ctx),
+		Event:         event,
+	}
+}
+
+func captureTraceCarrier(ctx context.Context) contract.TraceCarrier {
+	if ctx == nil {
+		return nil
+	}
+
+	injected := tracing.InjectQueueTraceContext(ctx)
+	if len(injected) == 0 {
+		return nil
+	}
+
+	carrier := make(contract.TraceCarrier, contract.MaxTraceCarrierEntries)
+
+	for key, value := range injected {
+		switch strings.ToLower(key) {
+		case contract.TraceParentHeader:
+			carrier[contract.TraceParentHeader] = value
+		case contract.TraceStateHeader:
+			carrier[contract.TraceStateHeader] = value
+		}
+	}
+
+	if len(carrier) == 0 {
+		return nil
+	}
+
+	return carrier
 }
 
 // deriveAggregateID produces a deterministic UUID from the event's

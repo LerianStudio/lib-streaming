@@ -22,6 +22,10 @@ type fakeOutboxRepo struct {
 
 	createdWithTx []*outbox.OutboxEvent
 	createTxErr   error
+
+	createdManyWithTx []*outbox.OutboxEvent
+	createManyTxCalls int
+	createManyTxErr   error
 }
 
 func (f *fakeOutboxRepo) Create(_ context.Context, event *outbox.OutboxEvent) (*outbox.OutboxEvent, error) {
@@ -52,6 +56,24 @@ func (f *fakeOutboxRepo) CreateWithTx(
 	f.createdWithTx = append(f.createdWithTx, event)
 
 	return event, nil
+}
+
+func (f *fakeOutboxRepo) CreateManyWithTx(
+	_ context.Context,
+	_ outbox.Tx,
+	events []*outbox.OutboxEvent,
+) ([]*outbox.OutboxEvent, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.createManyTxCalls++
+	if f.createManyTxErr != nil {
+		return nil, f.createManyTxErr
+	}
+
+	f.createdManyWithTx = append(f.createdManyWithTx, events...)
+
+	return append([]*outbox.OutboxEvent(nil), events...), nil
 }
 
 func (f *fakeOutboxRepo) ListPending(context.Context, int) ([]*outbox.OutboxEvent, error) {
@@ -123,4 +145,11 @@ func (f *fakeOutboxRepo) firstCreated() *outbox.OutboxEvent {
 	}
 
 	return f.created[0]
+}
+
+func (f *fakeOutboxRepo) batchSnapshot() (int, []*outbox.OutboxEvent) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return f.createManyTxCalls, append([]*outbox.OutboxEvent(nil), f.createdManyWithTx...)
 }

@@ -14,6 +14,13 @@ import (
 // Emitter publishes cataloged domain events and exposes lifecycle/health hooks.
 type Emitter = contract.Emitter
 
+// TransactionalBatchEmitter adds atomic outbox batch emission without
+// changing the shipped three-method Emitter contract.
+type TransactionalBatchEmitter interface {
+	Emitter
+	EmitBatch(ctx context.Context, requests []EmitRequest) error
+}
+
 // NoopEmitter is the fail-safe no-op implementation returned when streaming is disabled.
 type NoopEmitter = emitter.NoopEmitter
 
@@ -31,8 +38,9 @@ type Producer struct {
 // contract (Run). A missing or renamed method fails the build here, not at a
 // distant call site in the consuming service's main.go.
 var (
-	_ Emitter     = (*Producer)(nil)
-	_ commons.App = (*Producer)(nil)
+	_ Emitter                   = (*Producer)(nil)
+	_ TransactionalBatchEmitter = (*Producer)(nil)
+	_ commons.App               = (*Producer)(nil)
 )
 
 // NewNoopEmitter returns an Emitter whose methods are unconditional no-ops.
@@ -47,6 +55,16 @@ func (p *Producer) Emit(ctx context.Context, request EmitRequest) error {
 	}
 
 	return p.inner.Emit(ctx, request)
+}
+
+// EmitBatch persists all resolved request routes atomically through the
+// configured transactional outbox writer.
+func (p *Producer) EmitBatch(ctx context.Context, requests []EmitRequest) error {
+	if p == nil || p.inner == nil {
+		return ErrNilProducer
+	}
+
+	return p.inner.EmitBatch(ctx, requests)
 }
 
 // Close flushes and closes the producer. It is idempotent.

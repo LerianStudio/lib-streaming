@@ -476,9 +476,9 @@ coverage-unit:
 	  fi; \
 	  if [ -f .ignorecoverunit ]; then \
 	    echo "Filtering coverage with .ignorecoverunit patterns..."; \
-	    patterns=$$(grep -v '^#' .ignorecoverunit | grep -v '^$$' | tr '\n' '|' | sed 's/|$$//'); \
+	    patterns=$$(grep -v '^#' .ignorecoverunit | grep -v '^$$'); \
 	    if [ -n "$$patterns" ]; then \
-	      regex_patterns=$$(echo "$$patterns" | sed 's/[][(){}+?^$$\\|]/\\&/g' | sed 's/\./\\./g' | sed 's/\*/.*/g'); \
+	      regex_patterns=$$(printf '%s\n' "$$patterns" | sed 's/[][(){}+?^$$\\|]/\\&/g' | sed 's/\./\\./g' | sed 's/\*/.*/g' | tr '\n' '|' | sed 's/|$$//'); \
 	      head -1 $(TEST_REPORTS_DIR)/unit_coverage.out > $(TEST_REPORTS_DIR)/unit_coverage_filtered.out; \
 	      tail -n +2 $(TEST_REPORTS_DIR)/unit_coverage.out | grep -vE "$$regex_patterns" >> $(TEST_REPORTS_DIR)/unit_coverage_filtered.out || true; \
 	      mv $(TEST_REPORTS_DIR)/unit_coverage_filtered.out $(TEST_REPORTS_DIR)/unit_coverage.out; \
@@ -765,7 +765,7 @@ sec:
 		echo "Running security checks on all packages..."; \
 		if [ "$(SARIF)" = "1" ]; then \
 			echo "Generating SARIF output: gosec-report.sarif"; \
-			if gosec -fmt sarif -out gosec-report.sarif ./...; then \
+			if gosec -exclude-generated -fmt sarif -out gosec-report.sarif ./...; then \
 				echo "$(GREEN)$(BOLD)[ok]$(NC) SARIF report generated: gosec-report.sarif$(GREEN) ✔️$(NC)"; \
 			else \
 				printf "\n%s%sSecurity issues found by gosec. Please address them before proceeding.%s\n\n" "$(BOLD)" "$(RED)" "$(NC)"; \
@@ -773,7 +773,7 @@ sec:
 				exit 1; \
 			fi; \
 		else \
-			if gosec ./...; then \
+			if gosec -exclude-generated ./...; then \
 				echo "$(GREEN)$(BOLD)[ok]$(NC) Security checks completed$(GREEN) ✔️$(NC)"; \
 			else \
 				printf "\n%s%sSecurity issues found by gosec. Please address them before proceeding.%s\n\n" "$(BOLD)" "$(RED)" "$(NC)"; \

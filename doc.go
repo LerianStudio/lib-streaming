@@ -114,6 +114,47 @@
 //	svc.DoSomething(ctx)
 //	streamingtest.AssertEventEmitted(t, mock, "transaction.created")
 //
+// # Atomic outbox batches
+//
+// TransactionalBatchEmitter is an additive capability; the existing Emitter
+// interface and Emit behavior are unchanged. EmitBatch resolves every route,
+// builds every envelope, and validates the complete batch before persistence.
+// It then writes all envelopes in request order and immutable route-table order
+// through one lib-commons CreateManyWithTx call. It never publishes directly or
+// falls back to one INSERT per envelope.
+//
+// Call EmitBatch inside the same SQL transaction as the domain mutation:
+//
+//	batchEmitter, ok := emitter.(streaming.TransactionalBatchEmitter)
+//	if !ok { return streaming.ErrOutboxTxUnsupported }
+//	ctx = streaming.WithOutboxTx(ctx, tx)
+//	err := batchEmitter.EmitBatch(ctx, []streaming.EmitRequest{
+//	    {
+//	        DefinitionKey: "transaction.created",
+//	        TenantID:      "t-abc",
+//	        Subject:       "tx-123",
+//	        Payload:       createdPayload,
+//	    },
+//	    {
+//	        DefinitionKey: "balance.updated",
+//	        TenantID:      "t-abc",
+//	        Subject:       "account-456",
+//	        Payload:       balancePayload,
+//	    },
+//	})
+//	if err != nil { return err }
+//
+// EmitBatch requires an ambient transaction from WithOutboxTx and an outbox
+// repository implementing lib-commons outbox.TransactionalBatchWriter. An empty
+// batch is a no-op while the producer is open. Any invalid request prevents the
+// entire batch from reaching the repository.
+//
+// Outbox envelopes optionally retain only canonical W3C traceparent and
+// tracestate values from the write context. Each value is bounded to 512 bytes;
+// baggage and every other propagation key are excluded. The relay extracts this
+// carrier before publishing so asynchronous delivery continues the originating
+// trace, including after a failed attempt and redelivery.
+//
 // # Multi-transport routing
 //
 // A single Emit can dispatch to N routes. Route attempts run in deterministic
@@ -226,7 +267,8 @@
 //     ErrInvalid{TenantID,ResourceType,EventType,Source,Subject,EventID,
 //     SchemaVersion,DataContentType,DataSchema}, ErrPayloadTooLarge,
 //     ErrNotJSON, ErrEventDisabled, ErrInvalidEventDefinition,
-//     ErrInvalidOutboxEnvelope, ErrDuplicateEventDefinition,
+//     ErrInvalidOutboxEnvelope, ErrInvalidTraceCarrier,
+//     ErrDuplicateEventDefinition,
 //     ErrUnknownEventDefinition, ErrInvalidDeliveryPolicy,
 //     ErrInvalidPublisherDescriptor, ErrInvalidRouteDefinition,
 //     ErrInvalidDestination, ErrDuplicateRouteDefinition,

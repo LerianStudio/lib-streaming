@@ -32,6 +32,13 @@ type TransactionalOutboxWriter interface {
 	WriteWithTx(ctx context.Context, tx *sql.Tx, envelope OutboxEnvelope) error
 }
 
+// TransactionalBatchOutboxWriter persists a validated envelope batch in one
+// atomic, set-wise write under the caller's SQL transaction.
+type TransactionalBatchOutboxWriter interface {
+	TransactionalOutboxWriter
+	WriteBatchWithTx(ctx context.Context, tx *sql.Tx, envelopes []OutboxEnvelope) error
+}
+
 type libCommonsOutboxWriter struct {
 	repo   outbox.OutboxRepository
 	logger log.Logger
@@ -96,6 +103,49 @@ func (w *libCommonsOutboxWriter) WriteWithTx(ctx context.Context, tx *sql.Tx, en
 
 	if _, err := w.repo.CreateWithTx(ctx, tx, row); err != nil {
 		return fmt.Errorf("streaming: outbox create (tx): %w", err)
+	}
+
+	return nil
+}
+
+// WriteBatchWithTx validates and serializes the entire envelope batch before
+// asking lib-commons to execute its single set-wise INSERT. It never falls back
+// to one CreateWithTx call per envelope.
+func (w *libCommonsOutboxWriter) WriteBatchWithTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	envelopes []OutboxEnvelope,
+) error {
+	if w == nil {
+		return ErrOutboxNotConfigured
+	}
+
+	a := assert.New(ctx, w.asserterLogger(), asserterComponent, "outbox_writer.write_batch_with_tx")
+	if err := a.NotNil(ctx, w.repo, "libCommonsOutboxWriter repo must be non-nil for WriteBatchWithTx"); err != nil {
+		return ErrOutboxNotConfigured
+	}
+
+	if tx == nil {
+		return fmt.Errorf("%w: nil transaction", ErrOutboxTxUnsupported)
+	}
+
+	batchWriter, ok := w.repo.(outbox.TransactionalBatchWriter)
+	if !ok {
+		return fmt.Errorf("%w: outbox repository does not implement TransactionalBatchWriter", ErrOutboxTxUnsupported)
+	}
+
+	rows := make([]*outbox.OutboxEvent, len(envelopes))
+	for i := range envelopes {
+		row, err := outboxRowFromEnvelope(envelopes[i])
+		if err != nil {
+			return fmt.Errorf("streaming: prepare outbox batch envelope %d: %w", i, err)
+		}
+
+		rows[i] = row
+	}
+
+	if _, err := batchWriter.CreateManyWithTx(ctx, tx, rows); err != nil {
+		return fmt.Errorf("streaming: outbox create batch (tx): %w", err)
 	}
 
 	return nil

@@ -168,6 +168,10 @@ var (
 	// concerns catalog entries, not persisted envelopes.
 	ErrInvalidOutboxEnvelope = errors.New("streaming: invalid outbox envelope")
 
+	// ErrInvalidTraceCarrier is returned when durable outbox trace context
+	// contains non-W3C keys, unsafe values, or malformed trace metadata.
+	ErrInvalidTraceCarrier = errors.New("streaming: invalid trace carrier")
+
 	// ErrDuplicateEventDefinition is returned by NewCatalog when two event
 	// definitions use the same key or resolve to the same resource/event
 	// contract. Catalogs are immutable and must be unambiguous.
@@ -421,6 +425,7 @@ var callerErrorSentinels = []error{
 	ErrInvalidDataSchema,
 	ErrInvalidEventDefinition,
 	ErrInvalidOutboxEnvelope,
+	ErrInvalidTraceCarrier,
 	ErrDuplicateEventDefinition,
 	ErrUnknownEventDefinition,
 	ErrInvalidDeliveryPolicy,
@@ -446,7 +451,8 @@ var callerErrorSentinels = []error{
 //     ErrInvalidEventType, ErrInvalidSource, ErrInvalidSubject,
 //     ErrInvalidEventID, ErrInvalidSchemaVersion, ErrInvalidDataContentType,
 //     ErrInvalidDataSchema, ErrInvalidEventDefinition,
-//     ErrInvalidOutboxEnvelope, ErrDuplicateEventDefinition,
+//     ErrInvalidOutboxEnvelope, ErrInvalidTraceCarrier,
+//     ErrDuplicateEventDefinition,
 //     ErrUnknownEventDefinition, ErrInvalidDeliveryPolicy,
 //     ErrInvalidPublisherDescriptor, ErrInvalidRouteDefinition,
 //     ErrInvalidDestination, ErrDuplicateRouteDefinition,

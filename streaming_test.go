@@ -10,6 +10,8 @@ import (
 	streaming "github.com/LerianStudio/lib-streaming/v2"
 )
 
+var _ streaming.TransactionalBatchEmitter = (*streaming.Producer)(nil)
+
 // TestIsCallerError exercises the caller-vs-infrastructure fault truth table
 // from TRD §C9 (DX-B03). Caller errors are deterministic faults the caller can
 // fix: missing tenant, wrong payload shape, bad config. Infrastructure errors
@@ -34,6 +36,7 @@ func TestIsCallerError(t *testing.T) {
 		{"ErrInvalidCompression", streaming.ErrInvalidCompression},
 		{"ErrInvalidAcks", streaming.ErrInvalidAcks},
 		{"ErrInvalidEventDefinition", streaming.ErrInvalidEventDefinition},
+		{"ErrInvalidTraceCarrier", streaming.ErrInvalidTraceCarrier},
 		{"ErrDuplicateEventDefinition", streaming.ErrDuplicateEventDefinition},
 		{"ErrUnknownEventDefinition", streaming.ErrUnknownEventDefinition},
 		{"ErrInvalidDeliveryPolicy", streaming.ErrInvalidDeliveryPolicy},

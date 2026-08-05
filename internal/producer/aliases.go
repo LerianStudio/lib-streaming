@@ -27,6 +27,7 @@ type (
 	DeliveryPolicy         = contract.DeliveryPolicy
 	DeliveryPolicyOverride = contract.DeliveryPolicyOverride
 	OutboxEnvelope         = contract.OutboxEnvelope
+	TraceCarrier           = contract.TraceCarrier
 	PublisherDescriptor    = manifest.PublisherDescriptor
 	HealthState            = contract.HealthState
 	HealthError            = contract.HealthError
@@ -42,31 +43,34 @@ type (
 )
 
 const (
-	ClassSerialization       = contract.ClassSerialization
-	ClassValidation          = contract.ClassValidation
-	ClassAuth                = contract.ClassAuth
-	ClassTopicNotFound       = contract.ClassTopicNotFound
-	ClassBrokerUnavailable   = contract.ClassBrokerUnavailable
-	ClassNetworkTimeout      = contract.ClassNetworkTimeout
-	ClassContextCanceled     = contract.ClassContextCanceled
-	ClassBrokerOverloaded    = contract.ClassBrokerOverloaded
-	TransportKafkaLike       = contract.TransportKafkaLike
-	Healthy                  = contract.Healthy
-	Degraded                 = contract.Degraded
-	Down                     = contract.Down
-	StreamingOutboxEventType = contract.StreamingOutboxEventType
-	outboxEnvelopeVersion    = contract.OutboxEnvelopeVersion
-	defaultBatchMaxBytes     = 1_048_576
-	maxPayloadBytes          = contract.MaxPayloadBytes
-	maxTenantIDBytes         = contract.MaxTenantIDBytes
-	maxResourceTypeBytes     = contract.MaxResourceTypeBytes
-	maxEventTypeBytes        = contract.MaxEventTypeBytes
-	maxSourceBytes           = contract.MaxSourceBytes
-	maxSubjectBytes          = contract.MaxSubjectBytes
-	maxEventIDBytes          = contract.MaxEventIDBytes
-	maxSchemaVersionBytes    = contract.MaxSchemaVersionBytes
-	maxDataContentTypeBytes  = contract.MaxDataContentTypeBytes
-	maxDataSchemaBytes       = contract.MaxDataSchemaBytes
+	ClassSerialization        = contract.ClassSerialization
+	ClassValidation           = contract.ClassValidation
+	ClassAuth                 = contract.ClassAuth
+	ClassTopicNotFound        = contract.ClassTopicNotFound
+	ClassBrokerUnavailable    = contract.ClassBrokerUnavailable
+	ClassNetworkTimeout       = contract.ClassNetworkTimeout
+	ClassContextCanceled      = contract.ClassContextCanceled
+	ClassBrokerOverloaded     = contract.ClassBrokerOverloaded
+	TransportKafkaLike        = contract.TransportKafkaLike
+	Healthy                   = contract.Healthy
+	Degraded                  = contract.Degraded
+	Down                      = contract.Down
+	StreamingOutboxEventType  = contract.StreamingOutboxEventType
+	outboxEnvelopeVersion     = contract.OutboxEnvelopeVersion
+	defaultBatchMaxBytes      = 1_048_576
+	maxPayloadBytes           = contract.MaxPayloadBytes
+	maxTenantIDBytes          = contract.MaxTenantIDBytes
+	maxResourceTypeBytes      = contract.MaxResourceTypeBytes
+	maxEventTypeBytes         = contract.MaxEventTypeBytes
+	maxSourceBytes            = contract.MaxSourceBytes
+	maxSubjectBytes           = contract.MaxSubjectBytes
+	maxEventIDBytes           = contract.MaxEventIDBytes
+	maxSchemaVersionBytes     = contract.MaxSchemaVersionBytes
+	maxDataContentTypeBytes   = contract.MaxDataContentTypeBytes
+	maxDataSchemaBytes        = contract.MaxDataSchemaBytes
+	TraceParentHeader         = contract.TraceParentHeader
+	TraceStateHeader          = contract.TraceStateHeader
+	MaxTraceCarrierValueBytes = contract.MaxTraceCarrierValueBytes
 )
 
 // Producer-package sentinel re-exports. Only error sentinels actually
@@ -105,6 +109,7 @@ var (
 	ErrCircuitOpen                = contract.ErrCircuitOpen
 	ErrOutboxNotConfigured        = contract.ErrOutboxNotConfigured
 	ErrOutboxTxUnsupported        = contract.ErrOutboxTxUnsupported
+	ErrInvalidTraceCarrier        = contract.ErrInvalidTraceCarrier
 	ErrNilOutboxRegistry          = contract.ErrNilOutboxRegistry
 )
 
