@@ -83,19 +83,23 @@ func LoadConsumerConfig() (ConsumerConfig, []string, error) {
 // single-producer consumer. Same signature as Handler.Handle.
 type HandlerFunc = consumer.HandlerFunc
 
-// UnmatchedPolicy decides what happens to an event on the subscribed stream
+// UnmatchedPolicy decides what happens to an event on a subscribed FACT stream
 // that has no registered handler. See UnmatchedIgnore / UnmatchedError.
+//
+// It does NOT reach a commands queue. Commands(...) topics are always strict —
+// an unmatched key quarantines — and that is deliberately not configurable.
 type UnmatchedPolicy = consumer.UnmatchedPolicy
 
 const (
-	// UnmatchedIgnore skips and commits an unhandled event. DEFAULT, and the
-	// only safe default under one-topic-per-app: subscribing to a producer's
-	// app stream delivers EVERY event that producer emits, and a consumer
-	// legitimately cares about a handful of them.
+	// UnmatchedIgnore skips and commits an unhandled event on a FACT stream.
+	// DEFAULT, and the only safe default under one-topic-per-app: subscribing
+	// to a producer's fact stream delivers EVERY fact that producer emits, and
+	// a consumer legitimately cares about a handful of them.
 	UnmatchedIgnore = consumer.UnmatchedIgnore
-	// UnmatchedError quarantines an unhandled event (ErrUnhandledEvent takes
-	// the fail-closed terminal path to the DLQ). Opt in only when the consumer
-	// genuinely owns every event on the stream.
+	// UnmatchedError quarantines an unhandled event on a FACT stream
+	// (ErrUnhandledEvent takes the fail-closed terminal path to the DLQ). Opt
+	// in only when the consumer genuinely owns every fact on the stream; a
+	// commands queue is already strict without it.
 	UnmatchedError = consumer.UnmatchedError
 )
 
@@ -104,8 +108,9 @@ const (
 // are structural and can never become satisfiable by waiting, exactly like a
 // codec fault.
 var (
-	// ErrUnhandledEvent surfaces under UnmatchedError for an (app, event key)
-	// pair with no registered handler.
+	// ErrUnhandledEvent surfaces for an (app, event key) pair with no
+	// registered handler: always on a Commands(...) queue, and on a fact
+	// stream under the opt-in UnmatchedError policy.
 	ErrUnhandledEvent = consumer.ErrUnhandledEvent
 	// ErrUnexpectedSource surfaces when a record's ce-source is not one of the
 	// consumer's expected producers — a producer misconfiguration or a foreign
@@ -436,10 +441,13 @@ func (b *ConsumerBuilder) ensureDispatcher() *consumer.Dispatcher {
 	return b.dispatcher
 }
 
-// UnmatchedPolicy sets what happens to an event with no registered handler.
-// Defaults to UnmatchedIgnore. It applies to On(...) dispatch only; combining
-// it with a whole-stream Handler(...) is a build error rather than a silently
-// inert setting.
+// UnmatchedPolicy sets what happens to an event on a FACT stream with no
+// registered handler. Defaults to UnmatchedIgnore. It applies to On(...)
+// dispatch only; combining it with a whole-stream Handler(...) is a build error
+// rather than a silently inert setting.
+//
+// It does not reach a Commands(...) queue: those are always strict, and no
+// setting here loosens them.
 func (b *ConsumerBuilder) UnmatchedPolicy(policy UnmatchedPolicy) *ConsumerBuilder {
 	if b == nil {
 		return b

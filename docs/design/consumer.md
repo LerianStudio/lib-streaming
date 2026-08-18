@@ -35,7 +35,8 @@ c, err := streaming.NewConsumer().
     Brokers(cfg.Brokers...).
     Group("my-service").
     Source(cfg.CloudEventsSource).        // REQUIRED: this app's own identity
-    Apps("lender").                       // -> lerian.streaming.lender
+    Apps("lender").                       // -> lerian.streaming.lender (facts, lenient)
+    Commands("lender").                   // -> lerian.streaming.lender.commands (STRICT)
     On("loan.disbursed", onDisbursed).    // "<resourceType>.<eventType>"
     TLS(tlsCfg).
     SASL(mech).
@@ -110,6 +111,8 @@ loop until ctx canceled:
      for rec in p.Records (ascending offset):
         ev, terminal? := codec(rec.Headers)  # parse CE headers (§7b)
         if terminal?: dlq.PublishDLQ(rec); stage commit; continue   # codec-decode fault = poison
+        if rec.Topic is a Commands(...) queue and no handler for the key:
+           dlq.PublishDLQ(rec, unhandled_key); stage commit; continue   # STRICT: a command is work addressed to us
         if ev.SystemEvent: metric system_event   # observability only, NOT control flow
         dispatch ALWAYS (empty TenantID = valid single-tenant scope; §7b)
         switch handleWithRetry(rec):          # in-loop budget; see below
@@ -325,9 +328,10 @@ producer lacks). Prefix `STREAMING_CONSUMER_`.
 | Brokers               | STREAMING_CONSUMER_BROKERS (csv)             | —       | bootstrap list (required) |
 | Group                 | STREAMING_CONSUMER_GROUP                     | —       | group id (required) |
 | Source                | STREAMING_CLOUDEVENTS_SOURCE                 | —       | **required**: this application's own `ce-source` — the SAME variable the producer side reads, because one service has one identity. It names the DLQ this consumer quarantines INTO (`lerian.streaming.<source>.dlq`). Missing → `ErrConsumerMissingSource`; malformed → the producer's strict source rule |
-| Apps                  | STREAMING_CONSUMER_APPS (csv)                | —       | PRODUCING APPLICATIONS to subscribe to, by `ce-source`. Each resolves to that app's one topic (`lerian.streaming.<app>`) AND arms source verification. Either `Apps` or `Topics` is required; they compose |
-| Topics                | STREAMING_CONSUMER_TOPICS (csv)              | —       | RAW subscription list — the escape hatch for topics this library did not derive (legacy streams, third-party producers). Either `Apps` or `Topics` is required |
-| ExpectSources         | STREAMING_CONSUMER_EXPECT_SOURCES (csv)      | ""      | explicit `ce-source` allowlist. REPLACES the `Apps`-derived one, must COVER every entry in `Apps`, and every entry is validated against the strict source contract. It is the ONLY way to resolve the `Apps`+`Topics` refusal from the environment; a fluent `ExpectSources(...)` overrides it, and failures name whichever origin the list came from. Applies in BOTH handler modes |
+| Apps                  | STREAMING_CONSUMER_APPS (csv)                | —       | PRODUCING APPLICATIONS whose FACTS to subscribe to, by `ce-source`. Each resolves to that app's fact topic (`lerian.streaming.<app>`) AND arms source verification. At least one of `Apps`/`Commands`/`Topics` is required; all three compose |
+| Commands              | STREAMING_CONSUMER_COMMANDS (csv)            | —       | APPLICATIONS THAT COMMAND THIS ONE, by `ce-source`. Each resolves to that app's commands queue (`lerian.streaming.<app>.commands`) and feeds the same allowlist `Apps` fills. Those topics are STRICT: an unmatched event key QUARANTINES with cause kind `unhandled_key` instead of being skipped and committed. Naming one app in BOTH `Apps` and `Commands` is legal — two subscriptions, one deduped allowlist entry |
+| Topics                | STREAMING_CONSUMER_TOPICS (csv)              | —       | RAW subscription list — the escape hatch for topics this library did not derive (legacy streams, third-party producers). NOT strict, even when an entry spells a `.commands` name: the escape hatch has no allowlist and no class knowledge, so promoting it would quarantine on a guess |
+| ExpectSources         | STREAMING_CONSUMER_EXPECT_SOURCES (csv)      | ""      | explicit `ce-source` allowlist. REPLACES the one `Apps`+`Commands` would have implied, must COVER every entry in BOTH, and every entry is validated against the strict source contract. It is the ONLY way to resolve the named-app + `Topics` refusal from the environment; a fluent `ExpectSources(...)` overrides it, and failures name whichever origin the list came from. Applies in BOTH handler modes |
 | ClientID              | STREAMING_CONSUMER_CLIENT_ID                 | ""      | client.id |
 | RetryBudget           | STREAMING_CONSUMER_RETRY_BUDGET              | 3       | **in-loop** transient-retry attempts per record (NOT "before DLQ"; transients never DLQ) |
 | RetryBackoffInitial   | STREAMING_CONSUMER_RETRY_BACKOFF_INITIAL_MS  | 100ms   | first in-loop retry backoff |
@@ -338,11 +342,17 @@ producer lacks). Prefix `STREAMING_CONSUMER_`.
 | CloseTimeout          | STREAMING_CONSUMER_CLOSE_TIMEOUT_S           | 30s     | graceful drain bound |
 
 There is deliberately **no DLQ-suffix knob**. A consumer quarantines into
-`contract.AppDLQTopic(Source)` — its OWN `lerian.streaming.<source>.dlq`. The
-whole point of the topic collapse is that a Kafka ACL covers exactly two WRITES
-per application — `lerian.streaming.<app>` and its `.dlq` — and a free-text
-suffix could rename the second half out from under that grant.
+`contract.AppDLQTopic(Source)` — its OWN `lerian.streaming.<source>.dlq`,
+including for a record that arrived on a `.commands` queue. The whole point of
+the topic collapse is that a Kafka ACL covers only an application's OWN names —
+`lerian.streaming.<app>`, its `.commands` if it commands anyone, and its `.dlq`
+— and a free-text suffix could rename one of them out from under that grant.
 `STREAMING_CONSUMER_DLQ_SUFFIX` is retired.
+
+There is likewise no `.commands.dlq`. A consumer quarantines into its own
+`.dlq`; a producer route-DLQs a failed command publish into its own. Both names
+already exist and are already granted, so a fourth would widen every
+command-emitting app's write grant for nothing.
 
 `LoadConsumerConfig` reads this table; `ConsumerBuilder.FromConfig(cfg)` adopts
 the result. Without `FromConfig`, none of these variables is read by anything:
@@ -364,16 +374,18 @@ verification at all, and made `ExpectSources` a hard build error there
 service with no in-API opt-out. A mismatch quarantines with
 `x-lerian-dlq-cause-kind: source_mismatch` in both modes.
 
-**Source verification and the Apps/Topics combination.** With `Apps` alone, the
-app list becomes the `ce-source` allowlist for free. With raw
-`Topics` alone, verification is off and any `ce-source` dispatches. With BOTH and
-no explicit `ExpectSources(...)`, `Build` FAILS: defaulting to `Apps` would
+**Source verification and the named-app / Topics combination.** With `Apps`
+and/or `Commands` alone, those applications become the `ce-source` allowlist for
+free — `Commands` counts exactly like `Apps` here, and an app named in both
+appears once. With raw `Topics` alone, verification is off and any `ce-source`
+dispatches. With BOTH a named app and raw `Topics`, and no explicit
+`ExpectSources(...)`, `Build` FAILS: defaulting to the named apps would
 quarantine 100% of the raw-topic stream, and skipping the check would drop the
-verification the `Apps` subscription paid for — neither is a defensible guess.
-An explicit `ExpectSources` list REPLACES the `Apps`-derived one, is validated
+verification the subscription paid for — neither is a defensible guess. An
+explicit `ExpectSources` list REPLACES the derived one, is validated
 entry-by-entry against the strict source contract, and must COVER every app in
-`Apps` (subscribing to an app's topic while refusing its source quarantines that
-whole stream).
+`Apps` or `Commands` (subscribing to an app's topic while refusing its source
+quarantines that whole stream).
 
 **Known limitation — the source check is a UNION, not per-topic.** The allowlist
 is checked against the event's `ce-source` regardless of which subscribed topic
@@ -410,10 +422,16 @@ mirroring the producer; validated at `Build`.
   dead-letter topic, and a filling DLQ named the team whose events happened to
   be poison rather than the team that owns the fix.
 
-  **ACL rule, stated once:** every application WRITES exactly two names — its
-  topic and its `.dlq` — whether it produces, consumes, or both; and it READS
-  the topics of the applications it consumes. Consuming never widens the write
-  grant.
+  **ACL rule, stated once:** every application WRITES only its own names — its
+  topic, its `.commands` queue if it commands anyone, and its `.dlq`. Three
+  names for a command-emitting app, two for everyone else, whether it produces,
+  consumes, or both. It READS the topics of the applications it consumes: their
+  fact topics when it watches their facts, their `.commands` when they command
+  it. Consuming never widens the write grant — and a rail consumer that only
+  takes a producer's commands needs no READ on that producer's fact stream at
+  all, which is least-privilege the topic collapse had taken away. The Streaming
+  Hub subscribes fact topics ONLY, never `.commands`: a service-to-service
+  command is neither public nor idempotent under external webhook redelivery.
 
   Because the DLQ topic no longer implies where a record came from, the origin
   coordinates carry the whole story: `x-lerian-dlq-source-topic`,
@@ -427,6 +445,12 @@ mirroring the producer; validated at `Build`.
   means a foreign write or a stale allowlist, an unhandled key means this
   consumer's `On(...)` registrations fell behind the producer's catalog, and
   `handler` is a genuine business rejection.
+
+  `unhandled_key` fires on EVERY unmatched key from a `Commands(...)` queue
+  (always strict) and on a fact stream only under the opt-in `UnmatchedError`
+  policy. The two read differently on a dashboard: on a fact stream it means
+  the consumer is processing nothing; on a commands queue it means undelivered
+  work is already set aside and replayable once the handler ships.
 - **Distinct from the producer DLQ.** A producer's own DLQ copies land on the
   PRODUCER's `.dlq` topic; a consumer's quarantines land on the CONSUMER's. Both
   kinds can still appear together on one topic for a service that both produces
@@ -575,6 +599,8 @@ transient — right for transport (handled in the drain), wrong for handler/code
 | **Empty `ce-tenantid`** (system event OR non-system business event) | dispatch | `Handle` with empty `TenantID`; **NOT** poison — empty tenant is a valid single-tenant scope (mirrors producer v1.6.2). System events also emit a `system_event` metric (observability only) |
 | **TRANSPORT/FETCH** error (broker/network/timeout, data-loss, auth, ctx-cancel, client-closed) | handled in `drainFetchErrors`, **not** `classify` | `ErrClientClosed`/ctx → clean `Run` return; `*ErrDataLoss` → log+metric+alert (cursor auto-reset, unrecoverable); any other → log+metric+alert + cross-poll backoff. franz-go retries transient fetch errors internally. **NEVER DLQ** |
 | **CODEC** decode fault (`ErrMissingRequiredHeader` / `ErrUnsupportedSpecVersion`) | `dispositionDLQ` | **always terminal** — malformed CloudEvent can never parse; not reclassifiable. DLQ-publish + stage commit + alert |
+| **UNMATCHED KEY on a `Commands(...)` topic** (no registered handler) | `dispositionDLQ` | **always terminal**, decided in the guard chain BEFORE dispatch (the verdict is a property of `rec.Topic`, which `Handle` never sees). Quarantine with `ErrUnhandledEvent` / cause kind `unhandled_key`; never retried, never offered to the `Classifier`. Not configurable — `UnmatchedPolicy` governs fact streams only |
+| **UNMATCHED KEY on a fact topic** (no registered handler) | `dispositionCommit` (default) | skipped + committed, metered on `streaming_consumer_unmatched_total` and logged once per key. `UnmatchedPolicy(UnmatchedError)` opts into quarantining these too |
 | **HANDLER** error, `Classifier` returns true (known downstream-transient) | retry in-loop | reclassified to transient → retry up to `RetryBudget` (capped backoff); on a SUSTAINED transient → `SetOffsets{Epoch,Offset}` + halt partition + `AllowRebalance` + cross-poll `HaltBackoff`, re-delivered next poll; **NEVER DLQ** |
 | **HANDLER** error, **DEFAULT** (Classifier false / none / unrecognized) — incl. validation-class (nil uuid, illegal transition, not-found, **and a handler's own empty-tenant fail-closed verdict** — see §7b) | `dispositionDLQ` | **FAIL-CLOSED** terminal: DLQ-publish + stage commit + alert |
 

@@ -97,16 +97,22 @@ const defaultSchemaVersion = "1.0.0"
 // leaves Event.DataContentType empty. Matches the CloudEvents spec default.
 const defaultDataContentType = "application/json"
 
-// Topic returns the ONE topic this event's producing application publishes
+// Topic returns the FACT topic this event's producing application publishes
 // to: "lerian.streaming." + Source.
 //
 // The topic carries NO resource type, NO event type, and NO schema version.
-// Every event a service emits — business facts and service-to-service
-// commands alike — rides the same app topic; consumers subscribe to the app
-// stream and dispatch per event using the ce-resourcetype / ce-eventtype
-// headers. Kafka ACLs scope a producer to its single topic (plus its
-// ".dlq"), which is a tighter grant than the per-event topic space it
-// replaces.
+// Every business FACT a service emits rides this one topic; consumers
+// subscribe to the app stream and dispatch per event using the
+// ce-resourcetype / ce-eventtype headers.
+//
+// Its service-to-service COMMANDS ride AppCommandsTopic instead — the split
+// is decided by the catalog definition's class, so it is not visible on the
+// Event, which is why this method answers only for the fact topic. The
+// producer applies the class at dispatch; see internal/producer.commandRoute.
+//
+// Kafka ACLs scope a producer to its own names — its topic, its ".commands"
+// queue, and its ".dlq" — which is a far tighter grant than the per-event
+// topic space it replaces.
 //
 // Source is expected to be pre-validated (ValidateSource) at config,
 // Builder, and preflight time, so Topic() stays a zero-allocation hot-path

@@ -84,16 +84,16 @@ const (
 	// ClassCommand marks a service-to-service command: published on the
 	// app's ".commands" topic, QUARANTINED by a consumer that registered no
 	// handler for it.
-	ClassCommand = contract.ClassCommand
-	StreamingOutboxEventType        = contract.StreamingOutboxEventType
-	TraceParentHeader               = contract.TraceParentHeader
-	TraceStateHeader                = contract.TraceStateHeader
-	MaxTraceCarrierEntries          = contract.MaxTraceCarrierEntries
-	MaxTraceCarrierValueBytes       = contract.MaxTraceCarrierValueBytes
-	Healthy                         = contract.Healthy
-	Degraded                        = contract.Degraded
-	Down                            = contract.Down
-	ManifestVersion                 = manifest.ManifestVersion
+	ClassCommand              = contract.ClassCommand
+	StreamingOutboxEventType  = contract.StreamingOutboxEventType
+	TraceParentHeader         = contract.TraceParentHeader
+	TraceStateHeader          = contract.TraceStateHeader
+	MaxTraceCarrierEntries    = contract.MaxTraceCarrierEntries
+	MaxTraceCarrierValueBytes = contract.MaxTraceCarrierValueBytes
+	Healthy                   = contract.Healthy
+	Degraded                  = contract.Degraded
+	Down                      = contract.Down
+	ManifestVersion           = manifest.ManifestVersion
 )
 
 // NewEmitRequest validates and defensively copies an EmitRequest.

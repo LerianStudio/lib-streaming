@@ -43,9 +43,11 @@ const (
 	// producer. Either a foreign write to the topic, or an ExpectSources
 	// allowlist that drifted from what actually publishes there.
 	dlqCauseSourceMismatch = "source_mismatch"
-	// dlqCauseUnhandledKey: no handler registered for the event key, under the
-	// opt-in UnmatchedError policy. This consumer's On(...) registrations have
-	// drifted behind the producer's catalog.
+	// dlqCauseUnhandledKey: no handler registered for the event key. Fires on
+	// EVERY unmatched key from a COMMANDS queue (always strict — a command is
+	// work addressed to this consumer), and on a fact stream only under the
+	// opt-in UnmatchedError policy. Either way this consumer's On(...)
+	// registrations have drifted behind the producer's catalog.
 	dlqCauseUnhandledKey = "unhandled_key"
 )
 

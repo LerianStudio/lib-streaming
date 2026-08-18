@@ -132,10 +132,12 @@ type dlqPublisher interface {
 type transportDLQPublisher struct {
 	adapter transport.TransportAdapter
 	// dlqTopic is THIS consumer application's own dead-letter topic,
-	// "lerian.streaming.<consumer-source>.dlq" — never the producer's.
-	// Quarantining is the consuming application's act, so it lands on the
-	// consuming application's topic: every app writes exactly two names, its
-	// topic and its .dlq, and a filling DLQ names the team that owns the fix.
+	// "lerian.streaming.<consumer-source>.dlq" — never the producer's, and
+	// never a per-record ".commands.dlq". Quarantining is the consuming
+	// application's act, so it lands on the consuming application's topic:
+	// an app writes its own names only — its topic, its ".commands" queue if
+	// it commands anyone, and its ".dlq" — and a filling DLQ names the team
+	// that owns the fix.
 	dlqTopic string
 	groupID  string // written as the quarantining identity (x-lerian-dlq-producer-id)
 }

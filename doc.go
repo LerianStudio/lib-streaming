@@ -63,8 +63,11 @@
 //	}
 //	if len(cfg.Brokers) == 0 { return errors.New("streaming enabled but brokers are empty") }
 //
-//	// ONE topic per producing application. Every event this service emits
-//	// rides it; consumers select by ce-resourcetype / ce-eventtype.
+//	// ONE topic per producing application. Every business FACT this service
+//	// emits rides it; consumers select by ce-resourcetype / ce-eventtype.
+//	// Definitions marked ClassCommand ride lerian.streaming.<source>.commands
+//	// instead — the route below stays exactly as written, and the producer
+//	// applies the split per definition at dispatch.
 //	appTopic, err := streaming.AppTopic(cfg.CloudEventsSource) // lerian.streaming.<source>
 //	if err != nil { return err }
 //
@@ -73,7 +76,8 @@
 //	    Catalog(catalog).
 //	    Routes(streaming.RouteDefinition{
 //	        // No DefinitionKey: a catch-all route serves the whole catalog.
-//	        // Under one topic per app there is nothing to fan out per event.
+//	        // Under one topic per app there is nothing to fan out per event,
+//	        // and commands are redirected onto the ".commands" queue by class.
 //	        Key:         "primary.kafka",
 //	        Target:      "primary",
 //	        Destination: streaming.KafkaTopic(appTopic),
@@ -290,7 +294,7 @@
 //     ErrHandlerAndDispatchBothSet, ErrHandlerAndUnmatchedPolicyBothSet,
 //     ErrBareOnWithMultipleApps, ErrUnknownDispatchApp,
 //     ErrAmbiguousSourceVerification, ErrExpectSourcesMissingApp,
-//     ErrInvalidExpectSource.
+//     ErrInvalidExpectSource, ErrHandlerAndCommandsBothSet.
 //
 //     The producer and the consumer define DIFFERENT error values for the
 //     same class of mistake, so each is named for its own side. A single bare
@@ -300,8 +304,9 @@
 //   - Consumer runtime (per record, or from Consumer.Healthy):
 //     ErrUnexpectedSource (ce-source outside the expected-producer allowlist —
 //     quarantined before any handler runs, in BOTH handler modes),
-//     ErrUnhandledEvent (no handler for the (app, event key) pair, under the
-//     opt-in UnmatchedError policy), ErrConsumerPartitionHalted (a partition
+//     ErrUnhandledEvent (no handler for the (app, event key) pair — ALWAYS on a
+//     Commands(...) queue, and on a fact stream under the opt-in
+//     UnmatchedError policy), ErrConsumerPartitionHalted (a partition
 //     head-of-line blocked across consecutive poll cycles — returned by
 //     Healthy, not per record).
 //
@@ -383,23 +388,58 @@
 //
 // # Consumer responsibilities
 //
-// Topics are SHARED across tenants AND across every event a producer emits.
-// The topic name is "lerian.streaming." + ce-source and carries nothing else —
-// no resource type, no event type, no schema version, and NEVER a tenant.
-// Partition keys group a tenant's events onto one partition but do NOT isolate
-// tenants at the topic level, and they are an ORDER guarantee only on the
-// direct-emit path (see Event.PartitionKey for the outbox caveat).
+// Topics are SHARED across tenants AND across every event of one class a
+// producer emits. The fact topic is "lerian.streaming." + ce-source and the
+// commands queue is that plus ".commands"; neither carries a resource type, an
+// event type, a schema version, or EVER a tenant. Partition keys group a
+// tenant's events onto one partition but do NOT isolate tenants at the topic
+// level, and they are an ORDER guarantee only on the direct-emit path (see
+// Event.PartitionKey for the outbox caveat).
 //
-// # Kafka ACLs: every application writes exactly two names
+// # Facts and commands: two queues, opposite unmatched verdicts
 //
-// An application WRITES its own topic and its own DLQ — "lerian.streaming.<app>"
-// and "lerian.streaming.<app>.dlq" — and nothing else. That holds whether it
+// A catalog definition is a business FACT (the default) or a service-to-service
+// COMMAND (EventDefinition.Class = ClassCommand). Facts ride
+// "lerian.streaming.<app>"; commands ride "lerian.streaming.<app>.commands".
+// The wire record is byte-identical either way — no ce-* header carries the
+// class, because the QUEUE is the class.
+//
+// The split exists for the unmatched verdict, and nothing else. On a fact
+// stream a key with no registered handler is skipped and committed: a consumer
+// receives everything its producer emits and cares about a handful. On a
+// commands queue it is QUARANTINED to the consumer's own DLQ with cause kind
+// "unhandled_key" — a command is work addressed to THIS consumer, so a key it
+// cannot handle is undelivered work, not noise.
+//
+// Without that, a producer shipping a new command key before its consumer
+// deploys the handler loses every one of those commands, forever, with green
+// dashboards on both sides. The strictness is therefore NOT configurable;
+// UnmatchedPolicy governs fact streams only.
+//
+// # Kafka ACLs: an application writes only its own names
+//
+// An application WRITES only its own names — its topic, its commands queue if it
+// commands anyone, and its DLQ: "lerian.streaming.<app>",
+// "lerian.streaming.<app>.commands", and "lerian.streaming.<app>.dlq". Three
+// names for a command-emitting app, two for everyone else, and nothing else. That holds whether it
 // produces, consumes, or both: a consumer quarantines poison into ITS OWN DLQ,
 // never the producer's, so consuming does not widen an application's write
 // grant by one name.
 //
-// An application READS the topics of the applications it consumes. A consuming
-// service's grant is therefore: write two names, read N.
+// There is deliberately no "<app>.commands.dlq". A consumer quarantines into
+// its own ".dlq", and a producer route-DLQs a failed command publish into its
+// own; both names already exist.
+//
+// An application READS the topics of the applications it consumes — their fact
+// topics when it watches their facts, their ".commands" queues when they
+// command it. A rail consumer that only takes a producer's commands needs no
+// READ on that producer's fact stream at all, which is least-privilege the
+// topic collapse had taken away.
+//
+// The Streaming Hub subscribes FACT topics only. It fans business events out to
+// tenant webhooks and external buses; a service-to-service command is neither
+// public nor idempotent under external redelivery, so ".commands" is not in its
+// grant.
 //
 // Because one subscription delivers a producer's whole stream, a consumer
 // selects per event by the ce-resourcetype / ce-eventtype headers. Use the
@@ -414,6 +454,14 @@
 //	NewConsumer().Apps("lender", "matcher").
 //	    OnFrom("lender", "loan.disbursed", onLender).
 //	    OnFrom("matcher", "loan.disbursed", onMatcher)
+//
+//	// Commanded by lender: subscribe its commands queue. Unmatched command
+//	// keys quarantine instead of being skipped. Commands composes with Apps,
+//	// and requires On/OnFrom — a whole-stream Handler has no handler registry
+//	// to honour the strict verdict with, so the combination fails Build.
+//	NewConsumer().Source("br-consignado-gw").
+//	    Commands("lender").
+//	    OnFrom("lender", "margin.reserve", onReserve)
 //
 // The runtime also verifies each record's ce-source against the producers you
 // named, ahead of the handler, in dispatch mode AND under a whole-stream
@@ -580,7 +628,9 @@
 // return to the caller, but the forensic copy was not preserved.
 //
 // Non-Kafka routes need an explicit RouteDefinition.DLQ when quarantine is
-// required. Kafka-like routes can derive <source>.dlq. SQS, RabbitMQ,
+// required. Kafka-like routes can derive <source>.dlq — including a command
+// route, whose quarantine goes to the producer's own <source>.dlq rather than
+// a ".commands.dlq" that does not exist. SQS, RabbitMQ,
 // EventBridge, and custom routes skip DLQ delivery unless DLQ is set. The DLQ
 // destination kind must match the route destination kind because the same
 // target adapter publishes the DLQ message.

@@ -12,7 +12,9 @@ import (
 )
 
 // ErrUnhandledEvent is returned for an event whose (app, event key) pair has no
-// registered handler, under the opt-in UnmatchedError policy only.
+// registered handler: ALWAYS on a commands queue (Commands(...), where
+// strictness is not configurable), and on a fact stream only under the opt-in
+// UnmatchedError policy.
 //
 // It is a HANDLER-return error by shape, but the LIBRARY synthesizes it, so the
 // runtime quarantines it outright rather than offering it to the service
@@ -21,20 +23,30 @@ var ErrUnhandledEvent = errors.New("streaming consumer: no handler registered fo
 
 // UnmatchedPolicy decides what a Dispatcher does with an event whose key has
 // no registered handler.
+//
+// It governs FACT streams only — the topics named by Apps(...) and the raw
+// Topics(...) escape hatch. A COMMANDS queue (Commands(...)) is always strict:
+// an unmatched key there quarantines with cause kind "unhandled_key",
+// regardless of this setting and with no knob to turn it off, because a
+// command is work addressed to this consumer rather than noise on someone
+// else's firehose. The strict verdict is applied by the runtime, which knows
+// the record's topic; this policy is applied by the dispatcher, which does not.
 type UnmatchedPolicy string
 
 const (
-	// UnmatchedIgnore skips the event and commits it. THIS IS THE DEFAULT, and
-	// it is the only safe one under one-topic-per-app: a consumer subscribed to
-	// a producer's app stream receives EVERY event that producer emits, and
-	// will legitimately care about a handful of them. Erroring on the rest
-	// would fail-closed the producer's entire sibling stream into the DLQ.
+	// UnmatchedIgnore skips the event and commits it. THIS IS THE DEFAULT for
+	// fact streams, and the only safe one under one-topic-per-app: a consumer
+	// subscribed to a producer's fact stream receives EVERY fact that producer
+	// emits, and will legitimately care about a handful of them. Erroring on
+	// the rest would fail-closed the producer's entire sibling stream into the
+	// DLQ.
 	UnmatchedIgnore UnmatchedPolicy = "ignore"
 
 	// UnmatchedError returns ErrUnhandledEvent, which the runtime treats as a
 	// terminal error and quarantines. Opt into it only when the consumer
-	// genuinely owns every event on the stream and an unknown key means the
-	// producer's catalog drifted ahead of this consumer.
+	// genuinely owns every fact on the stream and an unknown key means the
+	// producer's catalog drifted ahead of this consumer. A commands queue is
+	// already strict without it.
 	UnmatchedError UnmatchedPolicy = "error"
 )
 

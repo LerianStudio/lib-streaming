@@ -12,32 +12,39 @@ cannot interoperate.
 
 `Event.Topic()` is now `"lerian.streaming." + Source` and carries nothing else.
 The resource type, the event type, and the `.v<major>` schema-version suffix are
-all gone from the topic name. Every event a service emits rides its single app
-topic — business facts and service-to-service commands alike. The DLQ topic is
-`"lerian.streaming." + Source + ".dlq"`, so there is effectively one DLQ per
-application; per-topic DLQ derivation semantics are otherwise unchanged.
+all gone from the topic name. Every business FACT a service emits rides its
+single app topic. The DLQ topic is `"lerian.streaming." + Source + ".dlq"`, so
+there is effectively one DLQ per application; per-topic DLQ derivation semantics
+are otherwise unchanged. Service-to-service COMMANDS ride a separate
+`"lerian.streaming." + Source + ".commands"` queue — see "commands get their own
+queue" below.
 
-Kafka ACLs now scope a producer to exactly two names (its topic and its `.dlq`)
-instead of an open per-event namespace. `streaming.AppTopic(source)` and
-`streaming.AppDLQTopic(source)` are exported so provisioning and ACL tooling
-derive the same names the runtime does.
+Kafka ACLs now scope an application to its OWN names — its topic, its
+`.commands` queue if it commands anyone, and its `.dlq` — instead of an open
+per-event namespace. `streaming.AppTopic(source)`,
+`streaming.AppCommandsTopic(source)`, and `streaming.AppDLQTopic(source)` are
+exported so provisioning and ACL tooling derive the same names the runtime does.
 
-Both are `func(source string) (string, error)`: they VALIDATE the source and
-return `ErrMissingSource` / `ErrInvalidSource` rather than handing back a
+All three are `func(source string) (string, error)`: they VALIDATE the source
+and return `ErrMissingSource` / `ErrInvalidSource` rather than handing back a
 name derived from garbage — every caller is deriving a name something else
 acts on, and an unvalidated empty source produced the real, creatable topic
 `"lerian.streaming."`. **Migration:** assign both return values and check the
 error; the name is only usable when the error is nil.
 
 **Migration:** provision `lerian.streaming.<source>` and
-`lerian.streaming.<source>.dlq` per producing service, and repoint every
-consumer subscription at them. Per-event topics are no longer written to.
+`lerian.streaming.<source>.dlq` per producing service, add
+`lerian.streaming.<source>.commands` for services that emit commands, and
+repoint every consumer subscription at them. Per-event topics are no longer
+written to.
 
 ### BREAKING: `ce-source` is strict
 
 A source must be a single dot-free lowercase segment matching
-`^[a-z0-9][a-z0-9_-]*$`, and at most 228 bytes so the derived DLQ topic fits
-Kafka's 249-byte limit. `contract.ValidateSource` (exported as
+`^[a-z0-9][a-z0-9_-]*$`, and at most 223 bytes so the derived COMMANDS topic —
+the longest derived name — fits Kafka's 249-byte limit. The bound is uniform
+across applications because every app CAN emit commands; a per-app bound would
+make adding the first command definition a source-rename event. `contract.ValidateSource` (exported as
 `streaming.ValidateSource`) is applied at `LoadConfig`, `Builder.Build`,
 `NewPublisherDescriptor`, and producer preflight.
 
@@ -163,8 +170,9 @@ from the broker into the consumer. Three additions cover it:
 `Handler(...)` still takes the whole stream for consumers that select
 themselves, and rejects the genuinely dispatch-only knobs: `On`/`OnFrom` →
 `ErrHandlerAndDispatchBothSet`, `UnmatchedPolicy` →
-`ErrHandlerAndUnmatchedPolicyBothSet`. A silently inert knob is an operator
-believing a check runs that does not.
+`ErrHandlerAndUnmatchedPolicyBothSet`, `Commands` →
+`ErrHandlerAndCommandsBothSet`. A silently inert knob is an operator believing
+a check runs that does not.
 
 `ErrHandlerAndExpectSourcesBothSet` is **deleted**: source verification moved to
 the runtime, so `ExpectSources` is valid and functional under a whole-stream
@@ -188,9 +196,13 @@ poison rather than the team that owns the fix.
 
 Quarantine now lands on `lerian.streaming.<consumer-app>.dlq`.
 
-**The ACL rule, stated once:** every application WRITES exactly two names — its
-topic and its `.dlq` — whether it produces, consumes, or both; and it READS the
-topics of the applications it consumes. Consuming never widens the write grant.
+**The ACL rule, stated once:** every application WRITES only its own names — its
+topic, its `.commands` queue if it commands anyone, and its `.dlq`. Three names
+for a command-emitting app, two for everyone else, whether it produces,
+consumes, or both. It READS the topics of the applications it consumes: their
+fact topics when it watches their facts, their `.commands` when they command it.
+Consuming never widens the write grant. The Streaming Hub subscribes fact topics
+ONLY, never `.commands`.
 
 **Migration:** set `STREAMING_CLOUDEVENTS_SOURCE` (or `ConsumerBuilder.Source(...)`)
 on every consuming service — the same identity its producer side already uses —
@@ -259,13 +271,94 @@ validation uses strict version equality, so version-1 rows are now rejected with
 deploying v3. Any version-1 row still in the table when v3 starts will fail
 replay rather than publish to a dead topic.
 
-### BREAKING: manifest 2.0.0
+### Commands get their own queue, with the opposite unmatched verdict
+
+An `EventDefinition` now carries a `Class`: `ClassFact` (the zero-value default)
+or `ClassCommand`. A fact publishes to `lerian.streaming.<app>`; a command
+publishes to `lerian.streaming.<app>.commands`.
+
+**Why this exists.** v3 collapsed everything onto one topic per application, and
+the consumer's unmatched default is ignore-and-commit — the only safe default
+for a fact stream, where a consumer receives everything its producer emits and
+handles a handful. But the consignado rail is service-to-service: lender emits
+COMMANDS that br-consignado-gw must act on, mixed with lender's 34 facts on one
+topic. A NEW command key published before the gateway deploys its handler was
+silently skipped and committed, forever. That is money-path loss with green
+dashboards on both sides.
+
+**Producer.** Mark the definition and change nothing else:
+
+```go
+streaming.EventDefinition{
+    Key:          "margin.reserve",
+    ResourceType: "margin",
+    EventType:    "reserve",
+    Class:        streaming.ClassCommand,
+}
+```
+
+The route table is untouched. The synthesized catch-all route, and any
+`AppTopic`-derived destination, redirect command-class definitions to the
+commands queue at dispatch; an explicit `KafkaTopic(...)` pointed somewhere on
+purpose is never rewritten. The durability gate (every definition needs at least
+one required route) and the DLQ size rules apply to commands identically.
+
+**Consumer.** `Commands("lender")` subscribes `lerian.streaming.lender.commands`,
+adds `lender` to the ce-source allowlist exactly as `Apps` would, and marks that
+topic STRICT: an unmatched event key there QUARANTINES to the consumer's own DLQ
+with the existing `unhandled_key` cause, never ignored and never committed past.
+It composes with `Apps(...)` / `Topics(...)`, the policy is per topic (the
+record's topic decides), and naming one app in both `Apps` and `Commands` is
+legal — two subscriptions, one deduped allowlist entry.
+
+The strictness is **not** configurable — being strict is the point.
+`UnmatchedPolicy` continues to govern fact streams only. `Handler(...)` combined
+with `Commands(...)` FAILS `Build` with `ErrHandlerAndCommandsBothSet`: a
+whole-stream handler has no handler registry to answer "is this command key
+handled?", so the guarantee could not be honoured, and silently downgrading it
+would leave an operator believing undelivered commands are being quarantined
+while nothing is.
+
+**The class is not on the wire.** No `ce-*` header carries it and the record
+shape is byte-identical either way — the QUEUE is the class, which makes the
+classification a subscription-time, ACL-visible fact instead of a runtime string
+every consumer has to trust.
+
+**There is no `.commands.dlq`.** A consumer quarantines into its own `.dlq`; a
+producer route-DLQs a failed command publish into its own. Both names already
+exist and are already granted.
+
+**ACL consequence.** A command-emitting application writes THREE names — its
+topic, its commands topic, its dlq — and everyone else writes two. Consumers
+READ the `.commands` topics of the applications that command them, which gives a
+read grant back: a rail consumer that only takes a producer's commands needs no
+READ on that producer's fact stream at all. Under the collapsed topic it had to
+read the whole fact stream to receive one command; least-privilege is partially
+restored. The Streaming Hub subscribes fact topics ONLY, never `.commands` — a
+service-to-service command is neither public nor idempotent under external
+webhook redelivery.
+
+**Migration:** provision `lerian.streaming.<app>.commands` for every application
+that marks a definition `ClassCommand`, grant it WRITE to that application and
+READ to the services it commands, and add `Commands(...)` (or
+`STREAMING_CONSUMER_COMMANDS`) on those consumers. `STREAMING_CLOUDEVENTS_SOURCE`
+must now be at most 223 bytes, down from 228, because `.commands` is the longest
+suffix a source has to leave room for.
+
+### BREAKING: manifest 2.1.0
 
 `ManifestEvent.topic` is REMOVED and replaced by `eventKey`
 (`"<resourceType>.<eventType>"`). The application's single `topic` / `dlqTopic`
 pair moves to the document level, where a one-topic-per-app fact belongs.
 `PublisherDescriptor.SourceBase` is renamed `Source` (JSON `sourceBase` →
 `source`) and is now validated by `ValidateSource` rather than merely trimmed.
+
+2.1.0 adds, additively: a per-event `class` (`"fact"` or `"command"`, always
+present so a reader can tell "emits only facts" from "predates the field"), and
+a document-level `commandsTopic` present ONLY when the catalog holds at least
+one command — its presence is the manifest's answer to "does this application
+command anyone?", so a fact-only producer never points provisioning at a topic
+it will not write. There is no `commandsDlqTopic`.
 
 ### Fixed: `WithPartitionKey` can no longer collapse the stream
 

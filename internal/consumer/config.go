@@ -138,10 +138,11 @@ type ConsumerConfig struct {
 	//
 	// It is REQUIRED when Enabled=true, and it does one job: it names the
 	// consumer's OWN dead-letter topic, "lerian.streaming.<Source>.dlq". A
-	// consumer quarantines into its own DLQ, never the producer's — so a Kafka
-	// ACL grants every application exactly two writes (its topic and its .dlq)
-	// whether it produces, consumes, or both, and a filling DLQ names the team
-	// that owns the fix.
+	// consumer quarantines into its own DLQ, never the producer's — so
+	// consuming never widens an application's Kafka write grant, which stays
+	// its own names (its topic, its ".commands" queue if it commands anyone,
+	// and its ".dlq") whether it produces, consumes, or both. A filling DLQ
+	// names the team that owns the fix.
 	//
 	// Held to the same strict source contract the producer enforces
 	// (contract.ValidateSource): one dot-free lowercase segment.
@@ -150,7 +151,8 @@ type ConsumerConfig struct {
 	// library did not derive (legacy streams, third-party producers).
 	// STREAMING_CONSUMER_TOPICS (csv).
 	//
-	// Either Topics or Apps must be non-empty when Enabled=true; they compose.
+	// At least one of Topics, Apps, or Commands must be non-empty when
+	// Enabled=true; all three compose.
 	Topics []string
 	// Apps names the PRODUCING APPLICATIONS to subscribe to, by ce-source.
 	// Each resolves to that application's one topic
