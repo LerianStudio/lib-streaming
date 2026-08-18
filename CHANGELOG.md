@@ -1,5 +1,57 @@
 # Lib-streaming Changelog
 
+## [3.0.0](https://github.com/LerianStudio/lib-streaming/releases/tag/v3.0.0)
+
+Features:
+- Introduced strict unmatched semantics for subscribing to commands queues. (@fredcamaral)
+- Advertised the commands queue and per-event class at `2.1.0`. (@fredcamaral)
+- Published command-class definitions onto the commands queue. (@fredcamaral)
+- Derived a per-app commands topic and classified definitions. (@fredcamaral)
+- Scoped dispatch by producing app and verified `ce-source` in the runtime. (@fredcamaral)
+- Quarantined into the consumer's own DLQ, not the producer's. (@fredcamaral)
+- Completed the environment surface with an explicit `ce-source` allowlist. (@fredcamaral)
+- Metered and logged the events nobody handles. (@fredcamaral)
+- Made the root consumer surface usable. (@fredcamaral)
+- Introduced app-stream subscribe and event-key dispatch. (@fredcamaral)
+- Derived one topic per application. (@fredcamaral)
+
+Fixes:
+- Refused a route that names the commands queue. (@fredcamaral)
+- Returned an error instead of panicking when UUID minting fails. (@fredcamaral)
+- Pinned the app DLQ for an explicitly named commands destination. (@fredcamaral)
+- Addressed CodeRabbit review on the `v3` contract PR. (@fredcamaral)
+- Applied the command split on the transactional batch path.
+- Treated a repeated app name as one producer in the `ce-source` allowlist. (@fredcamaral)
+- Kept a halt streak alive when the partition misses a poll batch. (@fredcamaral)
+- Failed readiness when a partition stays wedged. (@fredcamaral)
+- Kept naming unmatched event keys past the metric label cap. (@fredcamaral)
+- Quarantined the library's own verdicts instead of retrying them. (@fredcamaral)
+- Bounded the error header and survived an oversize quarantine. (@fredcamaral)
+- An empty partition-key override no longer pins the stream. (@fredcamaral)
+- Rejected two routes serving one (definition, target). (@fredcamaral)
+- Named the all-optional durability hole with its own sentinel. (@fredcamaral)
+- Told the operator why a record was quarantined. (@fredcamaral)
+- Tightened source, topic, and system-event handling. (@fredcamaral)
+- Bound the descriptor's Source to the running producer. (@fredcamaral)
+- Gave tenant-less events a real partition key. (@fredcamaral)
+- Resolved routes additively per target. (@fredcamaral)
+- Asserted the app segment in integration `ce-type` checks. (@fredcamaral)
+
+Improvements:
+- Corrected empty partition-key override behavior in `deriveOutboxAggregateID` comment. (@fredcamaral)
+- Noted the commands-queue routing refusal in the README. (@fredcamaral)
+- Indexed the commands-split exports in the README. (@fredcamaral)
+- Stated the real rewrite rule on `commandRoute`. (@fredcamaral)
+- Noted the many-to-one `eventKey` and the untrimmed descriptor source. (@fredcamaral)
+- Validated the `ce-source` once, at construction. (@fredcamaral)
+- Aligned docs and integration test names with the `v3` surface. (@fredcamaral)
+- Restored the changelog history and corrected the `v3` surface docs. (@fredcamaral)
+- Described the `v3` streaming contract. (@fredcamaral)
+
+[Compare changes](https://github.com/LerianStudio/lib-streaming/compare/v2.1.0...v3.0.0)
+
+---
+
 ## [Unreleased] — v3.0.0 (event-streaming contract redesign)
 
 Module path is now `github.com/LerianStudio/lib-streaming/v3`.
