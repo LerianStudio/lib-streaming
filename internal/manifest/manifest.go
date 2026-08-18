@@ -30,9 +30,10 @@ const ManifestVersion = "1.0.0"
 type ManifestDocument struct {
 	Version   string              `json:"version"`
 	Publisher PublisherDescriptor `json:"publisher"`
-	// Topic is the ONE topic this application publishes every event to,
-	// derived from the publisher's source. Under the v3 one-topic-per-app
-	// contract this is a document-level fact, not a per-event one.
+	// Topic is the application FACT topic, derived from the publisher's
+	// source. Every fact rides it; ClassCommand definitions publish to
+	// CommandsTopic instead. Under the v3 one-topic-per-app contract this is
+	// a document-level fact, not a per-event one.
 	Topic string `json:"topic"`
 	// DLQTopic is the dead-letter topic derived from Topic.
 	DLQTopic string `json:"dlqTopic"`

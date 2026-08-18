@@ -245,7 +245,14 @@ if err != nil {
     return err
 }
 
-go func() { _ = c.Run(ctx) }() // runtime.SafeGo in production
+go func() { // runtime.SafeGo in production
+    // Run returns nil on clean shutdown (ctx cancel or Close); any error is
+    // an unexpected exit and must reach a log line or the lifecycle
+    // supervisor, or processing stops silently.
+    if err := c.Run(ctx); err != nil {
+        logger.Log(ctx, log.LevelError, "streaming consumer exited", log.Err(err))
+    }
+}()
 defer c.Close()
 ```
 

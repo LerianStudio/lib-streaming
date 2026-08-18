@@ -199,7 +199,10 @@ func (p *Producer) enforceRoutePayloadCap(ctx context.Context, event Event, topi
 // KafkaTopic(...) the caller pointed somewhere on purpose — a legacy mirror, a
 // migration window — is left exactly where it was pointed: the caller named a
 // concrete stream, and silently relocating it would be the library overruling
-// an explicit instruction.
+// an explicit instruction. The DLQ pin, however, applies whenever the FINAL
+// destination is the commands queue — rewritten or named explicitly — because
+// the derived-".commands.dlq" hazard is a property of the destination, not of
+// how the route arrived at it.
 //
 // The rewrite lands here rather than in the route table because the route
 // table is per-DEFINITION-KEY-or-catch-all, and the catch-all serves facts and
@@ -211,20 +214,23 @@ func (p *Producer) enforceRoutePayloadCap(ctx context.Context, event Event, topi
 // exactly where the route says.
 func commandRoute(route contract.RouteDefinition, source string, class contract.EventClass) contract.RouteDefinition {
 	if class != contract.ClassCommand ||
-		route.Destination.Kind != contract.TransportKafkaLike ||
-		route.Destination.Name != contract.AppTopic(source) {
+		route.Destination.Kind != contract.TransportKafkaLike {
 		return route
 	}
 
-	route.Destination.Name = contract.AppCommandsTopic(source)
+	if route.Destination.Name == contract.AppTopic(source) {
+		route.Destination.Name = contract.AppCommandsTopic(source)
+	}
 
 	// A failed command publish quarantines into the PRODUCER's own DLQ — the
 	// name every application already writes and every ACL already grants.
 	// Without this pin, resolveRouteDLQDestination would derive
-	// "<app>.commands.dlq" from the rewritten destination: a fourth topic
+	// "<app>.commands.dlq" from the commands destination: a fourth topic
 	// nobody provisioned, so the quarantine silently fails and the evidence
-	// of a lost command is lost too. An explicit route.DLQ still wins.
-	if route.DLQ == nil {
+	// of a lost command is lost too. It covers a caller who named
+	// AppCommandsTopic(source) explicitly as well as the rewrite above; an
+	// explicit route.DLQ still wins.
+	if route.Destination.Name == contract.AppCommandsTopic(source) && route.DLQ == nil {
 		route.DLQ = &contract.Destination{
 			Kind: contract.TransportKafkaLike,
 			Name: contract.AppDLQTopic(source),

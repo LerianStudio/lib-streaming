@@ -380,6 +380,10 @@ func (b *ConsumerBuilder) Apps(apps ...string) *ConsumerBuilder {
 // Commands requires On/OnFrom dispatch. Combining it with a whole-stream
 // Handler(...) fails the build (ErrHandlerAndCommandsBothSet): that mode has no
 // handler registry to ask, so the guarantee cannot be honoured.
+//
+// Each call REPLACES the whole commanding-app list, like Apps and Topics: a
+// second Commands(...) discards the first call's entries, and a Commands(...)
+// after FromConfig overrides the list the config loaded. The latest call wins.
 func (b *ConsumerBuilder) Commands(apps ...string) *ConsumerBuilder {
 	if b == nil {
 		return b

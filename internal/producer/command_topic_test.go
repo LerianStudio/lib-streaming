@@ -225,6 +225,70 @@ func TestEmit_ExplicitKafkaDestinationIsNotRewrittenForCommands(t *testing.T) {
 	}
 }
 
+// TestEmit_ExplicitCommandsDestinationStillPinsTheAppDLQ pins that the DLQ
+// pin follows the DESTINATION, not the rewrite. A caller who names the
+// commands queue explicitly skips the AppTopic rewrite, but without the pin
+// the route-DLQ derivation would still invent "<app>.commands.dlq" — the
+// exact unprovisioned fourth name the pin exists to prevent.
+func TestEmit_ExplicitCommandsDestinationStillPinsTheAppDLQ(t *testing.T) {
+	t.Parallel()
+
+	// Fails only the command publish, so the DLQ copy on the SAME adapter
+	// still lands and can be inspected.
+	adapter := &topicFailingAdapter{failFor: commandTestCommandsTopic}
+	catalog := commandMixedCatalog(t)
+
+	routes, err := contract.NewRouteTable(contract.RouteDefinition{
+		Key:         "primary.commands-explicit",
+		Target:      "primary",
+		Destination: contract.Destination{Kind: TransportKafkaLike, Name: commandTestCommandsTopic},
+		Requirement: contract.RouteRequired,
+	})
+	if err != nil {
+		t.Fatalf("NewRouteTable() error = %v", err)
+	}
+
+	p, err := NewProducerMulti(
+		context.Background(),
+		MultiProducerConfig{Source: commandTestSource},
+		nil,
+		[]TargetSpec{{Name: "primary", Kind: TransportKafkaLike, Adapter: adapter}},
+		routes,
+		catalog,
+		WithLogger(log.NewNop()),
+		WithCatalog(catalog),
+	)
+	if err != nil {
+		t.Fatalf("NewProducerMulti() error = %v", err)
+	}
+
+	t.Cleanup(func() { _ = p.Close() })
+
+	if err := commandEmit(t, p, "margin.reserve"); err == nil {
+		t.Fatal("Emit(command) error = nil; want the required-route failure")
+	}
+
+	var dlq *transport.TransportMessage
+
+	for _, msg := range adapter.published {
+		if msg.Destination.Name == commandTestCommandsTopic {
+			continue
+		}
+
+		m := msg
+		dlq = &m
+	}
+
+	if dlq == nil {
+		t.Fatal("no DLQ copy was published for the failed command")
+	}
+
+	if dlq.Destination.Name != commandTestDLQTopic {
+		t.Errorf("command DLQ destination = %q; want %q (there is no %q)",
+			dlq.Destination.Name, commandTestDLQTopic, commandTestCommandsTopic+".dlq")
+	}
+}
+
 // TestEmit_CommandOutboxEnvelopeCarriesTheCommandsTopic pins that a durable
 // fallback replays onto the SAME queue a direct emit would have used. An
 // envelope naming the fact topic would have the relay quietly reclassify the
