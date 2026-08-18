@@ -549,13 +549,13 @@ func (c *consumerRuntime) pollCycle(ctx context.Context) (stop bool, halted map[
 		return true, nil
 	}
 
-	halted = c.processFetches(ctx, fetches)
+	halted, seen := c.processFetches(ctx, fetches)
 
 	// Fold this cycle's halts into the consecutive-cycle streaks Healthy reads.
 	// The drainFetchErrors stop path returned above without touching them, and a
 	// mid-handle shutdown halt cannot accumulate a streak either — Run exits on
 	// the same signal that produced it, so it never gets a second cycle.
-	c.trackHalts(halted)
+	c.trackHalts(seen, halted)
 
 	// A fetch-error cycle (auth / data-loss / other non-shutdown error) must leave
 	// Healthy() reporting NOT-ok — the group is not cleanly fetching. A clean cycle
@@ -643,18 +643,29 @@ var ErrPartitionHalted = errors.New("streaming consumer: partition halted across
 // disposition state machine in ascending-offset order, stages commit watermarks,
 // performs seek-backs, and commits the staged watermarks at the end of the
 // cycle. It returns the set of partitions halted this cycle (sustained
-// transients) so Run can apply the cross-poll backoff.
+// transients) so Run can apply the cross-poll backoff, plus the set of
+// partitions this poll actually delivered records for — trackHalts needs both,
+// because a partition MISSING from the batch has made no progress and its halt
+// streak must survive.
 //
 // staged holds the per-partition MAX commit watermark (rec.Offset+1). franz-go's
 // CommitRecords is itself a per-partition watermark, but we compute the max
 // explicitly so a partition that halts mid-batch never stages a watermark past
 // the halted offset (Req 1, within-batch layer).
-func (c *consumerRuntime) processFetches(ctx context.Context, fetches kgo.Fetches) map[topicPartition]string {
+func (c *consumerRuntime) processFetches(ctx context.Context, fetches kgo.Fetches) (map[topicPartition]string, map[topicPartition]struct{}) {
 	halted := make(map[topicPartition]string)
+	seen := make(map[topicPartition]struct{})
 	staged := make(map[topicPartition]*kgo.Record)
 
 	fetches.EachPartition(func(p kgo.FetchTopicPartition) {
 		tp := topicPartition{topic: p.Topic, partition: p.Partition}
+
+		// Delivered records is the only evidence of a fetch round-trip for this
+		// partition. An entry with none proves nothing happened, so it must not
+		// count as progress against a halt streak.
+		if len(p.Records) > 0 {
+			seen[tp] = struct{}{}
+		}
 
 		// Req 4: EachPartition may visit one partition multiple times per poll.
 		// Once halted (seek-back staged), skip every later record of it this
@@ -702,7 +713,7 @@ func (c *consumerRuntime) processFetches(ctx context.Context, fetches kgo.Fetche
 
 	c.commitStaged(ctx, staged)
 
-	return halted
+	return halted, seen
 }
 
 // handleRecord runs the per-record guard chain (docs/design/consumer.md §7b) and
@@ -1131,9 +1142,17 @@ func (c *consumerRuntime) recordSystemEvent(ctx context.Context, ev contract.Eve
 //
 // CONSECUTIVE is the whole point: a partition that halts, recovers, and halts
 // again is making progress, and treating that as a wedge would flap readiness
-// on ordinary downstream jitter. So a partition absent from this cycle's set
-// drops out entirely rather than decaying.
-func (c *consumerRuntime) trackHalts(halted map[topicPartition]string) {
+// on ordinary downstream jitter. So a streak drops out entirely — rather than
+// decaying — the moment the partition makes progress.
+//
+// Progress is "seen AND not halted", never "not halted". A seek-back discards
+// the partition's buffered records, so franz-go needs a fresh fetch round-trip
+// before re-delivering them, and a hot sibling partition can win that race —
+// leaving the wedged partition absent from a poll batch it never recovered in.
+// Reading absence as recovery oscillated the streak 1 -> 0 -> 1 forever and the
+// threshold was never reached. An idle partition never enters the map at all,
+// so nothing else changes.
+func (c *consumerRuntime) trackHalts(seen map[topicPartition]struct{}, halted map[topicPartition]string) {
 	c.haltMu.Lock()
 	defer c.haltMu.Unlock()
 
@@ -1142,7 +1161,8 @@ func (c *consumerRuntime) trackHalts(halted map[topicPartition]string) {
 	}
 
 	for tp := range c.haltStreaks {
-		if _, still := halted[tp]; !still {
+		_, delivered := seen[tp]
+		if _, still := halted[tp]; delivered && !still {
 			delete(c.haltStreaks, tp)
 		}
 	}

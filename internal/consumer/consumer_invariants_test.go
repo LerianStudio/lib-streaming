@@ -71,7 +71,7 @@ func TestInvariant_A_CrossPollNoMasking(t *testing.T) {
 	r := newTestRuntime(t, client, handler, dlq, WithClassifier(retryClassifier))
 
 	// --- Poll 1 ---
-	halted := r.processFetches(context.Background(), batch)
+	halted, _ := r.processFetches(context.Background(), batch)
 
 	if _, ok := halted[topicPartition{"t", 0}]; !ok {
 		t.Fatal("poll 1: partition 0 must be halted on the sustained transient")
@@ -524,7 +524,7 @@ func TestInvariant_ShutdownMidHandleNeverDLQ(t *testing.T) {
 	// default and DLQ. The guard is what keeps it off the DLQ.
 	r := newTestRuntime(t, client, handler, dlq)
 
-	halted := r.processFetches(ctx, fetchOf("t", 0, rec("t", 0, 9, ceHeaders("tenantA", false))))
+	halted, _ := r.processFetches(ctx, fetchOf("t", 0, rec("t", 0, 9, ceHeaders("tenantA", false))))
 
 	if dlq.count() != 0 {
 		t.Errorf("DLQ count = %d; want 0 (shutdown mid-Handle is STOP, never poison)", dlq.count())
@@ -561,7 +561,7 @@ func TestInvariant_SuccessfulHandleDuringShutdownStillCommits(t *testing.T) {
 	dlq := &fakeDLQ{}
 	r := newTestRuntime(t, client, handler, dlq)
 
-	halted := r.processFetches(ctx, fetchOf("t", 0, rec("t", 0, 9, ceHeaders("tenantA", false))))
+	halted, _ := r.processFetches(ctx, fetchOf("t", 0, rec("t", 0, 9, ceHeaders("tenantA", false))))
 
 	// A successful handle commits its watermark (rec.Offset+1) even though ctx is
 	// cancelled — the record was processed, so it must not be re-delivered.
@@ -599,7 +599,7 @@ func TestInvariant_TerminalErrorDuringShutdownStillDLQs(t *testing.T) {
 	dlq := &fakeDLQ{}
 	r := newTestRuntime(t, client, handler, dlq)
 
-	halted := r.processFetches(ctx, fetchOf("t", 0, rec("t", 0, 9, ceHeaders("tenantA", false))))
+	halted, _ := r.processFetches(ctx, fetchOf("t", 0, rec("t", 0, 9, ceHeaders("tenantA", false))))
 
 	if dlq.count() != 1 {
 		t.Errorf("DLQ count = %d; want 1 (a real terminal error must quarantine even during shutdown)", dlq.count())
