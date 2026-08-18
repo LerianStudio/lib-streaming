@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
 )
 
 func TestStreamingHandler_ReturnsManifestJSON(t *testing.T) {
@@ -174,6 +176,12 @@ func TestStreamingHandler_GoldenManifestJSON(t *testing.T) {
 		t.Errorf(`manifest["dlqTopic"] = %v; want "lerian.streaming.lender.dlq"`, got)
 	}
 
+	// A fact-only catalog advertises NO commands queue. Naming one would send
+	// provisioning and ACL tooling after a topic this app never writes.
+	if _, present := doc["commandsTopic"]; present {
+		t.Errorf(`manifest carries "commandsTopic" = %v for a fact-only catalog; it must be omitted`, doc["commandsTopic"])
+	}
+
 	publisher, ok := doc["publisher"].(map[string]any)
 	if !ok {
 		t.Fatalf(`manifest["publisher"] = %T; want an object`, doc["publisher"])
@@ -209,8 +217,95 @@ func TestStreamingHandler_GoldenManifestJSON(t *testing.T) {
 		t.Errorf(`events[0]["eventType"] = %v; want "disbursed"`, got)
 	}
 
+	// Always present, even on a fact-only manifest, so a reader can tell
+	// "emits only facts" apart from "predates the class field".
+	if got := event["class"]; got != "fact" {
+		t.Errorf(`events[0]["class"] = %v; want "fact"`, got)
+	}
+
 	// The per-event topic is GONE in v3. A definition has no topic of its own.
 	if _, present := event["topic"]; present {
 		t.Errorf(`events[0] carries a "topic" key; v3 removed the per-event topic entirely (got %v)`, event["topic"])
+	}
+}
+
+// TestStreamingHandler_GoldenManifestJSONWithCommand pins the 2.1.0 additions
+// as LITERALS on a catalog that mixes a fact with a command — the shape the
+// consignado rail actually publishes.
+//
+// The manifest is what a rail team reads to decide which topics to subscribe
+// to and which ACLs to request, so "commandsTopic" and the per-event "class"
+// are contract, not decoration.
+func TestStreamingHandler_GoldenManifestJSONWithCommand(t *testing.T) {
+	t.Parallel()
+
+	catalog, err := NewCatalog(
+		EventDefinition{
+			Key:          "loan.disbursed",
+			ResourceType: "loan_contract",
+			EventType:    "disbursed",
+		},
+		EventDefinition{
+			Key:          "margin.reserve",
+			ResourceType: "margin",
+			EventType:    "reserve",
+			Class:        contract.ClassCommand,
+		},
+	)
+	if err != nil {
+		t.Fatalf("NewCatalog() error = %v", err)
+	}
+
+	handler, err := NewStreamingHandler(PublisherDescriptor{
+		ServiceName: "lender-svc",
+		Source:      "lender",
+	}, catalog, RouteTable{})
+	if err != nil {
+		t.Fatalf("NewStreamingHandler() error = %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/streaming", nil))
+
+	var doc map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &doc); err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+
+	if got := doc["commandsTopic"]; got != "lerian.streaming.lender.commands" {
+		t.Errorf(`manifest["commandsTopic"] = %v; want "lerian.streaming.lender.commands"`, got)
+	}
+
+	// No fourth name. A consumer quarantines into its own .dlq and a producer
+	// route-DLQs into its own; a ".commands.dlq" would be a write grant
+	// nothing needs.
+	if _, present := doc["commandsDlqTopic"]; present {
+		t.Errorf(`manifest carries "commandsDlqTopic" = %v; the commands queue has no DLQ of its own`, doc["commandsDlqTopic"])
+	}
+
+	events, ok := doc["events"].([]any)
+	if !ok || len(events) != 2 {
+		t.Fatalf(`manifest["events"] = %v; want exactly two entries`, doc["events"])
+	}
+
+	// Deterministic key order: "loan.disbursed" then "margin.reserve".
+	classByEventKey := map[string]any{}
+
+	for _, raw := range events {
+		event, ok := raw.(map[string]any)
+		if !ok {
+			t.Fatalf("manifest event = %T; want an object", raw)
+		}
+
+		key, _ := event["eventKey"].(string)
+		classByEventKey[key] = event["class"]
+	}
+
+	if got := classByEventKey["loan_contract.disbursed"]; got != "fact" {
+		t.Errorf(`events["loan_contract.disbursed"]["class"] = %v; want "fact"`, got)
+	}
+
+	if got := classByEventKey["margin.reserve"]; got != "command" {
+		t.Errorf(`events["margin.reserve"]["class"] = %v; want "command"`, got)
 	}
 }

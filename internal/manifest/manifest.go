@@ -11,12 +11,18 @@ import "github.com/LerianStudio/lib-streaming/v3/internal/contract"
 //
 // 1.0.0 is the initial contract of the one-topic-per-app manifest: a
 // definition has no topic of its own; the document carries the application's
-// single "topic" / "dlqTopic" pair, and the publisher names itself with the
-// strict single-segment ce-source in "source". The platform is greenfield, so
-// this document IS the first shipped manifest — the pre-v3 shape (per-event
-// topics, "sourceBase") never reached production and shares nothing with this
-// contract but the label; consumers must discriminate by structure, never by
-// this string.
+// "topic" / "dlqTopic" pair plus, for an application that emits commands, its
+// "commandsTopic"; every event names its "class" ("fact" or "command"); and
+// the publisher names itself with the strict single-segment ce-source in
+// "source". The platform is greenfield, so this document IS the first shipped
+// manifest — the pre-v3 shape (per-event topics, "sourceBase") never reached
+// production and shares nothing with this contract but the label; consumers
+// must discriminate by structure, never by this string.
+//
+// The commands fields ship IN 1.0.0 rather than as a 1.1.0 bump for the same
+// reason the version is 1.0.0 at all: no manifest without them ever reached
+// production, so advertising a minor bump would imply a migration from a
+// document nobody has.
 const ManifestVersion = "1.0.0"
 
 // ManifestDocument is the JSON-serializable description of a producer's event
@@ -29,8 +35,20 @@ type ManifestDocument struct {
 	// contract this is a document-level fact, not a per-event one.
 	Topic string `json:"topic"`
 	// DLQTopic is the dead-letter topic derived from Topic.
-	DLQTopic string          `json:"dlqTopic"`
-	Events   []ManifestEvent `json:"events"`
+	DLQTopic string `json:"dlqTopic"`
+	// CommandsTopic is the queue this application publishes its
+	// service-to-service COMMANDS to, derived from the publisher's source.
+	//
+	// OMITTED when the catalog holds no command. An application that emits
+	// only facts never writes that topic, and advertising a name nothing
+	// publishes would send provisioning and ACL tooling after a stream that
+	// stays empty forever. Its presence is therefore the manifest's answer
+	// to "does this app command anyone?".
+	//
+	// There is no "commandsDlqTopic": a consumer quarantines into its own
+	// ".dlq" and a producer route-DLQs a failed command publish into its own.
+	CommandsTopic string          `json:"commandsTopic,omitempty"`
+	Events        []ManifestEvent `json:"events"`
 	// Routes is the active route table for this producer. Omitted (nil/empty)
 	// when no routes are wired so producers without a multi-target topology
 	// emit a clean catalog-only document.
@@ -63,6 +81,14 @@ type ManifestEvent struct {
 	DataSchema      string `json:"dataSchema,omitempty"`
 	SystemEvent     bool   `json:"systemEvent"`
 	Description     string `json:"description,omitempty"`
+	// Class is "fact" or "command". It says which of the application's two
+	// streams this event rides — and therefore what a consumer that has no
+	// handler for it does: ignore (fact) or quarantine (command).
+	//
+	// Always present, including on a fact-only manifest, so a reader
+	// distinguishes "this producer emits only facts" from "this producer
+	// predates the class field".
+	Class EventClass `json:"class"`
 	// DefaultPolicy is the EventDefinition default policy as registered in
 	// the catalog. Runtime per-event overrides from Config.PolicyOverrides
 	// are NOT reflected here.
@@ -120,16 +146,25 @@ func BuildManifest(descriptor PublisherDescriptor, catalog Catalog, routes Route
 			SystemEvent:     definition.SystemEvent,
 			Description:     definition.Description,
 			DefaultPolicy:   definition.DefaultPolicy.Normalize(),
+			Class:           definition.Class,
 		})
 	}
 
+	// Advertise the commands queue only when the catalog actually populates
+	// it. See ManifestDocument.CommandsTopic.
+	commandsTopic := ""
+	if catalog.HasCommands() {
+		commandsTopic = contract.AppCommandsTopic(descriptor.Source)
+	}
+
 	return ManifestDocument{
-		Version:   ManifestVersion,
-		Publisher: descriptor,
-		Topic:     contract.AppTopic(descriptor.Source),
-		DLQTopic:  contract.AppDLQTopic(descriptor.Source),
-		Events:    events,
-		Routes:    renderRoutes(routes),
+		Version:       ManifestVersion,
+		Publisher:     descriptor,
+		Topic:         contract.AppTopic(descriptor.Source),
+		DLQTopic:      contract.AppDLQTopic(descriptor.Source),
+		CommandsTopic: commandsTopic,
+		Events:        events,
+		Routes:        renderRoutes(routes),
 	}, nil
 }
 
