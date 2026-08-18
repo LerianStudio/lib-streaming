@@ -438,3 +438,37 @@ func clearStreamingEnv(t *testing.T) {
 		t.Setenv(v, "")
 	}
 }
+
+// TestLoadConfig_RejectsMalformedSource pins the FULL source contract at the
+// first bootstrap gate, not just the empty case.
+//
+// Mutation testing proved the difference matters: reverting the ValidateSource
+// call to a bare empty-check failed ZERO tests. Every malformed shape below
+// would then have started a producer whose topic name is derived from garbage
+// — the v2 URI form yields "lerian.streaming.//lerian.midaz/tx", which Kafka
+// rejects at publish time as a broker-shaped error nobody traces back to config.
+func TestLoadConfig_RejectsMalformedSource(t *testing.T) {
+	cases := []struct {
+		name   string
+		source string
+	}{
+		{"v2 uri shape", "//lerian.midaz/tx"},
+		{"capitalized", "Lender"},
+		{"dotted namespace", "lerian.midaz"},
+		{"leading hyphen", "-lender"},
+		{"over the byte bound", strings.Repeat("a", 229)},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("STREAMING_ENABLED", "true")
+			t.Setenv("STREAMING_BROKERS", "broker:9092")
+			t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", tc.source)
+
+			_, _, err := LoadConfig()
+			if !errors.Is(err, ErrInvalidSource) {
+				t.Fatalf("LoadConfig(source=%q) err = %v; want ErrInvalidSource", tc.source, err)
+			}
+		})
+	}
+}

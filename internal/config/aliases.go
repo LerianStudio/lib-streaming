@@ -12,6 +12,7 @@ type (
 var (
 	ErrMissingBrokers        = contract.ErrMissingBrokers
 	ErrMissingSource         = contract.ErrMissingSource
+	ErrInvalidSource         = contract.ErrInvalidSource
 	ErrInvalidCompression    = contract.ErrInvalidCompression
 	ErrInvalidAcks           = contract.ErrInvalidAcks
 	ErrInvalidDeliveryPolicy = contract.ErrInvalidDeliveryPolicy

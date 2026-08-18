@@ -566,3 +566,121 @@ func TestBuildCloudEventsHeaders_TypeDisambiguatesProducers(t *testing.T) {
 		t.Errorf("ce-type = %q; want studio.lerian.matcher.payment.authorized", matcher)
 	}
 }
+
+// TestBuildTransportHeaders_GoldenWireFormat pins the COMPLETE header sequence
+// a fully-populated event produces, as string literals.
+//
+// Literals, deliberately: every other test in this package spells the keys with
+// the headerCE* constants, so renaming a constant renames the expectation with
+// it and the test still passes. Mutation testing proved exactly that —
+// ce-resourcetype, ce-eventtype and ce-schemaversion could each be renamed with
+// ZERO unit failures, and those three are what a v3 consumer dispatches on. A
+// silent rename ships a producer no consumer can route.
+//
+// This is a WIRE CONTRACT. Changing any string here is a breaking change for
+// every deployed consumer, so this test is meant to fail loudly and be updated
+// deliberately, never adjusted to match the code.
+func TestBuildTransportHeaders_GoldenWireFormat(t *testing.T) {
+	t.Parallel()
+
+	event := Event{
+		TenantID:        "tenant-abc",
+		ResourceType:    "loan_contract",
+		EventType:       "disbursed",
+		EventID:         "evt-1",
+		SchemaVersion:   "2.1.0",
+		Timestamp:       time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC),
+		Source:          "lender",
+		Subject:         "loan-42",
+		DataContentType: "application/json",
+		DataSchema:      "https://schemas.lerian.studio/loan/disbursed/2.1.0",
+	}
+
+	want := []struct {
+		key   string
+		value string
+	}{
+		{"ce-specversion", "1.0"},
+		{"ce-id", "evt-1"},
+		{"ce-source", "lender"},
+		{"ce-type", "studio.lerian.lender.loan_contract.disbursed"},
+		{"ce-time", "2026-08-18T12:00:00Z"},
+		{"ce-schemaversion", "2.1.0"},
+		{"ce-resourcetype", "loan_contract"},
+		{"ce-eventtype", "disbursed"},
+		{"ce-subject", "loan-42"},
+		{"ce-datacontenttype", "application/json"},
+		{"ce-dataschema", "https://schemas.lerian.studio/loan/disbursed/2.1.0"},
+		{"ce-tenantid", "tenant-abc"},
+	}
+
+	got := BuildTransportHeaders(event)
+
+	if len(got) != len(want) {
+		keys := make([]string, 0, len(got))
+		for _, h := range got {
+			keys = append(keys, h.Key)
+		}
+
+		t.Fatalf("header count = %d %v; want %d (the full non-system set)", len(got), keys, len(want))
+	}
+
+	for i, w := range want {
+		if got[i].Key != w.key {
+			t.Errorf("header[%d].Key = %q; want %q — this is a WIRE CONTRACT, not an implementation detail", i, got[i].Key, w.key)
+		}
+
+		if string(got[i].Value) != w.value {
+			t.Errorf("header[%d] (%s) value = %q; want %q", i, w.key, string(got[i].Value), w.value)
+		}
+	}
+}
+
+// TestBuildTransportHeaders_SystemEventGoldenWireFormat pins the system-event
+// shape as literals too: ce-systemevent appears, ce-tenantid does NOT.
+func TestBuildTransportHeaders_SystemEventGoldenWireFormat(t *testing.T) {
+	t.Parallel()
+
+	event := Event{
+		ResourceType:  "ledger",
+		EventType:     "rolled_over",
+		EventID:       "evt-2",
+		SchemaVersion: "1.0.0",
+		Timestamp:     time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC),
+		Source:        "midaz-ledger",
+		SystemEvent:   true,
+	}
+
+	want := []struct {
+		key   string
+		value string
+	}{
+		{"ce-specversion", "1.0"},
+		{"ce-id", "evt-2"},
+		{"ce-source", "midaz-ledger"},
+		{"ce-type", "studio.lerian.midaz-ledger.ledger.rolled_over"},
+		{"ce-time", "2026-08-18T12:00:00Z"},
+		{"ce-schemaversion", "1.0.0"},
+		{"ce-resourcetype", "ledger"},
+		{"ce-eventtype", "rolled_over"},
+		{"ce-systemevent", "true"},
+	}
+
+	got := BuildTransportHeaders(event)
+
+	if len(got) != len(want) {
+		t.Fatalf("header count = %d; want %d", len(got), len(want))
+	}
+
+	for i, w := range want {
+		if got[i].Key != w.key || string(got[i].Value) != w.value {
+			t.Errorf("header[%d] = %s=%q; want %s=%q", i, got[i].Key, string(got[i].Value), w.key, w.value)
+		}
+	}
+
+	for _, h := range got {
+		if h.Key == "ce-tenantid" {
+			t.Error("system event emitted ce-tenantid; the contract omits it")
+		}
+	}
+}

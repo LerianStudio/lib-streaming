@@ -122,7 +122,6 @@ func kfakeConsumerConfig(cluster *kfake.Cluster) ConsumerConfig {
 		HaltBackoff:         time.Millisecond,
 		PollTimeout:         200 * time.Millisecond,
 		CloseTimeout:        closeBudget,
-		DLQTopicSuffix:      ".dlq",
 	}
 }
 

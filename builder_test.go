@@ -415,3 +415,41 @@ func builderKfakeTarget(t *testing.T) (streaming.TargetConfig, *kfake.Cluster) {
 
 	return target, cluster
 }
+
+// TestBuilder_RejectsMalformedSource pins the FULL source contract at the
+// second bootstrap gate.
+//
+// Mutation testing proved the difference matters: reverting Builder.Build's
+// ValidateSource call to a bare empty-check failed ZERO tests. Each shape below
+// would then have built a producer whose one topic is derived from a value no
+// consumer, ACL, or provisioning script could have anticipated.
+func TestBuilder_RejectsMalformedSource(t *testing.T) {
+	cases := []struct {
+		name   string
+		source string
+	}{
+		{"v2 uri shape", "//lerian.midaz/tx"},
+		{"capitalized", "Lender"},
+		{"dotted namespace", "lerian.midaz"},
+		{"leading hyphen", "-lender"},
+		{"over the byte bound", strings.Repeat("a", 229)},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := streaming.NewBuilder().
+				Source(tc.source).
+				Catalog(builderCatalog(t)).
+				Routes(builderRoute("lerian.streaming.transaction.created")).
+				Target(builderKafkaTarget()).
+				Logger(log.NewNop()).
+				Build(context.Background())
+
+			if !errors.Is(err, streaming.ErrInvalidSource) {
+				t.Fatalf("Build(source=%q) err = %v; want ErrInvalidSource", tc.source, err)
+			}
+		})
+	}
+}
