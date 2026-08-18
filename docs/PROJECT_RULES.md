@@ -287,7 +287,7 @@ Build tags are the authoritative test type discriminator:
 
 ## 20. Versioning and Compatibility
 
-- Semantic import path is the bare `github.com/LerianStudio/lib-streaming` while the module is on v0/v1; all install docs and examples must use this exact path. A `/v2` path-major suffix is required only when cutting the first v2.0.0 breaking release, at which point every import in the codebase, every example in the docs, and the `module` directive in `go.mod` move together.
+- Semantic import path is `github.com/LerianStudio/lib-streaming/v3`; all install docs and examples must use this exact path, matching the `module` directive in `go.mod`. Cutting the next path-major (e.g. `/v4`) moves every import in the codebase, every example in the docs, and the `module` directive together in one change.
 - Breaking changes require a `CHANGELOG.md` entry and a migration note.
 - New exported identifiers require Go doc comments.
 - Behavior changes in exported functions require tests and documentation updates.

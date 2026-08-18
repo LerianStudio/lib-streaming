@@ -84,6 +84,27 @@ func TestEventDefinition_New_RejectsInvalidShape(t *testing.T) {
 			},
 			want: ErrInvalidResourceType,
 		},
+		{
+			// "." is the EventKey separator: ("payment.refund", "created")
+			// and ("payment", "refund.created") would otherwise compose the
+			// same dispatch key.
+			name: "dotted resource",
+			definition: EventDefinition{
+				Key:          "payment.refund.created",
+				ResourceType: "payment.refund",
+				EventType:    "created",
+			},
+			want: ErrInvalidResourceType,
+		},
+		{
+			name: "dotted event",
+			definition: EventDefinition{
+				Key:          "payment.refund.created",
+				ResourceType: "payment",
+				EventType:    "refund.created",
+			},
+			want: ErrInvalidEventType,
+		},
 	}
 
 	for _, tt := range tests {

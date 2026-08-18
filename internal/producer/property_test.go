@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"math/rand"
 	"reflect"
-	"strings"
 	"testing"
 	"testing/quick"
 	"time"
@@ -217,10 +216,18 @@ func TestProperty_Topic_Deterministic(t *testing.T) {
 			return false
 		}
 
-		// Neither per-event component may appear as a topic suffix.
-		return !strings.HasSuffix(t1, event.ResourceType) &&
-			!strings.HasSuffix(t1, event.EventType) &&
-			!strings.Contains(t1, event.SchemaVersion)
+		// The topic must depend on Source alone: a sibling event with
+		// different per-event components (resource type, event type,
+		// schema version) but the same Source rides the same topic.
+		// This holds for EVERY generated value, unlike suffix checks,
+		// which go vacuous when a random component happens to suffix
+		// the source itself.
+		sibling := event
+		sibling.ResourceType += "-other"
+		sibling.EventType += "-other"
+		sibling.SchemaVersion = "9.9.9"
+
+		return t1 == sibling.Topic()
 	}
 
 	if err := quick.Check(property, propertyConfig()); err != nil {
@@ -235,8 +242,8 @@ func TestProperty_Topic_Deterministic(t *testing.T) {
 //     non-deterministic (two calls yield different UUIDs).
 //
 // The non-system branch uses uuid.NewSHA1 which is a pure hash — same
-// input = same output. The system branch uses uuid.New() which is
-// random. This property pins that split.
+// input = same output. The system branch mints a fresh unique ID
+// (UUIDv7, falling back to a random v4). This property pins that split.
 func TestProperty_DeriveAggregateID_Deterministic(t *testing.T) {
 	t.Parallel()
 

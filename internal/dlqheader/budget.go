@@ -12,9 +12,11 @@ import (
 
 // The two headers that mark a DLQ entry whose payload was dropped so the record
 // would fit. Frozen wire contract like the rest of this package: replay tooling
-// branches on PayloadOmitted to know it must re-read the value from the source
-// topic (at the partition and offset the source-* headers name) instead of
-// replaying the DLQ record verbatim.
+// branches on PayloadOmitted to know it must not replay the DLQ record
+// verbatim. On a CONSUMER quarantine the payload is recoverable from the
+// source topic at the partition and offset the source-* headers name; on the
+// PRODUCER path the original publish never landed anywhere, so an omitted
+// payload is genuinely gone and PayloadBytes is the only trace of it.
 const (
 	// PayloadOmitted is "true" on a DLQ entry published without its payload.
 	// Absent means the payload is present and verbatim.

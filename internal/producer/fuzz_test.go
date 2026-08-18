@@ -24,7 +24,7 @@ func FuzzParseCloudEventsHeaders(f *testing.F) {
 		{Key: "ce-specversion", Value: []byte("1.0")},
 		{Key: "ce-id", Value: []byte("seed-valid-1")},
 		{Key: "ce-source", Value: []byte("seed-service")},
-		{Key: "ce-type", Value: []byte("studio.lerian.transaction.created")},
+		{Key: "ce-type", Value: []byte("studio.lerian.seed-service.transaction.created")},
 		{Key: "ce-time", Value: []byte("2026-04-18T00:00:00Z")},
 		{Key: "ce-tenantid", Value: []byte("t-seed")},
 	}))

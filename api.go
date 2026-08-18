@@ -549,11 +549,18 @@ func (b *Builder) buildMulti(ctx context.Context, routeTable RouteTable) (Emitte
 		return nil, fmt.Errorf("%w: catalog is empty", ErrInvalidEventDefinition)
 	}
 
-	// The ce-source gate lives in producer.NewProducerMulti, which this
-	// function always reaches. Duplicating it here validated the same string
-	// twice and left two places to keep in step.
 	if len(b.targets) == 0 {
 		return nil, ErrMissingTarget
+	}
+
+	// Validate the source BEFORE the route warnings and the target-spec work
+	// below. producer.NewProducerMulti re-validates it as the authoritative
+	// gate, but reaching that gate with a bad source first derives the
+	// app-topic pair from garbage (spurious off-topic warnings against a name
+	// no route could match) and spends adapter construction on a build that
+	// was always going to fail with a caller-correctable error.
+	if err := contract.ValidateSource(b.source); err != nil {
+		return nil, err
 	}
 
 	b.warnOffAppTopicKafkaRoutes(ctx, routeTable)

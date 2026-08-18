@@ -3,6 +3,7 @@ package contract
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 // EventClass says whether a definition is a business FACT or a
@@ -103,6 +104,39 @@ func NewEventDefinition(definition EventDefinition) (EventDefinition, error) {
 		return EventDefinition{}, fmt.Errorf("%w: %w", ErrInvalidEventDefinition, ErrMissingEventType)
 	}
 
+	// EventKey ambiguity gate: "." is the composition separator in
+	// "<resourceType>.<eventType>", so a dot INSIDE either component lets two
+	// distinct valid pairs collide on one dispatch key — ("payment.refund",
+	// "created") and ("payment", "refund.created") both compose
+	// "payment.refund.created". The catalog would then reject a legitimate
+	// definition as a duplicate, or a consumer could never register distinct
+	// handlers for the two. ResourceTypes are snake_case in this fleet;
+	// neither component has a legitimate dotted shape.
+	if strings.Contains(definition.ResourceType, ".") {
+		a := newContractAsserter("event_definition.new")
+		_ = a.That(context.Background(), false, "event definition ResourceType must not contain '.'",
+			"violation", "dotted_resource_type",
+			"key", definition.Key,
+			"resource_type", definition.ResourceType,
+		)
+
+		return EventDefinition{}, fmt.Errorf("%w: %w: ResourceType %q must not contain '.'",
+			ErrInvalidEventDefinition, ErrInvalidResourceType, definition.ResourceType)
+	}
+
+	if strings.Contains(definition.EventType, ".") {
+		a := newContractAsserter("event_definition.new")
+		_ = a.That(context.Background(), false, "event definition EventType must not contain '.'",
+			"violation", "dotted_event_type",
+			"key", definition.Key,
+			"resource_type", definition.ResourceType,
+			"event_type", definition.EventType,
+		)
+
+		return EventDefinition{}, fmt.Errorf("%w: %w: EventType %q must not contain '.'",
+			ErrInvalidEventDefinition, ErrInvalidEventType, definition.EventType)
+	}
+
 	if definition.SchemaVersion == "" {
 		definition.SchemaVersion = defaultSchemaVersion
 	}
@@ -179,6 +213,10 @@ func NewEventDefinition(definition EventDefinition) (EventDefinition, error) {
 // dispatcher recomposes it from the ce-resourcetype / ce-eventtype headers to
 // look up a handler. Two independent concatenations of the same shape is one
 // separator change away from a consumer that silently matches nothing.
+//
+// The composition is unambiguous because NewEventDefinition rejects a "."
+// inside either component: without that gate, ("payment.refund", "created")
+// and ("payment", "refund.created") would compose the same key.
 func EventKey(resourceType, eventType string) string {
 	return resourceType + "." + eventType
 }

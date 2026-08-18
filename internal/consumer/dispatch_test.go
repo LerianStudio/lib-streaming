@@ -292,6 +292,24 @@ func TestDispatcher_BindRejectsBareRegistrationsUnderSeveralApps(t *testing.T) {
 	}
 }
 
+// TestDispatcher_BindRejectsBareOnCollidingWithExplicitOnFrom pins that a bare
+// On(...) resolving to the sole app must not silently overwrite an explicit
+// OnFrom(app, ...) for the same event key. Two registrations for one
+// (app, event key) pair is a wiring ambiguity; last-wins would drop whichever
+// handler registered first with no signal at all.
+func TestDispatcher_BindRejectsBareOnCollidingWithExplicitOnFrom(t *testing.T) {
+	t.Parallel()
+
+	d := NewDispatcher().
+		OnFrom("lender", "loan.disbursed", func(context.Context, contract.Event, []byte) error { return nil }).
+		On("loan.disbursed", func(context.Context, contract.Event, []byte) error { return nil })
+
+	err := d.Bind("lender")
+	if !errors.Is(err, ErrBareOnWithMultipleApps) {
+		t.Fatalf("Bind(lender) = %v; want ErrBareOnWithMultipleApps", err)
+	}
+}
+
 // TestDispatcher_BindRejectsAnUnknownApp pins that a handler nothing can reach
 // is a wiring mistake. Left unchecked it is silent: the build passes, the
 // consumer reports Healthy, and the handler never fires.

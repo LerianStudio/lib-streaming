@@ -422,16 +422,28 @@ func (c ConsumerConfig) validateSources() error {
 	}
 
 	for _, field := range []struct {
-		label  string
+		label string
+		// wrap is an additional sentinel joined into the error chain so a
+		// caller matching the field-specific sentinel (the one the fluent
+		// builder path returns) also matches when the same illegal value
+		// arrived from the environment. Without it, ExpectSources("Lender")
+		// failed with ErrInvalidExpectSource while
+		// STREAMING_CONSUMER_EXPECT_SOURCES=Lender failed with
+		// ErrInvalidConfigField only.
+		wrap   error
 		values []string
 	}{
-		{"source", []string{c.Source}},
-		{"app", c.Apps},
-		{"commanding app", c.Commands},
-		{"expect source", c.ExpectSources},
+		{"source", nil, []string{c.Source}},
+		{"app", nil, c.Apps},
+		{"commanding app", nil, c.Commands},
+		{"expect source", ErrInvalidExpectSource, c.ExpectSources},
 	} {
 		for _, value := range field.values {
 			if err := contract.ValidateSource(value); err != nil {
+				if field.wrap != nil {
+					return fmt.Errorf("%w: %w: %s %q: %w", ErrInvalidConfigField, field.wrap, field.label, value, err)
+				}
+
 				return fmt.Errorf("%w: %s %q: %w", ErrInvalidConfigField, field.label, value, err)
 			}
 		}

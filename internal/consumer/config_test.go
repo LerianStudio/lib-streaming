@@ -158,12 +158,20 @@ func TestLoadConsumerConfig_IgnoresRetiredDLQSuffixVar(t *testing.T) {
 	t.Setenv("STREAMING_CONSUMER_TOPICS", "topic.a")
 	t.Setenv("STREAMING_CONSUMER_DLQ_SUFFIX", ".quarantine")
 
-	if _, _, err := LoadConsumerConfig(); err != nil {
+	cfg, _, err := LoadConsumerConfig()
+	if err != nil {
 		t.Fatalf("LoadConsumerConfig() error = %v", err)
 	}
 
 	if contract.DLQTopicSuffix != ".dlq" {
 		t.Fatalf("contract.DLQTopicSuffix = %q; want the single library-owned \".dlq\"", contract.DLQTopicSuffix)
+	}
+
+	// The retired var must not leak into the derived DLQ topic either: the
+	// consumer quarantines into its own Source-derived name, ignoring the
+	// suffix knob entirely.
+	if got := contract.AppDLQTopic(cfg.Source); got != "lerian.streaming.test-consumer.dlq" {
+		t.Fatalf("AppDLQTopic(%q) = %q; want %q", cfg.Source, got, "lerian.streaming.test-consumer.dlq")
 	}
 }
 
@@ -233,5 +241,12 @@ func TestLoadConsumerConfig_RejectsMalformedExpectSources(t *testing.T) {
 	_, _, err := LoadConsumerConfig()
 	if !errors.Is(err, ErrInvalidConfigField) {
 		t.Fatalf("LoadConsumerConfig() = %v; want ErrInvalidConfigField", err)
+	}
+
+	// The env path must also match the field-specific sentinel the fluent
+	// ExpectSources(...) path returns, so callers can branch on one error
+	// value regardless of where the illegal entry came from.
+	if !errors.Is(err, ErrInvalidExpectSource) {
+		t.Fatalf("LoadConsumerConfig() = %v; want it to wrap ErrInvalidExpectSource", err)
 	}
 }

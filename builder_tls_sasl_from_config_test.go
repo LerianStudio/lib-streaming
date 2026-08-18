@@ -146,11 +146,16 @@ func minimalValidBuilder(t *testing.T) *streaming.Builder {
 		t.Fatalf("NewCatalog: %v", err)
 	}
 
+	appTopic, err := streaming.AppTopic("lerian-test-svc")
+	if err != nil {
+		t.Fatalf("AppTopic: %v", err)
+	}
+
 	route := streaming.RouteDefinition{
 		Key:           "transaction.created.kafka",
 		DefinitionKey: "transaction.created",
 		Target:        "primary",
-		Destination:   streaming.KafkaTopic("streaming.transaction.created"),
+		Destination:   streaming.KafkaTopic(appTopic),
 		Requirement:   streaming.RouteRequired,
 	}
 

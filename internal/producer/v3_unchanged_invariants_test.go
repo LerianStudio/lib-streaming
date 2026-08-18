@@ -9,8 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/google/uuid"
-
 	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
 )
 
@@ -66,7 +64,7 @@ func TestChanged_OutboxEnvelopeVersionIsTwo(t *testing.T) {
 			contract.OutboxEnvelopeVersion)
 	}
 
-	v1 := validOutboxEnvelope()
+	v1 := validOutboxEnvelope(t)
 	v1.Version = 1
 
 	if err := v1.ValidateShape(); !errors.Is(err, contract.ErrInvalidOutboxEnvelope) {
@@ -76,7 +74,9 @@ func TestChanged_OutboxEnvelopeVersionIsTwo(t *testing.T) {
 
 // validOutboxEnvelope returns an envelope that passes ValidateShape, so a test
 // can flip exactly one field and attribute the failure to it.
-func validOutboxEnvelope() contract.OutboxEnvelope {
+func validOutboxEnvelope(tb testing.TB) contract.OutboxEnvelope {
+	tb.Helper()
+
 	return contract.OutboxEnvelope{
 		Version:       contract.OutboxEnvelopeVersion,
 		RouteKey:      "primary.kafka",
@@ -84,7 +84,7 @@ func validOutboxEnvelope() contract.OutboxEnvelope {
 		Target:        "primary",
 		Transport:     contract.TransportKafkaLike,
 		Destination:   contract.Destination{Kind: contract.TransportKafkaLike, Name: contract.AppTopic("midaz-ledger")},
-		AggregateID:   uuid.New(),
+		AggregateID:   newTestUUIDv7(tb),
 		Requirement:   contract.RouteRequired,
 		Policy:        contract.DefaultDeliveryPolicy(),
 		Event: contract.Event{

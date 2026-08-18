@@ -178,7 +178,7 @@ func TestFacade_ManifestAndCloudEventsWrappers(t *testing.T) {
 		{Key: "ce-specversion", Value: []byte("1.0")},
 		{Key: "ce-id", Value: []byte("event-1")},
 		{Key: "ce-source", Value: []byte("svc")},
-		{Key: "ce-type", Value: []byte("studio.lerian.transaction.created")},
+		{Key: "ce-type", Value: []byte("studio.lerian.svc.transaction.created")},
 		{Key: "ce-time", Value: []byte(time.Unix(0, 0).UTC().Format(time.RFC3339Nano))},
 	})
 	if err != nil {

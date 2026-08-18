@@ -109,6 +109,8 @@ func TestBuilder_SilentOnItsOwnTopicNames(t *testing.T) {
 		t.Fatalf("AppDLQTopic() error = %v", err)
 	}
 
+	// One build per name: two catch-all routes to one target would be
+	// rejected as a duplicate before the warning logic ever ran.
 	for _, topic := range []string{appTopic, commandsTopic, dlqTopic} {
 		t.Run(topic, func(t *testing.T) {
 			t.Parallel()

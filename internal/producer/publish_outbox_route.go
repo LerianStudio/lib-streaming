@@ -170,9 +170,11 @@ func captureTraceCarrier(ctx context.Context) contract.TraceCarrier {
 // outbox row stream aligned with the broker partition stream and lets
 // operators correlate the two by hash.
 //
-// SystemEvent=true events use a random UUID because their "partition key"
-// ("system:<eventtype>") would otherwise collapse every system event into
-// the same aggregate.
+// SystemEvent=true events use a fresh unique UUID because their "partition
+// key" ("system:<eventtype>") would otherwise collapse every system event
+// into the same aggregate. UUIDv7 is preferred (the AggregateID persists on
+// an outbox row, and time-ordered IDs keep B-tree locality); a generator
+// error falls back to a random v4 so an emit never fails on ID minting.
 //
 // It resolves the partition key exactly the way Emit dispatch does: the
 // WithPartitionKey override when one is wired and it yields a non-empty key,
@@ -180,6 +182,10 @@ func captureTraceCarrier(ctx context.Context) contract.TraceCarrier {
 // because it would collapse every row of every tenant onto one aggregate id.
 func (p *Producer) deriveOutboxAggregateID(event Event) uuid.UUID {
 	if event.SystemEvent {
+		if id, err := commons.GenerateUUIDv7(); err == nil {
+			return id
+		}
+
 		return uuid.New()
 	}
 

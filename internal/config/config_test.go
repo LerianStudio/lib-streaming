@@ -461,6 +461,10 @@ func TestLoadConfig_RejectsMalformedSource(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			// Isolate from ambient STREAMING_* vars so an inherited value
+			// (e.g. a TLS or SASL knob) cannot fail validation before the
+			// source check this test pins.
+			clearStreamingEnv(t)
 			t.Setenv("STREAMING_ENABLED", "true")
 			t.Setenv("STREAMING_BROKERS", "broker:9092")
 			t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", tc.source)

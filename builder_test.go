@@ -23,10 +23,15 @@ func TestBuilder_OptionsThreadPartitionKeyToProducer(t *testing.T) {
 	cfg, cluster := builderKfakeTarget(t)
 	fixedKey := "fixed-builder-key"
 
+	appTopic, err := streaming.AppTopic("builder-test")
+	if err != nil {
+		t.Fatalf("AppTopic() error = %v", err)
+	}
+
 	emitter, err := streaming.NewBuilder().
 		Source("builder-test").
 		Catalog(builderCatalog(t)).
-		Routes(builderRoute("lerian.streaming.transaction.created")).
+		Routes(builderRoute(appTopic)).
 		Target(cfg).
 		Options(streaming.WithPartitionKey(func(streaming.Event) string { return fixedKey })).
 		Build(context.Background())
@@ -50,7 +55,7 @@ func TestBuilder_OptionsThreadPartitionKeyToProducer(t *testing.T) {
 
 	consumer, err := kgo.NewClient(
 		kgo.SeedBrokers(cluster.ListenAddrs()...),
-		kgo.ConsumeTopics("lerian.streaming.transaction.created"),
+		kgo.ConsumeTopics(appTopic),
 		kgo.ConsumerGroup("builder-options-partition-key"),
 		kgo.DisableAutoCommit(),
 		kgo.FetchMaxWait(500*time.Millisecond),
@@ -403,7 +408,11 @@ func builderKfakeTarget(t *testing.T) (streaming.TargetConfig, *kfake.Cluster) {
 		kfake.NumBrokers(1),
 		kfake.AllowAutoTopicCreation(),
 		kfake.DefaultNumPartitions(3),
-		kfake.SeedTopics(3, "lerian.streaming.transaction.created"),
+		kfake.SeedTopics(3,
+			"lerian.streaming.transaction.created",
+			"lerian.streaming.builder-test",
+			"lerian.streaming.builder-test.dlq",
+		),
 	)
 	if err != nil {
 		t.Fatalf("kfake.NewCluster() error = %v", err)

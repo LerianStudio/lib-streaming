@@ -48,7 +48,7 @@ func TestRouteDLQ_StampsTheCauseKindThatQuarantinedTheRecord(t *testing.T) {
 			}},
 			headers:     ceHeaders("tenantA", false),
 			wantKind:    dlqCauseHandler,
-			wantCauseIs: nil,
+			wantCauseIs: businessErr,
 		},
 		{
 			name: "source mismatch",

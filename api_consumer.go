@@ -209,8 +209,17 @@ type ConsumerBuilder struct {
 	// dispatcher was what made ExpectSources meaningless (and then a build
 	// error) for a whole-stream Handler.
 	expectSources []string
-	classifier    Classifier
-	opts          []ConsumerOption
+	// envExpectSources holds the ExpectSources list adopted from a
+	// ConsumerConfig (STREAMING_CONSUMER_EXPECT_SOURCES). It is kept apart
+	// from cfg.ExpectSources because resolveExpectedSources WRITES the
+	// resolved allowlist into that field for the runtime to read; reading the
+	// env input back out of the same field let a first Build's Apps-derived
+	// output masquerade as an env-provided list on a second Build of the same
+	// builder (wrong origin in error texts, and the Apps+Topics refusal
+	// silently skipped).
+	envExpectSources []string
+	classifier       Classifier
+	opts             []ConsumerOption
 }
 
 // NewConsumer returns a ConsumerBuilder defaulted to ENABLED — an explicitly
@@ -245,6 +254,7 @@ func (b *ConsumerBuilder) FromConfig(cfg ConsumerConfig) *ConsumerBuilder {
 	}
 
 	b.cfg = cfg
+	b.envExpectSources = append([]string(nil), cfg.ExpectSources...)
 
 	return b
 }
@@ -735,8 +745,8 @@ func (b *ConsumerBuilder) resolveHandler() (Handler, error) {
 func (b *ConsumerBuilder) resolveExpectedSources() error {
 	explicit, origin := b.expectSources, "ExpectSources(...)"
 
-	if len(explicit) == 0 && len(b.cfg.ExpectSources) > 0 {
-		explicit, origin = b.cfg.ExpectSources, "STREAMING_CONSUMER_EXPECT_SOURCES"
+	if len(explicit) == 0 && len(b.envExpectSources) > 0 {
+		explicit, origin = b.envExpectSources, "STREAMING_CONSUMER_EXPECT_SOURCES"
 	}
 
 	// Commands counts exactly like Apps here: both name a producing

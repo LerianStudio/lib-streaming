@@ -237,6 +237,18 @@ func (d *Dispatcher) Bind(sources ...string) error {
 
 			delete(d.handlers, dispatchKey{anyApp, eventKey})
 
+			// A bare On(...) binding to the sole app must not silently
+			// overwrite an explicit OnFrom(app, ...) for the same event key:
+			// OnFrom is documented as the authoritative form, and losing its
+			// handler would deliver records to the wrong one. Two
+			// registrations for one (app, event key) pair is a wiring
+			// ambiguity, so it fails the build like the other Bind
+			// rejections.
+			if _, taken := d.handlers[dispatchKey{sources[0], eventKey}]; taken {
+				return fmt.Errorf("%w: On(%q, ...) and OnFrom(%q, %q, ...) are both registered; keep only the explicit OnFrom form",
+					ErrBareOnWithMultipleApps, eventKey, sources[0], eventKey)
+			}
+
 			d.handlers[dispatchKey{sources[0], eventKey}] = handler
 		}
 	}

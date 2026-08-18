@@ -128,6 +128,23 @@ forced every consuming repo (midaz, matcher, lender, br-consignado-gw) to carry
 already shipped a latent bug from the two forms drifting. That machinery can be
 deleted; the producer's own `canonicalRouteKey` translator already has been.
 
+### BREAKING: config sentinels are named for the side they belong to
+
+The bare `streaming.ErrMissingBrokers` and `streaming.ErrInvalidConfigField`
+sentinels are RENAMED: the producer side exports
+`ErrProducerMissingBrokers` / `ErrProducerInvalidConfigField`, and the consumer
+side exports `ErrConsumerMissingBrokers` / `ErrConsumerMissingGroup` /
+`ErrConsumerMissingTopics` / `ErrConsumerMissingSource` /
+`ErrConsumerInvalidConfigField`. There is deliberately no bare alias kept for
+compatibility: the two sides define DIFFERENT error values under the same
+name, so one bare alias silently returned false for every `errors.Is` against
+the other side's Build failure.
+
+**Migration:** replace `errors.Is(err, streaming.ErrMissingBrokers)` /
+`errors.Is(err, streaming.ErrInvalidConfigField)` with the producer- or
+consumer-prefixed sentinel matching the config surface that produced the
+error.
+
 ### Consumer: subscribe by app, dispatch by event, verify the source
 
 One subscription now delivers a producer's entire stream, so selection moved
@@ -642,7 +659,7 @@ Contributors: @bedatty, @fredcamaral
 
 - **Asserter trident on construction-time invariants.** Builder target-name validation, `NewProducerMulti` adapter-kind match, multi-target and single-target payload-cap rejection, six silent-guard sites in `internal/producer/{targets,cb_recovery,publish_dlq_route}.go`, route-kind matching, catalog/route-table/event-definition uniqueness, outbox-envelope schema integrity, delivery-policy cross-field rule, and `NewEventDefinition` schema-version parse all now fire the observability trident (log + span event + `assertion_failed_total{component="streaming"}`) on rejection. Public sentinels and signatures are unchanged — the trident is purely additive observability so caller bugs and state-corruption scenarios surface on dashboards alongside the runtime mirrors that already fire (`emit_multi.go:303`, `lifecycle.go`, etc.). Operations labels per call site (e.g. `builder.target_name_shape`, `producer_multi.adapter_kind_match`, `emit_multi.payload_size`, `catalog.new`, `route.dlq_kind_match`, `outbox_envelope.validate_shape`, `event_definition.schema_version`, `config.validate`). Cardinality discipline preserved: no `tenant_id` label on any assertion metric.
 
-- **Config range validation with new sentinel.** `Config.validate` now rejects `STREAMING_CB_FAILURE_RATIO` outside `(0.0, 1.0]` (with zero permitted as preset-fallback), and enforces non-negative bounds on `BatchLingerMs`/`RecordRetries`/`CBMinRequests`/`CBTimeout` plus strictly-positive bounds on `BatchMaxBytes`/`MaxBufferedRecords`/`RecordDeliveryTimeout`/`CloseTimeout`. New sentinel `streaming.ErrInvalidConfigField` (caller-correctable; walks the `IsCallerError` chain) wraps every range failure. Without these checks, misconfigured values flowed silently into franz-go and surfaced as confusing transport-layer errors rather than failing closed at bootstrap. `.env.reference` updated with the documented contracts for each affected variable.
+- **Config range validation with new sentinel.** `Config.validate` now rejects `STREAMING_CB_FAILURE_RATIO` outside `(0.0, 1.0]` (with zero permitted as preset-fallback), and enforces non-negative bounds on `BatchLingerMs`/`RecordRetries`/`CBMinRequests`/`CBTimeout` plus strictly-positive bounds on `BatchMaxBytes`/`MaxBufferedRecords`/`RecordDeliveryTimeout`/`CloseTimeout`. New sentinel `streaming.ErrInvalidConfigField` (renamed to `ErrProducerInvalidConfigField` in v3; caller-correctable; walks the `IsCallerError` chain) wraps every range failure. Without these checks, misconfigured values flowed silently into franz-go and surfaced as confusing transport-layer errors rather than failing closed at bootstrap. `.env.reference` updated with the documented contracts for each affected variable.
 
 - **Background CB recovery goroutine.** Each `*Producer` constructed via `streaming.NewBuilder()` now spawns ONE additional goroutine that periodically calls `manager.GetState` on every registered target's circuit breaker. This bridges a deadlock specific to emit-only services: `dispatchRoute` takes a hot-path early-out when the per-target state mirror reads OPEN, which means `cb.Execute` is never invoked, which means gobreaker's lazy OPEN→HALF-OPEN expiry transition never fires, which means the listener never updates the mirror — so the mirror stays OPEN forever even after the broker recovers. The new goroutine ticks at `clamped(cbTimeout/4, [500ms, 5s])` so the expiry transition fires deterministically once `CBTimeout` has elapsed since the last failure. Operationally, max recovery latency = `CBTimeout + 5s` (loop ceiling) + one probe round-trip.
 
