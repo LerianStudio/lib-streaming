@@ -9,12 +9,15 @@ import "github.com/LerianStudio/lib-streaming/v3/internal/contract"
 //   - Major bumps (X.0.0) remove or change a field. Coordinate with all
 //     downstream contract-diffing tools before bumping.
 //
-// 2.0.0 is the one-topic-per-app cut: the per-event "topic" field is GONE
-// (a definition has no topic of its own) and the document carries the
-// application's single "topic" / "dlqTopic" pair instead. The publisher's
-// "sourceBase" field was renamed "source" to match the strict single-segment
-// ce-source it now holds.
-const ManifestVersion = "2.0.0"
+// 1.0.0 is the initial contract of the one-topic-per-app manifest: a
+// definition has no topic of its own; the document carries the application's
+// single "topic" / "dlqTopic" pair, and the publisher names itself with the
+// strict single-segment ce-source in "source". The platform is greenfield, so
+// this document IS the first shipped manifest — the pre-v3 shape (per-event
+// topics, "sourceBase") never reached production and shares nothing with this
+// contract but the label; consumers must discriminate by structure, never by
+// this string.
+const ManifestVersion = "1.0.0"
 
 // ManifestDocument is the JSON-serializable description of a producer's event
 // catalog and default delivery policies.

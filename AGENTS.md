@@ -134,7 +134,7 @@ Support:
 - `NewStreamingHandler(descriptor, catalog, opts ...HandlerOption) (http.Handler, error)` returns a stdlib `http.Handler` exposing the manifest. The handler pre-marshals the payload at construction; rebuild the handler if the catalog changes. Use `WithManifestRoutes(RouteTable)` to advertise the active route table in the manifest's `routes` section. **SECURITY:** the library does NOT enforce auth — callers MUST wrap the handler in their app's auth middleware before mounting publicly.
 - `PublisherDescriptor` carries `ServiceName`, `Source` (renamed from v2's `SourceBase`; validated by `contract.ValidateSource` EXACTLY as given — deliberately NOT trimmed, because producer preflight validates untrimmed and a trim here would make `" lender "` publishable in the manifest and a hard failure at the first Emit), `RoutePath` (defaults `/streaming`), `OutboxSupported`, `AppVersion`, `LibVersion`, and `ProducerID` (random per process, surfaced for replica disambiguation in DLQ headers and span attributes).
 - `ManifestDocument` advertises the application's single `topic` / `dlqTopic` pair at the DOCUMENT level. `ManifestEvent` has NO `topic` field — a definition has no topic of its own — and carries `eventKey` (`"<resourceType>.<eventType>"`) instead, alongside its schema version.
-- `ManifestVersion` is a semver string (current `2.0.0`). Minor bumps are additive; major bumps remove or change a field.
+- `ManifestVersion` is a semver string (current `1.0.0`). Minor bumps are additive; major bumps remove or change a field.
 
 ### Health, Concurrency, Metrics
 

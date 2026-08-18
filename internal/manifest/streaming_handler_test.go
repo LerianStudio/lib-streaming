@@ -161,8 +161,8 @@ func TestStreamingHandler_GoldenManifestJSON(t *testing.T) {
 		t.Fatalf("decode manifest: %v", err)
 	}
 
-	if got := doc["version"]; got != "2.0.0" {
-		t.Errorf(`manifest["version"] = %v; want "2.0.0"`, got)
+	if got := doc["version"]; got != "1.0.0" {
+		t.Errorf(`manifest["version"] = %v; want "1.0.0"`, got)
 	}
 
 	// One topic per producing application, at the DOCUMENT level.

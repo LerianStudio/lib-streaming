@@ -253,8 +253,8 @@ func TestManifest_DeterministicJSON(t *testing.T) {
 func TestManifestVersion_IsStable(t *testing.T) {
 	t.Parallel()
 
-	if ManifestVersion != "2.0.0" {
-		t.Errorf("ManifestVersion = %q; want %q (bumping this constant is an operational decision — coordinate with downstream consumers)", ManifestVersion, "2.0.0")
+	if ManifestVersion != "1.0.0" {
+		t.Errorf("ManifestVersion = %q; want %q (bumping this constant is an operational decision — coordinate with downstream consumers)", ManifestVersion, "1.0.0")
 	}
 }
 

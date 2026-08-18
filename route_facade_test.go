@@ -133,7 +133,7 @@ func TestFacade_RouteSentinelsAreExported(t *testing.T) {
 func TestManifestVersion(t *testing.T) {
 	t.Parallel()
 
-	if got := streaming.ManifestVersion; got != "2.0.0" {
-		t.Errorf("streaming.ManifestVersion = %q; want %q", got, "2.0.0")
+	if got := streaming.ManifestVersion; got != "1.0.0" {
+		t.Errorf("streaming.ManifestVersion = %q; want %q", got, "1.0.0")
 	}
 }
