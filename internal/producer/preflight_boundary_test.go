@@ -108,38 +108,38 @@ func TestProducer_EmitPreFlight_PayloadAtExactBoundary(t *testing.T) {
 // topic-name limit at the ONE place it can still be hit in v3: the source.
 //
 // The topic is "lerian.streaming." + Source and nothing else, so the bound is
-// entirely a bound on the source — and it is derived from the DLQ topic
-// (the longest derived name), not the base topic. Resource type and event
-// type no longer contribute a single byte, which is why the v2 cases that
+// entirely a bound on the source — and it is derived from the COMMANDS topic
+// (the longest derived name), not the base topic or the DLQ. Resource type and
+// event type no longer contribute a single byte, which is why the v2 cases that
 // blew the limit by concatenating a 120-byte resource with a 120-byte event
 // type are gone: that failure mode does not exist any more.
 // The numbers below are HARDCODED. Computing maxSource from TopicPrefix and
-// DLQTopicSuffix — the same constants the production code computes with — made
-// the assertion agree with itself: shorten the prefix and both sides move
-// together while every deployed topic name silently changes. 228 and 249 are
+// CommandsTopicSuffix — the same constants the production code computes with —
+// made the assertion agree with itself: shorten the prefix and both sides move
+// together while every deployed topic name silently changes. 223 and 249 are
 // the contract, and they belong in the test as literals.
 func TestProducer_EmitPreFlight_TopicAtExactBoundary(t *testing.T) {
 	const (
-		maxSource      = 228 // 249 - len("lerian.streaming.") - len(".dlq")
+		maxSource      = 223 // 249 - len("lerian.streaming.") - len(".commands")
 		kafkaNameLimit = 249
 	)
 
 	tests := []struct {
-		name       string
-		source     string
-		wantErr    error
-		wantDLQLen int
+		name            string
+		source          string
+		wantErr         error
+		wantCommandsLen int
 	}{
 		{
-			name:       "longest legal source: DLQ topic lands exactly on the limit",
-			source:     strings.Repeat("s", maxSource),
-			wantDLQLen: kafkaNameLimit,
+			name:            "longest legal source: commands topic lands exactly on the limit",
+			source:          strings.Repeat("s", maxSource),
+			wantCommandsLen: kafkaNameLimit,
 		},
 		{
-			name:       "one byte over: rejected before any broker call",
-			source:     strings.Repeat("s", maxSource+1),
-			wantErr:    ErrInvalidSource,
-			wantDLQLen: kafkaNameLimit + 1,
+			name:            "one byte over: rejected before any broker call",
+			source:          strings.Repeat("s", maxSource+1),
+			wantErr:         ErrInvalidSource,
+			wantCommandsLen: kafkaNameLimit + 1,
 		},
 	}
 
@@ -149,8 +149,8 @@ func TestProducer_EmitPreFlight_TopicAtExactBoundary(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			if got := len(contract.AppDLQTopic(tt.source)); got != tt.wantDLQLen {
-				t.Fatalf("DLQ topic length = %d; want %d", got, tt.wantDLQLen)
+			if got := len(contract.AppCommandsTopic(tt.source)); got != tt.wantCommandsLen {
+				t.Fatalf("commands topic length = %d; want %d", got, tt.wantCommandsLen)
 			}
 
 			event := sampleEvent()

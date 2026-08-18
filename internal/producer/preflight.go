@@ -144,7 +144,7 @@ func (p *Producer) preFlightWithPayload(ctx context.Context, event Event, valida
 // required-vs-optional semantics live in preFlight (tenant, source).
 //
 // Source is absent from the table: ValidateSource already ran in preFlight and
-// bounds it at 228 bytes with a charset that admits no control character, so a
+// bounds it at 223 bytes with a charset that admits no control character, so a
 // 2048-byte cap here could never fire. A dead check reads as protection.
 //
 // Uses the canonical contract.HeaderFieldCheck shape (re-exported via

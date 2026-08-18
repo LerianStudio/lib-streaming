@@ -432,7 +432,7 @@ func TestBuilder_RejectsMalformedSource(t *testing.T) {
 		{"capitalized", "Lender"},
 		{"dotted namespace", "lerian.midaz"},
 		{"leading hyphen", "-lender"},
-		{"over the byte bound", strings.Repeat("a", 229)},
+		{"over the byte bound", strings.Repeat("a", 224)},
 	}
 
 	for _, tc := range cases {

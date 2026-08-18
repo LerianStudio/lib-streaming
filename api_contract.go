@@ -18,6 +18,9 @@ type (
 	EmitRequest = contract.EmitRequest
 	// EventDefinition is the static contract for one supported event.
 	EventDefinition = contract.EventDefinition
+	// EventClass says whether a definition is a business fact or a
+	// service-to-service command, selecting the queue it rides.
+	EventClass = contract.EventClass
 	// Catalog is an immutable registry of event definitions.
 	Catalog = contract.Catalog
 	// DeliveryPolicy is the resolved direct/outbox/DLQ delivery policy.
@@ -75,6 +78,13 @@ const (
 	TransportCustom                 = contract.TransportCustom
 	RouteRequired                   = contract.RouteRequired
 	RouteOptional                   = contract.RouteOptional
+	// ClassFact is the default event class: a business fact, published on
+	// the app topic, ignored by consumers that registered no handler.
+	ClassFact = contract.ClassFact
+	// ClassCommand marks a service-to-service command: published on the
+	// app's ".commands" topic, QUARANTINED by a consumer that registered no
+	// handler for it.
+	ClassCommand = contract.ClassCommand
 	StreamingOutboxEventType        = contract.StreamingOutboxEventType
 	TraceParentHeader               = contract.TraceParentHeader
 	TraceStateHeader                = contract.TraceStateHeader
@@ -118,17 +128,21 @@ const (
 	TopicPrefix = contract.TopicPrefix
 	// DLQTopicSuffix is appended to a topic to derive its dead-letter topic.
 	DLQTopicSuffix = contract.DLQTopicSuffix
+	// CommandsTopicSuffix is appended to an app topic to derive its
+	// service-to-service commands queue. There is no ".commands.dlq".
+	CommandsTopicSuffix = contract.CommandsTopicSuffix
 	// MaxKafkaTopicNameBytes is Kafka's protocol-level topic-name limit.
 	MaxKafkaTopicNameBytes = contract.MaxKafkaTopicNameBytes
 )
 
-// AppTopic returns the ONE topic a producing application publishes to:
+// AppTopic returns the FACT topic a producing application publishes to:
 // "lerian.streaming." + source.
 //
-// Every event that application emits — business fact or service-to-service
-// command, every resource type, every event type, every schema version —
-// rides this topic. Use it when provisioning topics, writing Kafka ACLs, or
-// naming an explicit Kafka destination.
+// Every business FACT that application emits — every resource type, every
+// event type, every schema version — rides this one topic. Its
+// service-to-service COMMANDS ride AppCommandsTopic instead. Use it when
+// provisioning topics, writing Kafka ACLs, or naming an explicit Kafka
+// destination.
 //
 // It VALIDATES source and returns an error for a malformed one, because every
 // caller of this function is deriving a name something else will act on:
@@ -156,9 +170,30 @@ func AppDLQTopic(source string) (string, error) {
 	return contract.AppDLQTopic(source), nil
 }
 
+// AppCommandsTopic returns the queue carrying an application's
+// service-to-service COMMANDS: "lerian.streaming." + source + ".commands".
+//
+// It is the THIRD and last name a command-emitting application writes (its
+// topic, its commands topic, its dlq); an application that emits only facts
+// writes two. Consumers READ the commands topics of the applications that
+// command them.
+//
+// There is no ".commands.dlq": a consumer quarantines into its own ".dlq"
+// and a producer route-DLQs a failed command publish into its own ".dlq".
+//
+// Like AppTopic, it validates source and returns an error for a malformed one.
+func AppCommandsTopic(source string) (string, error) {
+	if err := contract.ValidateSource(source); err != nil {
+		return "", err
+	}
+
+	return contract.AppCommandsTopic(source), nil
+}
+
 // ValidateSource reports whether source is a legal ce-source: a single
 // dot-free lowercase segment matching ^[a-z0-9][a-z0-9_-]*$, short enough that
-// the derived topic plus ".dlq" fits Kafka's 249-byte limit.
+// the derived topic plus ".commands" — the longest derived name — fits Kafka's
+// 249-byte limit.
 //
 // LoadConfig, Builder.Build, NewPublisherDescriptor, and producer preflight all
 // apply it; it is exported so a service can validate its own configuration

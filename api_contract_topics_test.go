@@ -10,14 +10,14 @@ import (
 	streaming "github.com/LerianStudio/lib-streaming/v3"
 )
 
-// TestAppTopic_DerivesTheAppTopicPair pins the two names the whole v3 contract
-// rests on, as LITERAL strings.
+// TestAppTopic_DerivesTheAppTopicTriple pins the three names the whole v3
+// contract rests on, as LITERAL strings.
 //
-// Provisioning creates these, Kafka ACLs grant exactly these two, and the
-// producer publishes to them. Deriving the expectation from the same constants
-// the production code uses would let a prefix change pass unnoticed on both
-// sides at once.
-func TestAppTopic_DerivesTheAppTopicPair(t *testing.T) {
+// Provisioning creates these, Kafka ACLs grant exactly these three to a
+// command-emitting app (two to a fact-only one), and the producer publishes to
+// them. Deriving the expectation from the same constants the production code
+// uses would let a prefix change pass unnoticed on both sides at once.
+func TestAppTopic_DerivesTheAppTopicTriple(t *testing.T) {
 	t.Parallel()
 
 	topic, err := streaming.AppTopic("lender")
@@ -37,6 +37,41 @@ func TestAppTopic_DerivesTheAppTopicPair(t *testing.T) {
 	if dlq != "lerian.streaming.lender.dlq" {
 		t.Errorf("AppDLQTopic(lender) = %q; want lerian.streaming.lender.dlq", dlq)
 	}
+
+	commands, err := streaming.AppCommandsTopic("lender")
+	if err != nil {
+		t.Fatalf("AppCommandsTopic(lender) error = %v", err)
+	}
+
+	if commands != "lerian.streaming.lender.commands" {
+		t.Errorf("AppCommandsTopic(lender) = %q; want lerian.streaming.lender.commands", commands)
+	}
+}
+
+// TestAppCommandsTopic_RejectsMalformedSource pins that the commands name is
+// held to the SAME strict source contract as the other two — a malformed
+// source yields no topic, ever.
+func TestAppCommandsTopic_RejectsMalformedSource(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		source string
+		want   error
+	}{
+		{"", streaming.ErrMissingSource},
+		{"Lender", streaming.ErrInvalidSource},
+		{"lerian.midaz", streaming.ErrInvalidSource},
+		{strings.Repeat("a", 224), streaming.ErrInvalidSource},
+	} {
+		topic, err := streaming.AppCommandsTopic(tc.source)
+		if !errors.Is(err, tc.want) {
+			t.Fatalf("AppCommandsTopic(%q) error = %v; want %v", tc.source, err, tc.want)
+		}
+
+		if topic != "" {
+			t.Errorf("AppCommandsTopic(%q) returned %q alongside its error; want the empty string", tc.source, topic)
+		}
+	}
 }
 
 // TestAppTopic_RejectsMalformedSource pins that a bad source never yields a
@@ -55,7 +90,7 @@ func TestAppTopic_RejectsMalformedSource(t *testing.T) {
 		{"capitalized", "Lender", streaming.ErrInvalidSource},
 		{"dotted namespace", "lerian.midaz", streaming.ErrInvalidSource},
 		{"leading hyphen", "-lender", streaming.ErrInvalidSource},
-		{"over the byte bound", strings.Repeat("a", 229), streaming.ErrInvalidSource},
+		{"over the byte bound", strings.Repeat("a", 224), streaming.ErrInvalidSource},
 	}
 
 	for _, tc := range cases {
@@ -101,7 +136,7 @@ func TestValidateSource_RejectsMalformedAtTheRootFacade(t *testing.T) {
 		t.Errorf("ValidateSource(\"\") = %v; want ErrMissingSource", err)
 	}
 
-	for _, source := range []string{"//x", "Lender", "lerian.midaz", "-lender", strings.Repeat("a", 229)} {
+	for _, source := range []string{"//x", "Lender", "lerian.midaz", "-lender", strings.Repeat("a", 224)} {
 		if err := streaming.ValidateSource(source); !errors.Is(err, streaming.ErrInvalidSource) {
 			t.Errorf("ValidateSource(%q) = %v; want ErrInvalidSource", source, err)
 		}
@@ -119,6 +154,10 @@ func TestTopicConstants_AreTheLiteralsProvisioningUses(t *testing.T) {
 
 	if streaming.DLQTopicSuffix != ".dlq" {
 		t.Errorf("DLQTopicSuffix = %q; want .dlq", streaming.DLQTopicSuffix)
+	}
+
+	if streaming.CommandsTopicSuffix != ".commands" {
+		t.Errorf("CommandsTopicSuffix = %q; want .commands", streaming.CommandsTopicSuffix)
 	}
 
 	if streaming.MaxKafkaTopicNameBytes != 249 {

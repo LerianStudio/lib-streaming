@@ -5,6 +5,48 @@ import (
 	"fmt"
 )
 
+// EventClass says whether a definition is a business FACT or a
+// service-to-service COMMAND. It selects the queue the event rides and,
+// through that, the consumer's verdict on an unmatched key.
+//
+// It is NOT on the wire. No ce-* header carries it, and the record shape is
+// byte-identical either way: the QUEUE is the class. Putting it in a header
+// would have made the classification a runtime string every consumer has to
+// trust and branch on; putting it in the topic name makes it an ACL-visible,
+// subscription-time fact.
+type EventClass string
+
+const (
+	// ClassFact is a business fact: something that HAPPENED, published for
+	// whoever cares. It rides AppTopic and an unmatched key on it is
+	// ignored — a consumer subscribed to a producer's fact stream receives
+	// every fact that producer emits and legitimately handles a handful.
+	//
+	// It is the DEFAULT: an EventDefinition with an empty Class normalizes
+	// to ClassFact at construction, so a catalog written before commands
+	// existed keeps its exact meaning.
+	ClassFact EventClass = "fact"
+
+	// ClassCommand is a service-to-service command: work one named service
+	// is asking another to do. It rides AppCommandsTopic, and an unmatched
+	// key there is QUARANTINED, never skipped.
+	//
+	// That asymmetry is the whole feature. On the consignado rail, lender's
+	// commands travel to br-consignado-gw mixed with lender's facts; a new
+	// command key published before the gateway deploys its handler would be
+	// ignored-and-committed forever under fact semantics — money-path loss
+	// with green dashboards.
+	ClassCommand EventClass = "command"
+)
+
+// Valid reports whether c is one of the two defined classes. The empty
+// string is NOT valid here — NewEventDefinition normalizes it to ClassFact
+// before this runs, so an empty value reaching Valid means it bypassed
+// construction.
+func (c EventClass) Valid() bool {
+	return c == ClassFact || c == ClassCommand
+}
+
 // EventDefinition is the static contract for one event a producer supports.
 // Catalog, manifest generation, introspection, and policy resolution all start
 // from this type.
@@ -18,6 +60,10 @@ type EventDefinition struct {
 	SystemEvent     bool
 	Description     string
 	DefaultPolicy   DeliveryPolicy
+	// Class selects the queue this definition publishes to: ClassFact (the
+	// zero-value default) rides the app topic, ClassCommand rides the app's
+	// ".commands" topic. See EventClass.
+	Class EventClass
 }
 
 // NewEventDefinition validates and normalizes an EventDefinition.
@@ -63,6 +109,32 @@ func NewEventDefinition(definition EventDefinition) (EventDefinition, error) {
 
 	if definition.DataContentType == "" {
 		definition.DataContentType = defaultDataContentType
+	}
+
+	// Class normalization + gate. Empty means fact, which keeps every
+	// catalog written before commands existed meaning exactly what it did.
+	// Anything else is a typo that would otherwise route to the fact topic
+	// silently — the failure mode a command class exists to prevent.
+	//
+	// Asserter trident fires under operation="event_definition.class" with
+	// violation="invalid_class" so dashboards distinguish it from the
+	// missing-required-field branches above.
+	if definition.Class == "" {
+		definition.Class = ClassFact
+	}
+
+	if !definition.Class.Valid() {
+		a := newContractAsserter("event_definition.class")
+		_ = a.That(context.Background(), false, "event definition Class must be fact or command",
+			"violation", "invalid_class",
+			"key", definition.Key,
+			"resource_type", definition.ResourceType,
+			"event_type", definition.EventType,
+			"class", string(definition.Class),
+		)
+
+		return EventDefinition{}, fmt.Errorf("%w: class %q must be %q or %q",
+			ErrInvalidEventDefinition, definition.Class, ClassFact, ClassCommand)
 	}
 
 	// SchemaVersion semver gate. Runs at construction time so unparseable

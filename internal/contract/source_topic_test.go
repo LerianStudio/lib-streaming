@@ -68,8 +68,8 @@ func TestValidateSource(t *testing.T) {
 }
 
 // TestAppTopic pins the v3 TOPIC COLLAPSE: one topic per producing
-// application. No resource type, no event type, no schema-version suffix —
-// ever.
+// application, plus the commands queue that carries its service-to-service
+// commands. No resource type, no event type, no schema-version suffix — ever.
 func TestAppTopic(t *testing.T) {
 	t.Parallel()
 
@@ -80,31 +80,55 @@ func TestAppTopic(t *testing.T) {
 	if got, want := AppDLQTopic("lender"), "lerian.streaming.lender.dlq"; got != want {
 		t.Errorf("AppDLQTopic(lender) = %q; want %q", got, want)
 	}
+
+	if got, want := AppCommandsTopic("lender"), "lerian.streaming.lender.commands"; got != want {
+		t.Errorf("AppCommandsTopic(lender) = %q; want %q", got, want)
+	}
 }
 
-// TestAppTopicDLQFitsKafkaLimit pins that the source-length bound is derived
-// from the DLQ topic (the longest derived name), not from the base topic.
+// TestAppCommandsTopicHasNoOwnDLQ pins the deliberate ABSENCE of a
+// ".commands.dlq" name. There are exactly THREE derived names per app, and a
+// fourth would hand every command-emitting app a write grant nothing needs:
+// a consumer quarantines into its OWN dlq, and a producer whose command
+// publish fails route-DLQs into its OWN dlq. Both already exist.
+func TestAppCommandsTopicHasNoOwnDLQ(t *testing.T) {
+	t.Parallel()
+
+	if got := AppDLQTopic("lender"); got == AppCommandsTopic("lender")+DLQTopicSuffix {
+		t.Fatalf("AppDLQTopic derived a commands DLQ (%q); the commands queue has no DLQ of its own", got)
+	}
+}
+
+// TestAppTopicCommandsFitsKafkaLimit pins that the source-length bound is
+// derived from the COMMANDS topic — the longest derived name now that
+// ".commands" (9 bytes) is longer than ".dlq" (4).
 //
 // The numbers are HARDCODED on purpose. Deriving them from
 // maxSourceSegmentBytes and MaxKafkaTopicNameBytes — the same constants the
 // production code computes with — made the assertion agree with itself: change
 // TopicPrefix to "lerian.stream." and both sides move together while every
-// deployed topic name silently changes. 228 = 249 - len("lerian.streaming.") -
-// len(".dlq"); 249 is Kafka's protocol limit.
-func TestAppTopicDLQFitsKafkaLimit(t *testing.T) {
+// deployed topic name silently changes. 223 = 249 - len("lerian.streaming.") -
+// len(".commands"); 249 is Kafka's protocol limit.
+func TestAppTopicCommandsFitsKafkaLimit(t *testing.T) {
 	t.Parallel()
 
-	if maxSourceSegmentBytes != 228 {
-		t.Fatalf("maxSourceSegmentBytes = %d; want 228 (249 - len(\"lerian.streaming.\") - len(\".dlq\"))", maxSourceSegmentBytes)
+	if maxSourceSegmentBytes != 223 {
+		t.Fatalf("maxSourceSegmentBytes = %d; want 223 (249 - len(\"lerian.streaming.\") - len(\".commands\"))", maxSourceSegmentBytes)
 	}
 
-	longest := strings.Repeat("a", 228)
-	if got := len(AppDLQTopic(longest)); got != 249 {
-		t.Fatalf("len(AppDLQTopic(228-byte source)) = %d; want Kafka's 249-byte limit exactly", got)
+	longest := strings.Repeat("a", 223)
+	if got := len(AppCommandsTopic(longest)); got != 249 {
+		t.Fatalf("len(AppCommandsTopic(223-byte source)) = %d; want Kafka's 249-byte limit exactly", got)
 	}
 
-	if got := len(AppDLQTopic(strings.Repeat("a", 229))); got <= 249 {
-		t.Fatalf("a 229-byte source produced a %d-byte DLQ topic; the bound is off by one", got)
+	if got := len(AppCommandsTopic(strings.Repeat("a", 224))); got <= 249 {
+		t.Fatalf("a 224-byte source produced a %d-byte commands topic; the bound is off by one", got)
+	}
+
+	// The bound is UNIFORM: every app can emit commands, so the shorter
+	// ".dlq" name simply has slack rather than a looser rule of its own.
+	if got := len(AppDLQTopic(longest)); got >= 249 {
+		t.Fatalf("len(AppDLQTopic(223-byte source)) = %d; want slack under the 249-byte limit", got)
 	}
 }
 

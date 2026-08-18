@@ -121,6 +121,23 @@ func (c Catalog) Require(key string) (EventDefinition, error) {
 	return definition, nil
 }
 
+// HasCommands reports whether the catalog holds at least one ClassCommand
+// definition — i.e. whether this application publishes to a commands topic
+// at all.
+//
+// The manifest reads it to decide whether to advertise a commandsTopic:
+// naming one on an app that emits no commands would send provisioning and
+// ACL tooling after a topic nothing writes.
+func (c Catalog) HasCommands() bool {
+	for _, definition := range c.definitions {
+		if definition.Class == ClassCommand {
+			return true
+		}
+	}
+
+	return false
+}
+
 // Definitions returns a copy of the catalog definitions in deterministic key
 // order.
 func (c Catalog) Definitions() []EventDefinition {

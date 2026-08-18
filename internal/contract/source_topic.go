@@ -16,14 +16,35 @@ const TopicPrefix = "lerian.streaming."
 // the DLQ of topic T is always T + ".dlq".
 const DLQTopicSuffix = ".dlq"
 
+// CommandsTopicSuffix is appended to an app topic to derive the queue that
+// carries that application's service-to-service COMMANDS.
+//
+// Commands are separated from facts because their unmatched semantics are
+// opposite. A fact stream is a firehose a consumer legitimately ignores most
+// of; a command stream is addressed TO the consumer, so a key it has no
+// handler for is undelivered work, not noise. Splitting the queue is what
+// lets the consumer apply strict semantics to one and lenient to the other
+// without a per-key registry.
+//
+// There is deliberately NO ".commands.dlq". A consumer quarantines into its
+// OWN ".dlq" and a producer route-DLQs a failed command publish into its OWN
+// ".dlq"; both already exist, and a fourth name would widen every
+// command-emitting app's write grant for nothing.
+const CommandsTopicSuffix = ".commands"
+
 // MaxKafkaTopicNameBytes is Kafka's protocol-level topic-name limit.
 const MaxKafkaTopicNameBytes = 249
 
 // maxSourceSegmentBytes is the largest ce-source that still yields a legal
-// DLQ topic name. The DLQ topic is the longest name derived from a source
-// (prefix + source + ".dlq"), so bounding against it bounds every derived
-// name at once.
-const maxSourceSegmentBytes = MaxKafkaTopicNameBytes - len(TopicPrefix) - len(DLQTopicSuffix)
+// commands topic name. The commands topic is the longest name derived from a
+// source (prefix + source + ".commands"), so bounding against it bounds every
+// derived name at once.
+//
+// The rule is UNIFORM across applications: every app CAN emit commands, so
+// the bound is the same whether or not this one's catalog holds any today. A
+// per-app bound would make adding the first command definition a
+// source-rename event.
+const maxSourceSegmentBytes = MaxKafkaTopicNameBytes - len(TopicPrefix) - len(CommandsTopicSuffix)
 
 // sourcePattern is the STRICT v3 ce-source shape: one dot-free lowercase
 // segment, starting with an alphanumeric, continuing with alphanumerics,
@@ -56,7 +77,7 @@ func ValidateSource(source string) error {
 
 	if len(source) > maxSourceSegmentBytes {
 		return fmt.Errorf("%w: source exceeds %d bytes (derived topic %q + %q must fit Kafka's %d-byte limit)",
-			ErrInvalidSource, maxSourceSegmentBytes, TopicPrefix, DLQTopicSuffix, MaxKafkaTopicNameBytes)
+			ErrInvalidSource, maxSourceSegmentBytes, TopicPrefix, CommandsTopicSuffix, MaxKafkaTopicNameBytes)
 	}
 
 	if !sourcePattern.MatchString(source) {
@@ -84,4 +105,18 @@ func AppTopic(source string) string {
 // AppDLQTopic derives the dead-letter topic for an application's stream.
 func AppDLQTopic(source string) string {
 	return AppTopic(source) + DLQTopicSuffix
+}
+
+// AppCommandsTopic derives the queue carrying an application's
+// service-to-service COMMANDS — the events another service must act on, as
+// opposed to the facts it may ignore.
+//
+// It is the second stream a producing application writes, and the one a rail
+// consumer subscribes to when it is being commanded. Its whole reason to
+// exist is the unmatched verdict: a command key with no registered handler
+// is quarantined, never skipped, so a producer shipping a new command ahead
+// of its consumer's handler fails loudly instead of losing work behind green
+// dashboards.
+func AppCommandsTopic(source string) string {
+	return AppTopic(source) + CommandsTopicSuffix
 }
