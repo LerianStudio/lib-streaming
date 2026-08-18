@@ -208,9 +208,7 @@ func NewConsumer() *ConsumerBuilder {
 	// Seed the same defaults LoadConsumerConfig applies so a minimal fluent build
 	// (Brokers/Group/Topics/Handler only) passes Validate and runs. Without these,
 	// the zero-value backoff/dwell/timeout fields would fail validation and the
-	// default-enabled builder would be unusable. The DLQ suffix default also
-	// prevents <topic><""> == the source topic (a terminal record would loop
-	// forever instead of quarantining).
+	// default-enabled builder would be unusable.
 	b := &ConsumerBuilder{cfg: consumer.DefaultBuilderConfig()}
 
 	return b
