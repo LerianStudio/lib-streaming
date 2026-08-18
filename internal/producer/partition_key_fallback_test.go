@@ -108,11 +108,11 @@ func TestDeriveOutboxAggregateID_FallsBackWhenOverrideReturnsEmpty(t *testing.T)
 
 	p := &Producer{partFn: func(Event) string { return "" }}
 
-	if got, want := p.deriveOutboxAggregateID(first), defaultAggregateID(first); got != want {
+	if got, want := mustAggregateID(p, first), defaultAggregateID(first); got != want {
 		t.Errorf("deriveOutboxAggregateID(first) = %s; want the un-overridden %s", got, want)
 	}
 
-	if p.deriveOutboxAggregateID(first) == p.deriveOutboxAggregateID(second) {
+	if mustAggregateID(p, first) == mustAggregateID(p, second) {
 		t.Error("two tenants collapsed onto one aggregate id; the empty override was not guarded")
 	}
 }

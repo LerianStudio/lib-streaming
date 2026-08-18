@@ -165,7 +165,7 @@ func TestProducer_DeriveOutboxAggregateIDHonorsCustomPartitionAndSystemEvents(t 
 	p := &Producer{partFn: func(Event) string { return "custom-partition" }}
 	event := Event{TenantID: "tenant-1", Subject: "subject-1"}
 
-	got := p.deriveOutboxAggregateID(event)
+	got := mustAggregateID(p, event)
 
 	want := uuid.NewSHA1(uuid.NameSpaceDNS, []byte("custom-partition"))
 	if got != want {
@@ -176,12 +176,12 @@ func TestProducer_DeriveOutboxAggregateIDHonorsCustomPartitionAndSystemEvents(t 
 		t.Fatal("custom partition function was ignored — aggregate id matched the default derivation")
 	}
 
-	if got != p.deriveOutboxAggregateID(event) {
+	if got != mustAggregateID(p, event) {
 		t.Fatal("custom partition aggregate ID is not deterministic")
 	}
 
 	system := Event{SystemEvent: true}
-	if p.deriveOutboxAggregateID(system) == p.deriveOutboxAggregateID(system) {
+	if mustAggregateID(p, system) == mustAggregateID(p, system) {
 		t.Fatal("system event aggregate IDs must be random")
 	}
 }

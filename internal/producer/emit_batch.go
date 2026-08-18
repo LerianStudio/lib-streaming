@@ -131,7 +131,11 @@ func (p *Producer) buildBatchRequestEnvelopes(
 			)
 		}
 
-		envelope := p.newOutboxEnvelope(ctx, resolved.Event, resolved.DefinitionKey, route, routePolicy)
+		envelope, err := p.newOutboxEnvelope(ctx, resolved.Event, resolved.DefinitionKey, route, routePolicy)
+		if err != nil {
+			return nil, fmt.Errorf("streaming: build outbox batch request %d route %d: %w", requestIndex, routeIndex, err)
+		}
+
 		if err := envelope.ValidateShape(); err != nil {
 			return nil, fmt.Errorf("streaming: validate outbox batch request %d route %d: %w", requestIndex, routeIndex, err)
 		}

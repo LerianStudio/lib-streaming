@@ -243,7 +243,8 @@ func TestProperty_Topic_Deterministic(t *testing.T) {
 //
 // The non-system branch uses uuid.NewSHA1 which is a pure hash — same
 // input = same output. The system branch mints a fresh unique ID
-// (UUIDv7, falling back to a random v4). This property pins that split.
+// (UUIDv7, falling back to a random v4 via uuid.NewRandom). This
+// property pins that split.
 func TestProperty_DeriveAggregateID_Deterministic(t *testing.T) {
 	t.Parallel()
 

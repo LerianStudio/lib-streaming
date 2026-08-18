@@ -67,7 +67,10 @@ func (p *Producer) publishRouteOutbox(
 		return ErrOutboxNotConfigured
 	}
 
-	envelope := p.newOutboxEnvelope(ctx, event, definitionKey, route, policy)
+	envelope, err := p.newOutboxEnvelope(ctx, event, definitionKey, route, policy)
+	if err != nil {
+		return err
+	}
 
 	// ValidateShape skips Destination.Validate (which performs DNS lookups
 	// and SSRF guards) on the synchronous persist path. The full Validate
@@ -121,7 +124,12 @@ func (p *Producer) newOutboxEnvelope(
 	definitionKey string,
 	route contract.RouteDefinition,
 	policy contract.DeliveryPolicy,
-) contract.OutboxEnvelope {
+) (contract.OutboxEnvelope, error) {
+	aggregateID, err := p.deriveOutboxAggregateID(event)
+	if err != nil {
+		return contract.OutboxEnvelope{}, err
+	}
+
 	return contract.OutboxEnvelope{
 		Version:       contract.OutboxEnvelopeVersion,
 		RouteKey:      route.Key,
@@ -129,12 +137,12 @@ func (p *Producer) newOutboxEnvelope(
 		Target:        route.Target,
 		Transport:     route.Destination.Kind,
 		Destination:   route.Destination,
-		AggregateID:   p.deriveOutboxAggregateID(event),
+		AggregateID:   aggregateID,
 		Requirement:   route.Requirement,
 		Policy:        policy,
 		TraceCarrier:  captureTraceCarrier(ctx),
 		Event:         event,
-	}
+	}, nil
 }
 
 func captureTraceCarrier(ctx context.Context) contract.TraceCarrier {
@@ -174,22 +182,28 @@ func captureTraceCarrier(ctx context.Context) contract.TraceCarrier {
 // key" ("system:<eventtype>") would otherwise collapse every system event
 // into the same aggregate. UUIDv7 is preferred (the AggregateID persists on
 // an outbox row, and time-ordered IDs keep B-tree locality); a generator
-// error falls back to a random v4 so an emit never fails on ID minting.
+// error falls back to a random v4 via uuid.NewRandom, and a failure of both
+// generators surfaces as an error instead of a panic.
 //
 // It resolves the partition key exactly the way Emit dispatch does: the
 // WithPartitionKey override when one is wired and it yields a non-empty key,
 // otherwise Event.PartitionKey(). An empty override key is rejected there
 // because it would collapse every row of every tenant onto one aggregate id.
-func (p *Producer) deriveOutboxAggregateID(event Event) uuid.UUID {
+func (p *Producer) deriveOutboxAggregateID(event Event) (uuid.UUID, error) {
 	if event.SystemEvent {
 		if id, err := commons.GenerateUUIDv7(); err == nil {
-			return id
+			return id, nil
 		}
 
-		return uuid.New()
+		id, err := uuid.NewRandom()
+		if err != nil {
+			return uuid.UUID{}, fmt.Errorf("streaming: mint outbox aggregate id: %w", err)
+		}
+
+		return id, nil
 	}
 
-	return uuid.NewSHA1(uuid.NameSpaceDNS, []byte(p.resolvePartitionKey(event)))
+	return uuid.NewSHA1(uuid.NameSpaceDNS, []byte(p.resolvePartitionKey(event))), nil
 }
 
 // outboxRowFromEnvelope serializes an OutboxEnvelope into the lib-commons
@@ -213,7 +227,10 @@ func outboxRowFromEnvelope(envelope contract.OutboxEnvelope) (*outbox.OutboxEven
 
 	rowID, err := commons.GenerateUUIDv7()
 	if err != nil {
-		rowID = uuid.New()
+		rowID, err = uuid.NewRandom()
+		if err != nil {
+			return nil, fmt.Errorf("streaming: mint outbox row id: %w", err)
+		}
 	}
 
 	return &outbox.OutboxEvent{
