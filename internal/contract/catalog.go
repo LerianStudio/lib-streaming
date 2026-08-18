@@ -8,6 +8,24 @@ import (
 
 // Catalog is an immutable, deterministically ordered registry of event
 // definitions.
+//
+// # Two schema majors may share one event key — deliberately
+//
+// A catalog MAY hold two definitions with the same (ResourceType, EventType)
+// and different SchemaVersion majors. Their keys differ (Key is unique), but
+// their EventKey — "<resourceType>.<eventType>" — is identical, because the
+// schema version left the topic AND left the dispatch selector in v3;
+// ce-schemaversion is its only carrier.
+//
+// This is DESIGNED, not an oversight. It is how a producer emits v1 and v2 of
+// the same fact during a migration window without minting a second event name
+// that consumers would have to learn and later unlearn.
+//
+// The consequence lands on the consumer, and it is not optional: ONE On(...)
+// handler receives BOTH majors. A handler registered for an event key whose
+// producer has multiple majors in flight MUST branch on Event.SchemaVersion
+// before touching the payload — the two decode differently, and a v2 payload
+// parsed as v1 is silent data corruption, not a decode error.
 type Catalog struct {
 	definitions []EventDefinition
 	byKey       map[string]EventDefinition
@@ -41,7 +59,10 @@ func NewCatalog(definitions ...EventDefinition) (Catalog, error) {
 			return Catalog{}, fmt.Errorf("%w: key %q", ErrDuplicateEventDefinition, definition.Key)
 		}
 
-		contractKey := definition.ResourceType + "." + definition.EventType + "." + definition.SchemaVersion
+		// EventKey owns the "<resourceType>.<eventType>" composition; the schema
+		// version is appended because two majors of one event key are legal and
+		// must not collide as duplicate contracts.
+		contractKey := EventKey(definition.ResourceType, definition.EventType) + "." + definition.SchemaVersion
 		if existingKey, exists := byContract[contractKey]; exists {
 			a := newContractAsserter("catalog.new")
 			_ = a.That(context.Background(), false, "catalog must not contain duplicate (ResourceType, EventType, SchemaVersion) tuples",
@@ -98,6 +119,23 @@ func (c Catalog) Require(key string) (EventDefinition, error) {
 	}
 
 	return definition, nil
+}
+
+// HasCommands reports whether the catalog holds at least one ClassCommand
+// definition — i.e. whether this application publishes to a commands topic
+// at all.
+//
+// The manifest reads it to decide whether to advertise a commandsTopic:
+// naming one on an app that emits no commands would send provisioning and
+// ACL tooling after a topic nothing writes.
+func (c Catalog) HasCommands() bool {
+	for _, definition := range c.definitions {
+		if definition.Class == ClassCommand {
+			return true
+		}
+	}
+
+	return false
 }
 
 // Definitions returns a copy of the catalog definitions in deterministic key

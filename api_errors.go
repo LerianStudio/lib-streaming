@@ -1,8 +1,9 @@
 package streaming
 
 import (
-	"github.com/LerianStudio/lib-streaming/v2/internal/cloudevents"
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/cloudevents"
+	"github.com/LerianStudio/lib-streaming/v3/internal/consumer"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
 )
 
 type (
@@ -48,16 +49,15 @@ var (
 	ErrInvalidDestination                 = contract.ErrInvalidDestination
 	ErrDuplicateRouteDefinition           = contract.ErrDuplicateRouteDefinition
 	ErrNoRoutesConfigured                 = contract.ErrNoRoutesConfigured
+	ErrNoRequiredRoute                    = contract.ErrNoRequiredRoute
 	ErrMissingTarget                      = contract.ErrMissingTarget
 	ErrMultiTransportRuntimeNotConfigured = contract.ErrMultiTransportRuntimeNotConfigured
 	ErrEmitterClosed                      = contract.ErrEmitterClosed
 	ErrEventDisabled                      = contract.ErrEventDisabled
 	ErrPayloadTooLarge                    = contract.ErrPayloadTooLarge
 	ErrNotJSON                            = contract.ErrNotJSON
-	ErrMissingBrokers                     = contract.ErrMissingBrokers
 	ErrInvalidCompression                 = contract.ErrInvalidCompression
 	ErrInvalidAcks                        = contract.ErrInvalidAcks
-	ErrInvalidConfigField                 = contract.ErrInvalidConfigField
 	ErrInvalidTLSConfig                   = contract.ErrInvalidTLSConfig
 	ErrPlaintextSASLNotAllowed            = contract.ErrPlaintextSASLNotAllowed
 	ErrInvalidSASLMechanism               = contract.ErrInvalidSASLMechanism
@@ -69,6 +69,77 @@ var (
 	ErrNilOutboxRegistry                  = contract.ErrNilOutboxRegistry
 	ErrMissingRequiredHeader              = cloudevents.ErrMissingRequiredHeader
 	ErrUnsupportedSpecVersion             = cloudevents.ErrUnsupportedSpecVersion
+)
+
+// Producer and consumer config sentinels, disambiguated by side.
+//
+// The producer and the consumer each define their OWN "missing brokers" and
+// "invalid config field" values — different error variables that happen to
+// describe the same class of mistake. A single bare streaming.ErrMissingBrokers
+// therefore could not be right for both, and the one the root used to export
+// (the producer's) silently returned false for every errors.Is against a
+// consumer Build failure. Both sides are now named for the side they belong to,
+// so there is no bare name left to guess wrong about.
+var (
+	// ErrProducerMissingBrokers is returned by producer config validation
+	// (LoadConfig, Builder.Build) when the broker list is empty.
+	ErrProducerMissingBrokers = contract.ErrMissingBrokers
+	// ErrProducerInvalidConfigField is returned by producer config validation
+	// for an out-of-range numeric or duration field.
+	ErrProducerInvalidConfigField = contract.ErrInvalidConfigField
+
+	// ErrConsumerMissingBrokers is returned by ConsumerBuilder.Build when the
+	// consumer is enabled with an empty broker list.
+	ErrConsumerMissingBrokers = consumer.ErrMissingBrokers
+	// ErrConsumerMissingGroup is returned by ConsumerBuilder.Build when the
+	// consumer group id is empty.
+	ErrConsumerMissingGroup = consumer.ErrMissingGroup
+	// ErrConsumerMissingTopics is returned by ConsumerBuilder.Build when
+	// neither Apps(...) nor Topics(...) resolves to a subscription.
+	ErrConsumerMissingTopics = consumer.ErrMissingTopics
+	// ErrConsumerMissingSource is returned by ConsumerBuilder.Build when an
+	// enabled consumer has no ce-source identity of its own. It names the
+	// consumer's own DLQ topic, so every enabled consumer needs one.
+	ErrConsumerMissingSource = consumer.ErrMissingConsumerSource
+	// ErrConsumerInvalidConfigField is returned by ConsumerBuilder.Build for an
+	// out-of-range numeric/duration field or a malformed entry in Apps.
+	ErrConsumerInvalidConfigField = consumer.ErrInvalidConfigField
+	// ErrNilHandler is returned by ConsumerBuilder.Build when neither
+	// Handler(...) nor any On(...) handler was wired.
+	ErrNilHandler = consumer.ErrNilHandler
+	// ErrHandlerAndDispatchBothSet is returned by ConsumerBuilder.Build when a
+	// consumer wires both Handler (whole-stream) and On (per-event dispatch).
+	ErrHandlerAndDispatchBothSet = consumer.ErrHandlerAndDispatchBothSet
+	// ErrBareOnWithMultipleApps is returned by ConsumerBuilder.Build when a
+	// consumer subscribed to several producing applications registers a handler
+	// with a bare On(eventKey, ...) instead of OnFrom(app, eventKey, ...).
+	ErrBareOnWithMultipleApps = consumer.ErrBareOnWithMultipleApps
+	// ErrUnknownDispatchApp is returned by ConsumerBuilder.Build when
+	// OnFrom(...) names an application the consumer does not subscribe to.
+	ErrUnknownDispatchApp = consumer.ErrUnknownDispatchApp
+	// ErrHandlerAndUnmatchedPolicyBothSet is returned by ConsumerBuilder.Build
+	// when a whole-stream Handler is combined with UnmatchedPolicy, which only
+	// the dispatcher enforces.
+	ErrHandlerAndUnmatchedPolicyBothSet = consumer.ErrHandlerAndUnmatchedPolicyBothSet
+	// ErrAmbiguousSourceVerification is returned by ConsumerBuilder.Build when
+	// Apps(...) and Topics(...) are both set without an explicit
+	// ExpectSources(...).
+	ErrAmbiguousSourceVerification = consumer.ErrAmbiguousSourceVerification
+	// ErrExpectSourcesMissingApp is returned by ConsumerBuilder.Build when an
+	// explicit ExpectSources(...) list omits an app named in Apps(...).
+	ErrExpectSourcesMissingApp = consumer.ErrExpectSourcesMissingApp
+	// ErrHandlerAndCommandsBothSet is returned by ConsumerBuilder.Build when a
+	// whole-stream Handler is combined with Commands: that mode has no handler
+	// registry, so the strict unmatched-command quarantine cannot be honoured.
+	ErrHandlerAndCommandsBothSet = consumer.ErrHandlerAndCommandsBothSet
+	// ErrInvalidExpectSource is returned by ConsumerBuilder.Build when an
+	// ExpectSources(...) entry is not a legal ce-source.
+	ErrInvalidExpectSource = consumer.ErrInvalidExpectSource
+	// ErrConsumerPartitionHalted is returned by Consumer.Healthy when a
+	// partition has been halted across consecutive poll cycles — a wedge, not a
+	// blip. Wire it into readiness so a consumer that polls cleanly while
+	// processing nothing leaves the load balancer.
+	ErrConsumerPartitionHalted = consumer.ErrPartitionHalted
 )
 
 // IsCallerError reports whether err is caller-correctable rather than infrastructure-caused.

@@ -191,7 +191,7 @@ func TestIntegration_MongoOutboxReplay(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
-	topic := sourceTopicPrefix(integrationSource) + "payment.authorized"
+	topic := sourceTopic(integrationSource)
 	ensureTopics(t, brokers[0], 1, topic, dlqTopic(topic))
 	consumer := newConsumerClient(t, brokers, topic)
 
@@ -287,7 +287,7 @@ func TestIntegration_MongoOutboxTransactionAtomicity(t *testing.T) {
 	defer cancel()
 
 	const brokerUnused = "127.0.0.1:1"
-	topic := sourceTopicPrefix(integrationSource) + "payment.authorized"
+	topic := sourceTopic(integrationSource)
 	p, err := NewProducer(ctx, mongoIntegrationConfig([]string{brokerUnused}),
 		WithLogger(log.NewNop()),
 		WithCatalog(sampleCatalog(t)),

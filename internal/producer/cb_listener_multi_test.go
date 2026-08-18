@@ -9,8 +9,8 @@ import (
 	"github.com/LerianStudio/lib-commons/v6/commons/circuitbreaker"
 	"github.com/LerianStudio/lib-observability/v2/log"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport/fake"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport/fake"
 )
 
 // TestCBListener_PerTargetTransitionsAreIsolated exercises the multi-target
@@ -34,7 +34,7 @@ func TestCBListener_PerTargetTransitionsAreIsolated(t *testing.T) {
 
 	p, err := NewProducerMulti(
 		ctx,
-		MultiProducerConfig{Source: "svc://multi-cb-listener-test"},
+		MultiProducerConfig{Source: "svc-multi-cb-listener-test"},
 		nil,
 		[]TargetSpec{
 			{Name: "primary", Kind: TransportKafkaLike, Adapter: primary},
@@ -116,7 +116,7 @@ func TestCBListener_TwoTargetsIndependentTransitions(t *testing.T) {
 
 	p, err := NewProducerMulti(
 		ctx,
-		MultiProducerConfig{Source: "svc://multi-cb-independent-test"},
+		MultiProducerConfig{Source: "svc-multi-cb-independent-test"},
 		nil,
 		[]TargetSpec{
 			{Name: "primary", Kind: TransportKafkaLike, Adapter: primary},
@@ -224,7 +224,7 @@ func TestCBListener_ForeignServiceNameIgnored(t *testing.T) {
 
 	p, err := NewProducerMulti(
 		ctx,
-		MultiProducerConfig{Source: "svc://multi-cb-foreign-test"},
+		MultiProducerConfig{Source: "svc-multi-cb-foreign-test"},
 		nil,
 		[]TargetSpec{
 			{Name: "primary", Kind: TransportKafkaLike, Adapter: primary},

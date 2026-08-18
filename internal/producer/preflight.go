@@ -6,11 +6,8 @@ import (
 	"mime"
 	"strings"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
 )
-
-// maxKafkaTopicNameBytes is Kafka's protocol-level topic-name limit.
-const maxKafkaTopicNameBytes = 249
 
 // preFlightWithPayload runs all caller-side validation on an Event before
 // it reaches the transport. Defaults must already be applied by the
@@ -52,10 +49,11 @@ func (p *Producer) preFlightWithPayload(ctx context.Context, event Event, valida
 		return ErrSystemEventsNotAllowed
 	}
 
-	// Topic-forming fields MUST be populated. An empty ResourceType or
-	// EventType would produce a degenerate Kafka topic ("lerian.streaming..")
-	// and a malformed ce-type header ("studio.lerian.."). No downstream
-	// consumer routes those, so the event would be silently lost at the
+	// ResourceType and EventType MUST be populated. They no longer form the
+	// topic (one topic per app), but they ARE the ce-type suffix and the
+	// ce-resourcetype / ce-eventtype headers a consumer dispatches on. An
+	// empty one yields a malformed ce-type ("studio.lerian.<src>..") and an
+	// event no consumer's dispatch table can match — silently lost at the
 	// worst possible layer.
 	if event.ResourceType == "" {
 		return ErrMissingResourceType
@@ -73,20 +71,18 @@ func (p *Producer) preFlightWithPayload(ctx context.Context, event Event, valida
 	// before emitting — a streaming-level tenant guard would be redundant and
 	// would only block legitimate single-tenant emits.
 
-	// ce-source is a required CloudEvents attribute. Empty source is a
-	// caller config bug (usually: forgot to set Config.CloudEventsSource).
-	if event.Source == "" {
-		return ErrMissingSource
-	}
-
-	// Source must survive topic-segment sanitization. A non-empty Source made
-	// up entirely of separators/invalid runes (e.g. "---" or "://") folds to
-	// "" (see contract.SanitizeSourceSegment), which would let Event.Topic()
-	// build a leading-dot ".<resource>.<event>" topic that Kafka rejects at
-	// publish time. Reject it here so the caller config bug surfaces as a
-	// synchronous, caller-correctable error rather than a broker-side failure.
-	if contract.SanitizeSourceSegment(event.Source) == "" {
-		return ErrInvalidSource
+	// ce-source is a required CloudEvents attribute AND the sole input to
+	// this application's topic, so it is validated strictly: a single
+	// dot-free lowercase segment, short enough that the derived topic and
+	// its ".dlq" fit Kafka's 249-byte name limit.
+	//
+	// v3 REJECTS a malformed source rather than rewriting it (v2 folded it
+	// through a lossy sanitizer, which could silently merge two services
+	// onto one topic namespace and ACL scope). ErrMissingSource for empty,
+	// ErrInvalidSource for malformed — both caller-correctable, both
+	// synchronous, so the config bug never reaches a broker.
+	if err := contract.ValidateSource(event.Source); err != nil {
+		return err
 	}
 
 	// Header sanitization. Every field that travels as a CloudEvents
@@ -98,13 +94,13 @@ func (p *Producer) preFlightWithPayload(ctx context.Context, event Event, valida
 		return err
 	}
 
-	// Individual topic components can each satisfy their own header limits
-	// while the final source.resource.event[.vN] name exceeds Kafka's
-	// protocol limit. Reject the complete derived name synchronously rather
-	// than surfacing a broker-side unknown-topic failure.
-	if len(event.Topic()) > maxKafkaTopicNameBytes {
-		return ErrInvalidDestination
-	}
+	// No separate derived-topic length check: the topic is
+	// "lerian.streaming." + Source and nothing else, and ValidateSource
+	// above already bounds Source so that the topic AND its ".dlq" fit
+	// Kafka's limit. In v2 the name also absorbed the resource type, event
+	// type, and a version suffix, so the components could each pass their
+	// own header caps while the concatenation overflowed — that whole
+	// failure mode is gone with the topic collapse.
 
 	// Pre-flight size cap. 1 MiB is the Redpanda default; we check BEFORE
 	// JSON validity so the dominant caller mistake (huge payload) short-
@@ -147,6 +143,10 @@ func (p *Producer) preFlightWithPayload(ctx context.Context, event Event, valida
 // the first offending sentinel. Empty values are NOT checked here —
 // required-vs-optional semantics live in preFlight (tenant, source).
 //
+// Source is absent from the table: ValidateSource already ran in preFlight and
+// bounds it at 223 bytes with a charset that admits no control character, so a
+// 2048-byte cap here could never fire. A dead check reads as protection.
+//
 // Uses the canonical contract.HeaderFieldCheck shape (re-exported via
 // aliases.go as headerFieldCheck) so the producer-side check table cannot
 // drift from the contract-side equivalent.
@@ -155,7 +155,6 @@ func (*Producer) validateHeaderSafeFields(event Event) error {
 		{Value: event.TenantID, MaxBytes: maxTenantIDBytes, Sentinel: ErrInvalidTenantID},
 		{Value: event.ResourceType, MaxBytes: maxResourceTypeBytes, Sentinel: ErrInvalidResourceType},
 		{Value: event.EventType, MaxBytes: maxEventTypeBytes, Sentinel: ErrInvalidEventType},
-		{Value: event.Source, MaxBytes: maxSourceBytes, Sentinel: ErrInvalidSource},
 		{Value: event.Subject, MaxBytes: maxSubjectBytes, Sentinel: ErrInvalidSubject},
 		{Value: event.EventID, MaxBytes: maxEventIDBytes, Sentinel: ErrInvalidEventID},
 		{Value: event.SchemaVersion, MaxBytes: maxSchemaVersionBytes, Sentinel: ErrInvalidSchemaVersion},

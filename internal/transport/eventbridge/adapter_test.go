@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
 )
 
 type fakeClient struct {
@@ -53,8 +53,8 @@ func sampleMessage() transport.TransportMessage {
 		Payload:     []byte(`{"hello":"eb"}`),
 		Headers: []transport.Header{
 			{Key: "ce-id", Value: []byte("evt-1")},
-			{Key: "ce-source", Value: []byte("svc://test")},
-			{Key: "ce-type", Value: []byte("transaction.created")},
+			{Key: "ce-source", Value: []byte("svc-test")},
+			{Key: "ce-type", Value: []byte("studio.lerian.svc-test.transaction.created")},
 			{Key: "ce-time", Value: []byte("2026-05-04T12:00:00Z")},
 			{Key: "ce-specversion", Value: []byte("1.0")},
 			{Key: "ce-datacontenttype", Value: []byte("application/json")},
@@ -114,11 +114,11 @@ func TestEventBridge_Publish_RendersCanonicalDetail(t *testing.T) {
 	if e.EventBusName != "default-bus" {
 		t.Errorf("EventBusName = %q; want default-bus", e.EventBusName)
 	}
-	if e.Source != "svc://test" {
-		t.Errorf("Source = %q; want svc://test", e.Source)
+	if e.Source != "svc-test" {
+		t.Errorf("Source = %q; want svc-test", e.Source)
 	}
-	if e.DetailType != "transaction.created" {
-		t.Errorf("DetailType = %q; want transaction.created", e.DetailType)
+	if e.DetailType != "studio.lerian.svc-test.transaction.created" {
+		t.Errorf("DetailType = %q; want studio.lerian.svc-test.transaction.created", e.DetailType)
 	}
 	if got, want := e.Resources, []string{"arn:aws:events:us-east-1:123:rule/r1"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("Resources = %v; want %v", got, want)
@@ -132,8 +132,8 @@ func TestEventBridge_Publish_RendersCanonicalDetail(t *testing.T) {
 	want := map[string]string{
 		"specversion":     `"1.0"`,
 		"id":              `"evt-1"`,
-		"source":          `"svc://test"`,
-		"type":            `"transaction.created"`,
+		"source":          `"svc-test"`,
+		"type":            `"studio.lerian.svc-test.transaction.created"`,
 		"time":            `"2026-05-04T12:00:00Z"`,
 		"datacontenttype": `"application/json"`,
 		"tenantid":        `"t-1"`,
@@ -203,7 +203,7 @@ func TestEventBridgeEntryWireSize_MatchesJSONEncoding(t *testing.T) {
 
 	entry := Entry{
 		EventBusName: "default-bus",
-		Source:       "svc://test",
+		Source:       "svc-test",
 		DetailType:   "transaction.created",
 		Detail:       []byte(`{"quoted":"value","html":"<&>","list":["a","b"]}`),
 		Resources:    []string{"arn:aws:events:us-east-1:123:rule/r1", "arn:aws:events:us-east-1:123:rule/r2"},

@@ -7,8 +7,8 @@ import (
 	"errors"
 	"testing"
 
-	streaming "github.com/LerianStudio/lib-streaming/v2"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport/fake"
+	streaming "github.com/LerianStudio/lib-streaming/v3"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport/fake"
 )
 
 // TestBuilder_MultiTargetBuildWithFakeTransports drives the multi-target
@@ -46,7 +46,7 @@ func TestBuilder_MultiTargetBuildWithFakeTransports(t *testing.T) {
 	}
 
 	emitter, err := streaming.NewBuilder().
-		Source("svc://multi-builder-test").
+		Source("svc-multi-builder-test").
 		Catalog(catalog).
 		Routes(primaryRoute, secondaryRoute).
 		Target(streaming.TargetConfig{Name: "primary", Kind: streaming.TransportKafkaLike, Brokers: []string{"127.0.0.1:9092"}}).
@@ -118,7 +118,7 @@ func TestBuilder_MultiTargetSurfacesRequiredFailure(t *testing.T) {
 	}
 
 	emitter, err := streaming.NewBuilder().
-		Source("svc://multi-required-fail").
+		Source("svc-multi-required-fail").
 		Catalog(catalog).
 		Routes(primaryRoute, secondaryRoute).
 		Target(streaming.TargetConfig{Name: "primary", Kind: streaming.TransportKafkaLike, Brokers: []string{"127.0.0.1:9092"}}).

@@ -37,8 +37,8 @@ import (
 	"github.com/LerianStudio/lib-commons/v6/commons/circuitbreaker"
 	"github.com/LerianStudio/lib-observability/v2/log"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport/fake"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport/fake"
 )
 
 // recoveryTestPokeDeadline is the upper-bound wall clock all timing tests
@@ -558,7 +558,7 @@ func TestStartCBRecoveryLoop_StopsAfterCloseContext(t *testing.T) {
 
 	p, err := NewProducerMulti(
 		context.Background(),
-		MultiProducerConfig{Source: "svc://recovery-close-test", CBTimeout: 2 * time.Second},
+		MultiProducerConfig{Source: "svc-recovery-close-test", CBTimeout: 2 * time.Second},
 		nil,
 		[]TargetSpec{{Name: "primary", Kind: TransportKafkaLike, Adapter: fake.NewAdapter(TransportKafkaLike)}},
 		routes,

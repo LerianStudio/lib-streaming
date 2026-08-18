@@ -10,9 +10,9 @@ import (
 	"github.com/LerianStudio/lib-commons/v6/commons/outbox"
 	"github.com/LerianStudio/lib-observability/v2/log"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport/fake"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport/fake"
 )
 
 func TestNewProducerMulti_AllRequiredSucceedReturnsNil(t *testing.T) {
@@ -30,7 +30,7 @@ func TestNewProducerMulti_AllRequiredSucceedReturnsNil(t *testing.T) {
 
 	p, err := NewProducerMulti(
 		ctx,
-		MultiProducerConfig{Source: "svc://multi-test"},
+		MultiProducerConfig{Source: "svc-multi-test"},
 		nil,
 		[]TargetSpec{
 			{Name: "primary", Kind: TransportKafkaLike, Adapter: primary},
@@ -78,7 +78,7 @@ func TestNewProducerMulti_RouteDestinationAttributesReachAdapter(t *testing.T) {
 
 	p, err := NewProducerMulti(
 		ctx,
-		MultiProducerConfig{Source: "svc://multi-test"},
+		MultiProducerConfig{Source: "svc-multi-test"},
 		nil,
 		[]TargetSpec{{Name: "primary", Kind: TransportKafkaLike, Adapter: primary}},
 		routes,
@@ -119,7 +119,7 @@ func TestNewProducerMulti_AdapterMutationDoesNotLeakAcrossRoutes(t *testing.T) {
 
 	p, err := NewProducerMulti(
 		ctx,
-		MultiProducerConfig{Source: "svc://multi-test"},
+		MultiProducerConfig{Source: "svc-multi-test"},
 		nil,
 		[]TargetSpec{
 			{Name: "primary", Kind: TransportKafkaLike, Adapter: primary},
@@ -166,7 +166,7 @@ func TestNewProducerMulti_OneRequiredFailsAggregatesMultiEmitError(t *testing.T)
 
 	p, err := NewProducerMulti(
 		ctx,
-		MultiProducerConfig{Source: "svc://multi-test"},
+		MultiProducerConfig{Source: "svc-multi-test"},
 		nil,
 		[]TargetSpec{
 			{Name: "primary", Kind: TransportKafkaLike, Adapter: primary},
@@ -223,7 +223,7 @@ func TestNewProducerMulti_OptionalFailureDoesNotPropagate(t *testing.T) {
 
 	p, err := NewProducerMulti(
 		ctx,
-		MultiProducerConfig{Source: "svc://multi-test"},
+		MultiProducerConfig{Source: "svc-multi-test"},
 		nil,
 		[]TargetSpec{
 			{Name: "primary", Kind: TransportKafkaLike, Adapter: primary},
@@ -266,7 +266,7 @@ func TestNewProducerMulti_PerTargetCircuitBreakerIsolation(t *testing.T) {
 
 	p, err := NewProducerMulti(
 		ctx,
-		MultiProducerConfig{Source: "svc://multi-test"},
+		MultiProducerConfig{Source: "svc-multi-test"},
 		nil,
 		[]TargetSpec{
 			{Name: "primary", Kind: TransportKafkaLike, Adapter: primary},
@@ -331,7 +331,7 @@ func TestNewProducerMulti_OutboxFallbackOnCircuitOpenWritesV2Envelope(t *testing
 
 	p, err := NewProducerMulti(
 		ctx,
-		MultiProducerConfig{Source: "svc://multi-test"},
+		MultiProducerConfig{Source: "svc-multi-test"},
 		nil,
 		[]TargetSpec{
 			{Name: "primary", Kind: TransportKafkaLike, Adapter: primary},
@@ -410,7 +410,7 @@ func TestNewProducerMulti_RejectsRouteForUnregisteredTarget(t *testing.T) {
 
 	_, err := NewProducerMulti(
 		context.Background(),
-		MultiProducerConfig{Source: "svc://multi-test"},
+		MultiProducerConfig{Source: "svc-multi-test"},
 		nil,
 		[]TargetSpec{{Name: "primary", Kind: TransportKafkaLike, Adapter: primary}},
 		routes,
@@ -457,7 +457,7 @@ func TestNewProducerMulti_PostCloseEmitReturnsErrEmitterClosed(t *testing.T) {
 
 	p, err := NewProducerMulti(
 		ctx,
-		MultiProducerConfig{Source: "svc://multi-test"},
+		MultiProducerConfig{Source: "svc-multi-test"},
 		nil,
 		[]TargetSpec{
 			{Name: "primary", Kind: TransportKafkaLike, Adapter: primary},
@@ -506,7 +506,7 @@ func TestNewProducerMulti_RejectsCatalogDefinitionWithNoRoute(t *testing.T) {
 
 	_, err = NewProducerMulti(
 		context.Background(),
-		MultiProducerConfig{Source: "svc://multi-test"},
+		MultiProducerConfig{Source: "svc-multi-test"},
 		nil,
 		[]TargetSpec{{Name: "primary", Kind: TransportKafkaLike, Adapter: primary}},
 		routes,
@@ -516,6 +516,44 @@ func TestNewProducerMulti_RejectsCatalogDefinitionWithNoRoute(t *testing.T) {
 	)
 	if !errors.Is(err, contract.ErrNoRoutesConfigured) {
 		t.Fatalf("NewProducerMulti() error = %v; want errors.Is(ErrNoRoutesConfigured)", err)
+	}
+}
+
+// TestNewProducerMulti_RejectsAllOptionalDefinition pins the "required" half of
+// the durability gate: a definition that resolves to routes, none of them
+// Required, must fail construction.
+//
+// "At least one route" is not the invariant — "at least one route whose failure
+// the caller hears about" is. A definition served only by best-effort routes
+// loses every copy during a total outage of those destinations while Emit
+// returns nil, so the loss is durable, silent, and unattributable.
+//
+// It is reachable without anyone writing an all-optional table by hand: a
+// definition-scoped OPTIONAL route claiming the same Target as a Required
+// catch-all SUPPRESSES that catch-all for the definition (additive-per-target
+// resolution), leaving the definition all-optional.
+func TestNewProducerMulti_RejectsAllOptionalDefinition(t *testing.T) {
+	t.Parallel()
+
+	primary := fake.NewAdapter(TransportKafkaLike)
+	catalog := sampleCatalog(t)
+	routes := mustMultiRouteTable(t,
+		multiTestRoute("transaction.created.kafka.primary", "transaction.created", "primary",
+			"lerian.streaming.transaction.created", contract.RouteOptional),
+	)
+
+	_, err := NewProducerMulti(
+		context.Background(),
+		MultiProducerConfig{Source: "svc-multi-test"},
+		nil,
+		[]TargetSpec{{Name: "primary", Kind: TransportKafkaLike, Adapter: primary}},
+		routes,
+		catalog,
+		WithLogger(log.NewNop()),
+		WithCatalog(catalog),
+	)
+	if !errors.Is(err, contract.ErrNoRequiredRoute) {
+		t.Fatalf("NewProducerMulti() error = %v; want errors.Is(ErrNoRequiredRoute)", err)
 	}
 }
 
@@ -569,29 +607,35 @@ func TestNewProducerMulti_AllOptionalFail_ReturnsNilButRecordsOptional(t *testin
 
 	catalog := sampleCatalog(t)
 	routes := mustMultiRouteTable(t,
-		// Override the default Required route for "transaction.created"
-		// so this definition has THREE Optional routes and zero Required.
-		// mustMultiRouteTable's auto-attach only fills DefinitionKeys it
-		// hasn't seen — we control transaction.created here entirely.
+		// THREE Optional routes for "transaction.created", all of which
+		// fail, plus the one Required route the construction-time
+		// durability gate demands (validateRoutesAgainstTargets rejects a
+		// definition that resolves to zero Required routes — an
+		// all-optional definition can lose every copy and still report a
+		// successful Emit). The Required route's adapter succeeds, so the
+		// thing under test is unchanged: Optional failures never surface.
 		multiTestRoute("transaction.created.kafka.opt-a", "transaction.created", "opt-a", "lerian.streaming.transaction.created.a", contract.RouteOptional),
 		multiTestRoute("transaction.created.kafka.opt-b", "transaction.created", "opt-b", "lerian.streaming.transaction.created.b", contract.RouteOptional),
 		multiTestRoute("transaction.created.kafka.opt-c", "transaction.created", "opt-c", "lerian.streaming.transaction.created.c", contract.RouteOptional),
+		multiTestRoute("transaction.created.kafka.primary", "transaction.created", "primary", "lerian.streaming.transaction.created", contract.RouteRequired),
 	)
 
 	factory, snapshot := newManualMeterSetup(t)
 
 	p, err := NewProducerMulti(
 		ctx,
-		MultiProducerConfig{Source: "svc://multi-all-optional"},
+		MultiProducerConfig{Source: "svc-multi-all-optional"},
 		nil,
 		[]TargetSpec{
 			{Name: "opt-a", Kind: TransportKafkaLike, Adapter: optA},
 			{Name: "opt-b", Kind: TransportKafkaLike, Adapter: optB},
 			{Name: "opt-c", Kind: TransportKafkaLike, Adapter: optC},
 			// Default mustMultiRouteTable Required routes pin to "primary";
-			// we register a primary target so the route table validates.
-			// It receives no traffic from this test (we Emit only the
-			// transaction.created definition).
+			// primary carries the one Required route for
+			// transaction.created (and the default routes for every other
+			// definition). Its adapter succeeds, so Emit's nil return is
+			// attributable to the Optional failures being swallowed, which
+			// is what this test is about.
 			{Name: "primary", Kind: TransportKafkaLike, Adapter: fake.NewAdapter(TransportKafkaLike)},
 		},
 		routes,
@@ -674,7 +718,7 @@ func TestNewProducerMulti_EmptyCatalogReturnsError(t *testing.T) {
 
 	_, err = NewProducerMulti(
 		context.Background(),
-		MultiProducerConfig{Source: "svc://multi-empty-cat"},
+		MultiProducerConfig{Source: "svc-multi-empty-cat"},
 		nil,
 		[]TargetSpec{{Name: "primary", Kind: TransportKafkaLike, Adapter: primary}},
 		routes,
@@ -729,7 +773,7 @@ func TestNewProducerMulti_OptionalFailureRecordsMetricObservations(t *testing.T)
 
 	p, err := NewProducerMulti(
 		ctx,
-		MultiProducerConfig{Source: "svc://multi-opt-metric"},
+		MultiProducerConfig{Source: "svc-multi-opt-metric"},
 		nil,
 		[]TargetSpec{
 			{Name: "primary", Kind: TransportKafkaLike, Adapter: primary},

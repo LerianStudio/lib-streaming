@@ -16,7 +16,7 @@ func TestLoadConfig_SchemaRegistryFieldsParsed(t *testing.T) {
 
 	t.Setenv("STREAMING_ENABLED", "true")
 	t.Setenv("STREAMING_BROKERS", "localhost:9092")
-	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.test/svc")
+	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "lerian-test-svc")
 	t.Setenv("STREAMING_SCHEMA_REGISTRY_URL", "https://sr.lerian.test")
 	t.Setenv("STREAMING_SCHEMA_REGISTRY_USERNAME", "alice")
 	t.Setenv("STREAMING_SCHEMA_REGISTRY_PASSWORD", "sr-secret")
@@ -46,7 +46,7 @@ func TestLoadConfig_SchemaRegistryEmptyIsOptional(t *testing.T) {
 	// clean: the registry is only needed on the billing serialize path.
 	t.Setenv("STREAMING_ENABLED", "true")
 	t.Setenv("STREAMING_BROKERS", "localhost:9092")
-	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.test/svc")
+	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "lerian-test-svc")
 
 	cfg, _, err := LoadConfig()
 	if err != nil {
@@ -63,7 +63,7 @@ func TestLoadConfig_SchemaRegistryUsernameWithoutPasswordRejected(t *testing.T) 
 
 	t.Setenv("STREAMING_ENABLED", "true")
 	t.Setenv("STREAMING_BROKERS", "localhost:9092")
-	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.test/svc")
+	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "lerian-test-svc")
 	t.Setenv("STREAMING_SCHEMA_REGISTRY_URL", "https://sr.lerian.test")
 	t.Setenv("STREAMING_SCHEMA_REGISTRY_USERNAME", "alice")
 	// password intentionally omitted — a partial credential is a misconfig.
@@ -79,7 +79,7 @@ func TestLoadConfig_SchemaRegistryPasswordWithoutUsernameRejected(t *testing.T) 
 
 	t.Setenv("STREAMING_ENABLED", "true")
 	t.Setenv("STREAMING_BROKERS", "localhost:9092")
-	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.test/svc")
+	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "lerian-test-svc")
 	t.Setenv("STREAMING_SCHEMA_REGISTRY_URL", "https://sr.lerian.test")
 	t.Setenv("STREAMING_SCHEMA_REGISTRY_PASSWORD", "sr-secret")
 	// username intentionally omitted — a partial credential is a misconfig,
@@ -98,7 +98,7 @@ func TestLoadConfig_SchemaRegistryHTTPWithCredentialsWarns(t *testing.T) {
 
 	t.Setenv("STREAMING_ENABLED", "true")
 	t.Setenv("STREAMING_BROKERS", "localhost:9092")
-	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.test/svc")
+	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "lerian-test-svc")
 	// Plaintext http:// endpoint carrying basic-auth credentials: defense-in-depth
 	// warning, not a hard reject (local dev may legitimately use http:// with creds).
 	t.Setenv("STREAMING_SCHEMA_REGISTRY_URL", "http://sr.lerian.test")
@@ -132,7 +132,7 @@ func TestLoadConfig_SchemaRegistryHTTPSWithCredentialsDoesNotWarn(t *testing.T) 
 
 	t.Setenv("STREAMING_ENABLED", "true")
 	t.Setenv("STREAMING_BROKERS", "localhost:9092")
-	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.test/svc")
+	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "lerian-test-svc")
 	t.Setenv("STREAMING_SCHEMA_REGISTRY_URL", "https://sr.lerian.test")
 	t.Setenv("STREAMING_SCHEMA_REGISTRY_USERNAME", "alice")
 	t.Setenv("STREAMING_SCHEMA_REGISTRY_PASSWORD", "sr-secret")
@@ -186,7 +186,7 @@ func TestLoadConfig_SchemaRegistryErrorNeverLeaksPassword(t *testing.T) {
 
 	t.Setenv("STREAMING_ENABLED", "true")
 	t.Setenv("STREAMING_BROKERS", "localhost:9092")
-	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.test/svc")
+	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "lerian-test-svc")
 	t.Setenv("STREAMING_SCHEMA_REGISTRY_URL", "https://sr.lerian.test")
 	t.Setenv("STREAMING_SCHEMA_REGISTRY_USERNAME", "alice")
 	t.Setenv("STREAMING_SCHEMA_REGISTRY_PASSWORD", password)

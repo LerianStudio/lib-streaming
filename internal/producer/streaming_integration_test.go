@@ -42,8 +42,8 @@ import (
 	outboxpg "github.com/LerianStudio/lib-commons/v6/commons/outbox/postgres"
 	libPostgres "github.com/LerianStudio/lib-commons/v6/commons/postgres"
 	"github.com/LerianStudio/lib-observability/v2/log"
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/dlqheader"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/dlqheader"
 )
 
 // redpandaImage pins the Redpanda container image. Pinning the tag (not
@@ -60,7 +60,7 @@ const postgresImage = "postgres:16-alpine"
 // integrationSource is the CloudEvents ce-source used across the integration
 // suite. Matches the structure of real Lerian services (reverse-DNS authority
 // path) so round-trip tests exercise non-trivial inputs.
-const integrationSource = "//lerian.test/streaming-integration"
+const integrationSource = "lerian-test-streaming-integration"
 
 // skipIfNoDocker converts a testcontainers startup error into t.Skip when
 // the root cause is "Docker is unavailable in this environment". Anything
@@ -208,6 +208,32 @@ func ensureTopics(t *testing.T, seed string, partitions int32, topics ...string)
 			continue
 		}
 		require.NoErrorf(t, err, "CreateTopic %s", topic)
+	}
+}
+
+// assertTopicsAbsent fails when any of the named topics exists on the broker.
+// Used to prove a negative the unit suite structurally cannot: that the v2
+// per-event topic names were never written to, on a cluster where auto-create
+// would have brought them into existence had anything published there.
+func assertTopicsAbsent(t *testing.T, seed string, topics ...string) {
+	t.Helper()
+
+	cl, err := kgo.NewClient(kgo.SeedBrokers(seed))
+	require.NoError(t, err, "admin kgo.NewClient")
+
+	defer cl.Close()
+
+	admin := kadm.NewClient(cl)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	details, err := admin.ListTopics(ctx)
+	require.NoError(t, err, "ListTopics")
+
+	for _, topic := range topics {
+		assert.NotContainsf(t, details, topic,
+			"topic %q exists; v2 per-event topics must never be written to under the topic collapse", topic)
 	}
 }
 
@@ -390,15 +416,90 @@ func TestIntegration_RoundTripHeaders(t *testing.T) {
 	assert.Equal(t, event.TenantID, parsed.TenantID, "ce-tenantid")
 	assert.True(t, parsed.Timestamp.Equal(now), "ce-time mismatch: got=%s want=%s", parsed.Timestamp, now)
 
-	// ce-type composition: studio.lerian.<resource>.<event>
+	// ce-type composition: studio.lerian.<source>.<resource>.<event>. The
+	// <source> segment is the v3 addition — without it, two services'
+	// same-named events produce byte-identical ce-type values.
 	headers := headerMap(r.Headers)
-	assert.Equal(t, "studio.lerian.transaction.created", headers["ce-type"], "ce-type")
+	assert.Equal(t, "studio.lerian."+integrationSource+".transaction.created", headers["ce-type"], "ce-type")
 	assert.Equal(t, cloudEventsSpecVersion, headers["ce-specversion"], "ce-specversion")
 
 	// Byte-equal body preservation: the kgo record value is exactly the
 	// event payload bytes.
 	assert.JSONEq(t, string(event.Payload), string(r.Value), "message body JSON mismatch")
 	assert.Equal(t, []byte(event.Payload), r.Value, "message body byte-equal")
+}
+
+// TestIntegration_TopicCollapse proves the v3 headline against a REAL broker:
+// two DIFFERENT resource types emitted by one producer land on the SAME topic.
+//
+// Every unit test asserts this by calling Event.Topic() twice and comparing the
+// two strings, which proves only that one function is deterministic. This test
+// asks the broker: it emits transaction.created and order.submitted, then reads
+// lerian.streaming.<source> and finds both records there — and finds nothing on
+// the v2-shaped per-event topics, which must not exist at all.
+func TestIntegration_TopicCollapse(t *testing.T) {
+	seed, c := startRedpanda(t)
+	if c == nil {
+		return // Docker unavailable — skipIfNoDocker already called t.Skip.
+	}
+
+	brokers := []string{seed}
+	p := newTestProducer(t, brokers)
+
+	appTopic := contract.AppTopic(integrationSource)
+
+	ensureTopics(t, brokers[0], 1, appTopic, dlqTopic(appTopic))
+
+	consumer := newConsumerClient(t, brokers, appTopic)
+
+	transaction := Event{
+		TenantID:     "tenant-collapse",
+		ResourceType: "transaction",
+		EventType:    "created",
+		EventID:      uuid.NewString(),
+		Source:       integrationSource,
+		Subject:      "aggregate-tx",
+		Payload:      json.RawMessage(`{"kind":"transaction"}`),
+	}
+
+	order := Event{
+		TenantID:     "tenant-collapse",
+		ResourceType: "order",
+		EventType:    "submitted",
+		EventID:      uuid.NewString(),
+		Source:       integrationSource,
+		Subject:      "aggregate-order",
+		Payload:      json.RawMessage(`{"kind":"order"}`),
+	}
+
+	require.NoError(t, p.Emit(context.Background(), eventToRequest(transaction)), "Emit(transaction.created)")
+	require.NoError(t, p.Emit(context.Background(), eventToRequest(order)), "Emit(order.submitted)")
+
+	records := pollRecords(t, consumer, 2, 30*time.Second)
+	require.Len(t, records, 2, "both resource types must land on the single app topic %s", appTopic)
+
+	seen := map[string]string{}
+
+	for _, r := range records {
+		assert.Equal(t, appTopic, r.Topic, "record landed off the app topic")
+
+		headers := headerMap(r.Headers)
+		seen[headers["ce-resourcetype"]] = headers["ce-eventtype"]
+
+		// The v2 per-event topic name must not appear anywhere on the wire.
+		assert.NotContains(t, r.Topic, headers["ce-resourcetype"],
+			"the topic name still carries the resource type; the collapse is incomplete")
+	}
+
+	assert.Equal(t, map[string]string{"transaction": "created", "order": "submitted"}, seen,
+		"both events must be distinguishable by ce-resourcetype / ce-eventtype on the shared topic")
+
+	// The v2-shaped per-event topics must not have been created. Auto-create is
+	// on in this cluster, so their absence proves nothing published to them.
+	assertTopicsAbsent(t, brokers[0],
+		integrationSource+".transaction.created",
+		integrationSource+".order.submitted",
+	)
 }
 
 // TestIntegration_PartitionFIFO emits 5 tenants × 200 events concurrently
@@ -538,8 +639,8 @@ func TestIntegration_DLQRouting(t *testing.T) {
 	eventType := "overflow"
 	// Derive the source topic from the producer's ce-source so it matches
 	// the service-namespaced Event.Topic() the producer publishes to.
-	sourceTopic := (&Event{Source: integrationSource, ResourceType: resourceType, EventType: eventType}).Topic()
-	dlqName := dlqTopic(sourceTopic) // ...overflow.dlq
+	appTopic := (&Event{Source: integrationSource, ResourceType: resourceType, EventType: eventType}).Topic()
+	dlqName := dlqTopic(appTopic) // <app topic>.dlq
 
 	// Pre-create source with a tiny max.message.bytes. franz-go's
 	// ProduceSync returns kerr.MessageTooLarge (or wraps kerr.RecordListTooLarge
@@ -549,7 +650,7 @@ func TestIntegration_DLQRouting(t *testing.T) {
 	ctxCreate, cancelCreate := context.WithTimeout(context.Background(), 15*time.Second)
 	_, err = admin.CreateTopic(ctxCreate, 1, 1,
 		map[string]*string{"max.message.bytes": &tinyMax},
-		sourceTopic,
+		appTopic,
 	)
 	cancelCreate()
 	require.NoError(t, err, "CreateTopic source")
@@ -619,7 +720,7 @@ func TestIntegration_DLQRouting(t *testing.T) {
 		"expected exactly one required-route failure, got %d", len(multiErr.Required))
 
 	routeFail := multiErr.Required[0]
-	require.Equal(t, sourceTopic, routeFail.Destination,
+	require.Equal(t, appTopic, routeFail.Destination,
 		"RouteError.Destination should equal source topic for kafka transport")
 	// franz-go's behavior under a broker-side reject may map to
 	// ClassSerialization (the normal expected class for MessageTooLarge)
@@ -637,7 +738,7 @@ func TestIntegration_DLQRouting(t *testing.T) {
 
 	// Six x-lerian-dlq-* headers all present. Tenant identity is in
 	// ce-tenantid (CloudEvents), not in a DLQ-specific header.
-	assert.Equal(t, sourceTopic, hdrs[dlqheader.SourceTopic], "dlq source-topic")
+	assert.Equal(t, appTopic, hdrs[dlqheader.SourceTopic], "dlq source-topic")
 	assert.NotEmpty(t, hdrs[dlqheader.ErrorClass], "dlq error-class")
 	assert.Truef(t, isDLQRoutable(ErrorClass(hdrs[dlqheader.ErrorClass])),
 		"dlq error-class %q should be DLQ-routable", hdrs[dlqheader.ErrorClass])
@@ -655,7 +756,7 @@ func TestIntegration_DLQRouting(t *testing.T) {
 	// emitted here is the correct invariant.
 	assert.Equal(t, cloudEventsSpecVersion, hdrs["ce-specversion"])
 	assert.Equal(t, event.Source, hdrs["ce-source"])
-	assert.Equal(t, "studio.lerian."+resourceType+"."+eventType, hdrs["ce-type"])
+	assert.Equal(t, "studio.lerian."+integrationSource+"."+resourceType+"."+eventType, hdrs["ce-type"])
 	assert.Equal(t, event.Subject, hdrs["ce-subject"])
 	assert.Equal(t, event.TenantID, hdrs["ce-tenantid"])
 	assert.Equal(t, resourceType, hdrs["ce-resourcetype"])
@@ -809,7 +910,7 @@ CREATE TABLE IF NOT EXISTS outbox_events (
 
 	// Pre-create the source + DLQ topics so the baseline emits don't race
 	// Redpanda's controller and produce a false-positive outbox write.
-	baselineTopic := sourceTopicPrefix(integrationSource) + "payment.authorized"
+	baselineTopic := sourceTopic(integrationSource)
 	ensureTopics(t, brokers[0], 1, baselineTopic, dlqTopic(baselineTopic))
 
 	tenantCtx := outbox.ContextWithTenantID(ctx, "tenant-outbox-it")
@@ -996,7 +1097,7 @@ func TestIntegration_CloudEventsSDKContract(t *testing.T) {
 	require.NoError(t, ce.Validate(), "cloudevents.Event.Validate()")
 
 	assert.Equal(t, event.EventID, ce.ID(), "ID")
-	assert.Equal(t, "studio.lerian.transaction.created", ce.Type(), "Type")
+	assert.Equal(t, "studio.lerian."+integrationSource+".transaction.created", ce.Type(), "Type")
 	assert.Equal(t, event.Source, ce.Source(), "Source")
 	assert.True(t, ce.Time().Equal(now), "Time")
 }
@@ -1021,8 +1122,8 @@ func TestIntegration_CircuitBreaker_TripsOrganically(t *testing.T) {
 	brokers := []string{seed}
 
 	// Pre-create source + DLQ so the baseline emits don't race on metadata.
-	sourceTopic := sourceTopicPrefix(integrationSource) + "transaction.cb_organic"
-	ensureTopics(t, brokers[0], 1, sourceTopic, dlqTopic(sourceTopic))
+	appTopic := sourceTopic(integrationSource)
+	ensureTopics(t, brokers[0], 1, appTopic, dlqTopic(appTopic))
 
 	// CB tuned to trip with minimal friction: low min-requests, low
 	// failure ratio, short record-delivery timeout so a stopped broker

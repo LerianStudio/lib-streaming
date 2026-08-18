@@ -48,24 +48,41 @@ func FuzzSanitizeBrokerURL(f *testing.F) {
 	})
 }
 
-// FuzzParseMajorVersion verifies semver major parsing never returns a negative value.
-func FuzzParseMajorVersion(f *testing.F) {
+// FuzzValidateSource verifies the v3 strict-source invariant: whatever
+// ValidateSource ACCEPTS must derive a topic and DLQ topic that Kafka can
+// actually hold, and must round-trip into the topic verbatim (no rewriting).
+// v2's FuzzParseMajorVersion is gone with the exported major-version parser —
+// the schema version no longer influences any topic.
+func FuzzValidateSource(f *testing.F) {
 	f.Add("")
-	f.Add("v")
-	f.Add("1.0.0")
-	f.Add("v2.0.0")
-	f.Add("2.0.0-rc1")
-	f.Add("2.0.0+gitsha")
-	f.Add("9999999999")
-	f.Add("not.a.version")
-	f.Add("_1.0.0")
-	f.Add("v0.0.0")
-	f.Add("-1.0.0")
-	f.Add("1")
+	f.Add("lender")
+	f.Add("midaz-ledger")
+	f.Add("br_consignado_gw")
+	f.Add("Lender")
+	f.Add("lerian.midaz")
+	f.Add("midaz-transaction-service")
+	f.Add("---")
+	f.Add("a b")
+	f.Add("caf\u00e9")
+	f.Add(strings.Repeat("a", 300))
 
 	f.Fuzz(func(t *testing.T, in string) {
-		if got := parseMajorVersion(in); got < 0 {
-			t.Fatalf("parseMajorVersion(%q) = %d; invariant: result >= 0", in, got)
+		if err := ValidateSource(in); err != nil {
+			return
+		}
+
+		topic := AppTopic(in)
+		if len(AppDLQTopic(in)) > MaxKafkaTopicNameBytes {
+			t.Fatalf("ValidateSource(%q) accepted a source whose DLQ topic is %d bytes (max %d)",
+				in, len(AppDLQTopic(in)), MaxKafkaTopicNameBytes)
+		}
+
+		if !strings.HasPrefix(topic, TopicPrefix) || strings.TrimPrefix(topic, TopicPrefix) != in {
+			t.Fatalf("AppTopic(%q) = %q; accepted source must appear verbatim after %q", in, topic, TopicPrefix)
+		}
+
+		if HasControlChar(topic) {
+			t.Fatalf("AppTopic(%q) = %q contains a control char", in, topic)
 		}
 	})
 }

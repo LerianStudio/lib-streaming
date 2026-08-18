@@ -15,8 +15,8 @@ import (
 	"github.com/LerianStudio/lib-observability/v2/metrics"
 	"go.opentelemetry.io/otel/trace/noop"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/consumer"
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/consumer"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
 )
 
 // noopHandler is a do-nothing Handler for white-box builder-construction tests
@@ -39,9 +39,9 @@ func TestConsumerBuilder_SettersMapToConfig(t *testing.T) {
 		Enabled(false).
 		Brokers("b1:9092", "b2:9092").
 		Group("svc-group").
+		Source("test-consumer").
 		Topics("topic.a", "topic.b").
 		Handler(noopHandler{}).
-		DLQTopicSuffix(".quarantine").
 		RetryBudget(7).
 		CloseTimeout(12 * time.Second)
 
@@ -63,10 +63,6 @@ func TestConsumerBuilder_SettersMapToConfig(t *testing.T) {
 
 	if b.handler == nil {
 		t.Error("Handler did not set b.handler")
-	}
-
-	if b.cfg.DLQTopicSuffix != ".quarantine" {
-		t.Errorf("DLQTopicSuffix = %q; want .quarantine", b.cfg.DLQTopicSuffix)
 	}
 
 	if b.cfg.RetryBudget != 7 {
@@ -115,7 +111,6 @@ func TestConsumerBuilder_NilReceiverGuards(t *testing.T) {
 		func() *ConsumerBuilder { return b.SASL(plain.Auth{User: "u", Pass: "p"}.AsMechanism()) },
 		func() *ConsumerBuilder { return b.AllowPlaintextSASL() },
 		func() *ConsumerBuilder { return b.Handler(noopHandler{}) },
-		func() *ConsumerBuilder { return b.DLQTopicSuffix(".dlq") },
 		func() *ConsumerBuilder { return b.RetryBudget(3) },
 		func() *ConsumerBuilder { return b.Classifier(func(error) bool { return false }) },
 		func() *ConsumerBuilder { return b.CloseTimeout(time.Second) },
@@ -147,6 +142,7 @@ func TestConsumerBuilder_TLSSetterEnablesSASL(t *testing.T) {
 		return NewConsumer().
 			Brokers("localhost:9092").
 			Group("g").
+			Source("test-consumer").
 			Topics("t").
 			Handler(noopHandler{})
 	}
@@ -216,6 +212,7 @@ func TestConsumerOptionPassthroughs(t *testing.T) {
 	c, err := NewConsumer().
 		Brokers("localhost:9092").
 		Group("g").
+		Source("test-consumer").
 		Topics("t").
 		Handler(noopHandler{}).
 		Options(opts...).

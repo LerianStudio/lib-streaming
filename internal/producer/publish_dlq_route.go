@@ -2,13 +2,14 @@ package producer
 
 import (
 	"context"
+	"slices"
 	"strconv"
 	"time"
 
 	"github.com/LerianStudio/lib-observability/v2/log"
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/dlqheader"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/dlqheader"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
 )
 
 // publishRouteDLQ writes the original payload to the route's DLQ destination
@@ -30,6 +31,15 @@ import (
 // logged + counted via streaming_dlq_publish_failed_total and returned to the
 // route dispatcher only so it can distinguish delivered, skipped, and failed
 // DLQ side effects in metrics/span state.
+//
+// SIZE: a DLQ copy carries the payload plus the CloudEvents headers plus the
+// forensic set, so it is strictly LARGER than the record it quarantines and a
+// near-cap payload can be refused where the original would have been accepted.
+// When the transport refuses it on size, the write is retried ONCE with the
+// payload omitted and marked (x-lerian-dlq-payload-omitted). Metadata-only
+// evidence beats no evidence — but note the producer-side payload is genuinely
+// gone, unlike a consumer quarantine, whose origin coordinates make it
+// recoverable from the source topic.
 func (p *Producer) publishRouteDLQ(
 	ctx context.Context,
 	rt *targetRuntime,
@@ -105,7 +115,11 @@ func (p *Producer) publishRouteDLQ(
 
 	causeMessage := ""
 	if cause != nil {
-		causeMessage = sanitizeBrokerURL(cause.Error())
+		// Bounded: the cause string is the one unbounded value on a DLQ record,
+		// and a DLQ copy is strictly larger than the payload it quarantines. An
+		// unbounded one could be the thing that pushes a near-cap record past
+		// the broker's limit. See dlqheader.MaxErrorMessageBytes.
+		causeMessage = dlqheader.TruncateErrorMessage(sanitizeBrokerURL(cause.Error()))
 	}
 
 	headers := buildTransportHeaders(ctx, event)
@@ -118,10 +132,7 @@ func (p *Producer) publishRouteDLQ(
 		transport.Header{Key: dlqheader.ProducerID, Value: []byte(p.producerID)},
 	)
 
-	partKey := event.PartitionKey()
-	if p.partFn != nil {
-		partKey = p.partFn(event)
-	}
+	partKey := p.resolvePartitionKey(event)
 
 	message := transport.TransportMessage{
 		Destination: dlqDest,
@@ -132,7 +143,24 @@ func (p *Producer) publishRouteDLQ(
 		Attributes:  dlqDest.Attributes,
 	}
 
-	if err := rt.adapter.Publish(ctx, transport.CloneMessage(message)); err != nil {
+	err := rt.adapter.Publish(ctx, transport.CloneMessage(message))
+	if err != nil && dlqheader.IsSizeError(err) {
+		// The copy does not fit. Quarantining the metadata WITHOUT the payload
+		// beats losing the entry entirely: the event id, tenant, route, and
+		// error class are what an operator triages on, and they are exactly
+		// what a dropped DLQ write destroys. The payload is NOT recoverable on
+		// this side — the original publish never landed anywhere — so the
+		// marker headers say plainly that it is gone.
+		message.Payload = nil
+		message.Headers = append(slices.Clone(headers),
+			transport.Header{Key: dlqheader.PayloadOmitted, Value: []byte("true")},
+			transport.Header{Key: dlqheader.PayloadBytes, Value: []byte(strconv.Itoa(len(event.Payload)))},
+		)
+
+		err = rt.adapter.Publish(ctx, transport.CloneMessage(message))
+	}
+
+	if err != nil {
 		p.metrics.recordDLQFailed(ctx, sourceLabel)
 		p.logger.Log(ctx, log.LevelError, "streaming: route DLQ publish failed",
 			log.String("producer_id", p.producerID),

@@ -7,8 +7,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
 )
 
 type fakePublisher struct {
@@ -51,7 +51,7 @@ func sampleMessage() transport.TransportMessage {
 		Payload:     []byte(`{"hello":"rabbit"}`),
 		Headers: []transport.Header{
 			{Key: "ce-id", Value: []byte("evt-1")},
-			{Key: "ce-source", Value: []byte("svc://test")},
+			{Key: "ce-source", Value: []byte("svc-test")},
 			{Key: "ce-datacontenttype", Value: []byte("application/json")},
 		},
 		Attributes: map[string]string{"x-trace": "trc-1"},

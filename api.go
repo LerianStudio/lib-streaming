@@ -14,10 +14,10 @@ import (
 	"github.com/twmb/franz-go/pkg/sasl"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/kafkasec"
-	"github.com/LerianStudio/lib-streaming/v2/internal/producer"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/kafkasec"
+	"github.com/LerianStudio/lib-streaming/v3/internal/producer"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
 )
 
 // builderAsserterComponent is the component label every Builder asserter
@@ -549,13 +549,21 @@ func (b *Builder) buildMulti(ctx context.Context, routeTable RouteTable) (Emitte
 		return nil, fmt.Errorf("%w: catalog is empty", ErrInvalidEventDefinition)
 	}
 
-	if b.source == "" {
-		return nil, ErrMissingSource
-	}
-
 	if len(b.targets) == 0 {
 		return nil, ErrMissingTarget
 	}
+
+	// Validate the source BEFORE the route warnings and the target-spec work
+	// below. producer.NewProducerMulti re-validates it as the authoritative
+	// gate, but reaching that gate with a bad source first derives the
+	// app-topic pair from garbage (spurious off-topic warnings against a name
+	// no route could match) and spends adapter construction on a build that
+	// was always going to fail with a caller-correctable error.
+	if err := contract.ValidateSource(b.source); err != nil {
+		return nil, err
+	}
+
+	b.warnOffAppTopicKafkaRoutes(ctx, routeTable)
 
 	// Validate target names + kinds; build TargetSpecs.
 	specs, err := b.buildTargetSpecs(ctx)
@@ -588,6 +596,50 @@ func (b *Builder) buildMulti(ctx context.Context, routeTable RouteTable) (Emitte
 	}
 
 	return &Producer{inner: inner}, nil
+}
+
+// warnOffAppTopicKafkaRoutes logs every Kafka route whose destination is none
+// of the application's three names: its topic, its commands queue, or its DLQ.
+//
+// One topic per producing application is a CONVENTION on the Builder path, not
+// a constraint: a Kafka destination is a caller-supplied string, and legitimate
+// reasons to point one elsewhere exist (mirroring into a legacy stream, a
+// migration window). So this warns rather than failing — but it warns, because
+// the same freedom silently defeats the two-name ACL grant the topic collapse
+// bought, and a topic outside the grant fails at publish time in production
+// with an authorization error that reads as a broker problem.
+//
+// AppTopic(source), AppCommandsTopic(source), and AppDLQTopic(source) are the
+// three names in the grant. A fact-only application writes two of them; the
+// commands queue is accepted here regardless, because whether the catalog
+// holds a command today is not a property of the route table.
+func (b *Builder) warnOffAppTopicKafkaRoutes(ctx context.Context, routeTable RouteTable) {
+	logger := b.resolveLogger()
+
+	appTopic := contract.AppTopic(b.source)
+	appCommandsTopic := contract.AppCommandsTopic(b.source)
+	appDLQTopic := contract.AppDLQTopic(b.source)
+
+	for _, route := range routeTable.Definitions() {
+		if route.Destination.Kind != contract.TransportKafkaLike {
+			continue
+		}
+
+		switch route.Destination.Name {
+		case appTopic, appCommandsTopic, appDLQTopic:
+			continue
+		}
+
+		logger.Log(ctx, log.LevelWarn,
+			"streaming: Kafka route destination is outside this application's own topic names — one topic per producing application is the convention, and a Kafka ACL scoped to those names will reject this publish",
+			log.String("route_key", route.Key),
+			log.String("target", route.Target),
+			log.String("destination", route.Destination.Name),
+			log.String("app_topic", appTopic),
+			log.String("app_commands_topic", appCommandsTopic),
+			log.String("app_dlq_topic", appDLQTopic),
+		)
+	}
 }
 
 // buildTargetSpecs invokes the per-kind TransportAdapterFactory for each

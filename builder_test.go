@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/LerianStudio/lib-observability/v2/log"
-	streaming "github.com/LerianStudio/lib-streaming/v2"
-	"github.com/LerianStudio/lib-streaming/v2/internal/producer"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
+	streaming "github.com/LerianStudio/lib-streaming/v3"
+	"github.com/LerianStudio/lib-streaming/v3/internal/producer"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
 	"github.com/twmb/franz-go/pkg/kfake"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/twmb/franz-go/pkg/sasl/plain"
@@ -23,10 +23,15 @@ func TestBuilder_OptionsThreadPartitionKeyToProducer(t *testing.T) {
 	cfg, cluster := builderKfakeTarget(t)
 	fixedKey := "fixed-builder-key"
 
+	appTopic, err := streaming.AppTopic("builder-test")
+	if err != nil {
+		t.Fatalf("AppTopic() error = %v", err)
+	}
+
 	emitter, err := streaming.NewBuilder().
-		Source("//builder-test").
+		Source("builder-test").
 		Catalog(builderCatalog(t)).
-		Routes(builderRoute("lerian.streaming.transaction.created")).
+		Routes(builderRoute(appTopic)).
 		Target(cfg).
 		Options(streaming.WithPartitionKey(func(streaming.Event) string { return fixedKey })).
 		Build(context.Background())
@@ -50,7 +55,7 @@ func TestBuilder_OptionsThreadPartitionKeyToProducer(t *testing.T) {
 
 	consumer, err := kgo.NewClient(
 		kgo.SeedBrokers(cluster.ListenAddrs()...),
-		kgo.ConsumeTopics("lerian.streaming.transaction.created"),
+		kgo.ConsumeTopics(appTopic),
 		kgo.ConsumerGroup("builder-options-partition-key"),
 		kgo.DisableAutoCommit(),
 		kgo.FetchMaxWait(500*time.Millisecond),
@@ -86,7 +91,7 @@ func TestBuilder_DedicatedOptionMethodsBuildWithoutValidationFailure(t *testing.
 	t.Parallel()
 
 	emitter, err := streaming.NewBuilder().
-		Source("svc://ledger").
+		Source("svc-ledger").
 		Catalog(builderCatalog(t)).
 		Routes(builderRoute("lerian.streaming.transaction.created")).
 		Target(builderKafkaTarget()).
@@ -163,7 +168,7 @@ func TestBuilder_CloseTimeoutPreservesFluentCallOrder(t *testing.T) {
 	makeBuilder := func() *streaming.Builder {
 		catalog := builderCatalog(t)
 		return streaming.NewBuilder().
-			Source("svc://close-timeout-test").
+			Source("svc-close-timeout-test").
 			Catalog(catalog).
 			Routes(streaming.RouteDefinition{
 				Key:           "transaction.created.custom.primary",
@@ -253,7 +258,7 @@ func TestBuilder_SASLWithoutTLSRejectsPlaintext(t *testing.T) {
 	t.Parallel()
 
 	_, err := streaming.NewBuilder().
-		Source("svc://ledger").
+		Source("svc-ledger").
 		Catalog(builderCatalog(t)).
 		Routes(builderRoute("lerian.streaming.transaction.created")).
 		Target(builderKafkaTarget()).
@@ -268,7 +273,7 @@ func TestBuilder_SASLWithAllowPlaintextSASLSucceeds(t *testing.T) {
 	t.Parallel()
 
 	emitter, err := streaming.NewBuilder().
-		Source("svc://ledger").
+		Source("svc-ledger").
 		Catalog(builderCatalog(t)).
 		Routes(builderRoute("lerian.streaming.transaction.created")).
 		Target(builderKafkaTarget()).
@@ -290,7 +295,7 @@ func TestBuilder_TLSConfigWithInsecureSkipVerifyRejectsConfig(t *testing.T) {
 	t.Parallel()
 
 	_, err := streaming.NewBuilder().
-		Source("svc://ledger").
+		Source("svc-ledger").
 		Catalog(builderCatalog(t)).
 		Routes(builderRoute("lerian.streaming.transaction.created")).
 		Target(builderKafkaTarget()).
@@ -315,7 +320,7 @@ func TestBuilder_TargetNameWithControlCharRejected(t *testing.T) {
 	target.Name = "primary\nattacker-injected" // newline = control char
 
 	_, err := streaming.NewBuilder().
-		Source("svc://ledger").
+		Source("svc-ledger").
 		Catalog(builderCatalog(t)).
 		Routes(builderRoute("lerian.streaming.transaction.created")).
 		Target(target).
@@ -336,7 +341,7 @@ func TestBuilder_TargetNameTooLongRejected(t *testing.T) {
 	target.Name = strings.Repeat("a", 257) // > MaxEventIDBytes (256)
 
 	_, err := streaming.NewBuilder().
-		Source("svc://ledger").
+		Source("svc-ledger").
 		Catalog(builderCatalog(t)).
 		Routes(builderRoute("lerian.streaming.transaction.created")).
 		Target(target).
@@ -403,7 +408,11 @@ func builderKfakeTarget(t *testing.T) (streaming.TargetConfig, *kfake.Cluster) {
 		kfake.NumBrokers(1),
 		kfake.AllowAutoTopicCreation(),
 		kfake.DefaultNumPartitions(3),
-		kfake.SeedTopics(3, "lerian.streaming.transaction.created"),
+		kfake.SeedTopics(3,
+			"lerian.streaming.transaction.created",
+			"lerian.streaming.builder-test",
+			"lerian.streaming.builder-test.dlq",
+		),
 	)
 	if err != nil {
 		t.Fatalf("kfake.NewCluster() error = %v", err)
@@ -414,4 +423,42 @@ func builderKfakeTarget(t *testing.T) (streaming.TargetConfig, *kfake.Cluster) {
 	target.Brokers = cluster.ListenAddrs()
 
 	return target, cluster
+}
+
+// TestBuilder_RejectsMalformedSource pins the FULL source contract at the
+// second bootstrap gate.
+//
+// Mutation testing proved the difference matters: reverting Builder.Build's
+// ValidateSource call to a bare empty-check failed ZERO tests. Each shape below
+// would then have built a producer whose one topic is derived from a value no
+// consumer, ACL, or provisioning script could have anticipated.
+func TestBuilder_RejectsMalformedSource(t *testing.T) {
+	cases := []struct {
+		name   string
+		source string
+	}{
+		{"v2 uri shape", "//lerian.midaz/tx"},
+		{"capitalized", "Lender"},
+		{"dotted namespace", "lerian.midaz"},
+		{"leading hyphen", "-lender"},
+		{"over the byte bound", strings.Repeat("a", 224)},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := streaming.NewBuilder().
+				Source(tc.source).
+				Catalog(builderCatalog(t)).
+				Routes(builderRoute("lerian.streaming.transaction.created")).
+				Target(builderKafkaTarget()).
+				Logger(log.NewNop()).
+				Build(context.Background())
+
+			if !errors.Is(err, streaming.ErrInvalidSource) {
+				t.Fatalf("Build(source=%q) err = %v; want ErrInvalidSource", tc.source, err)
+			}
+		})
+	}
 }

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/LerianStudio/lib-observability/v2/log"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
 )
 
 // --- GROUP D: payload-size boundary + caller non-mutation. ---
@@ -104,41 +105,41 @@ func TestProducer_EmitPreFlight_PayloadAtExactBoundary(t *testing.T) {
 }
 
 // TestProducer_EmitPreFlight_TopicAtExactBoundary pins Kafka's 249-byte
-// topic-name limit after source sanitization and the optional schema-major
-// suffix are applied.
+// topic-name limit at the ONE place it can still be hit in v3: the source.
+//
+// The topic is "lerian.streaming." + Source and nothing else, so the bound is
+// entirely a bound on the source — and it is derived from the COMMANDS topic
+// (the longest derived name), not the base topic or the DLQ. Resource type and
+// event type no longer contribute a single byte, which is why the v2 cases that
+// blew the limit by concatenating a 120-byte resource with a 120-byte event
+// type are gone: that failure mode does not exist any more.
+// The numbers below are HARDCODED. Computing maxSource from TopicPrefix and
+// CommandsTopicSuffix — the same constants the production code computes with —
+// made the assertion agree with itself: shorten the prefix and both sides move
+// together while every deployed topic name silently changes. 223 and 249 are
+// the contract, and they belong in the test as literals.
 func TestProducer_EmitPreFlight_TopicAtExactBoundary(t *testing.T) {
+	const (
+		maxSource      = 223 // 249 - len("lerian.streaming.") - len(".commands")
+		kafkaNameLimit = 249
+	)
+
 	tests := []struct {
-		name          string
-		source        string
-		schemaVersion string
-		wantLength    int
-		wantErr       error
+		name            string
+		source          string
+		wantErr         error
+		wantCommandsLen int
 	}{
 		{
-			name:          "v1 at exact boundary",
-			source:        strings.Repeat("s", 7),
-			schemaVersion: "1.0.0",
-			wantLength:    maxKafkaTopicNameBytes,
+			name:            "longest legal source: commands topic lands exactly on the limit",
+			source:          strings.Repeat("s", maxSource),
+			wantCommandsLen: kafkaNameLimit,
 		},
 		{
-			name:          "v1 one byte above boundary",
-			source:        strings.Repeat("s", 8),
-			schemaVersion: "1.0.0",
-			wantLength:    maxKafkaTopicNameBytes + 1,
-			wantErr:       ErrInvalidDestination,
-		},
-		{
-			name:          "v2 at exact boundary including suffix",
-			source:        strings.Repeat("s", 4),
-			schemaVersion: "2.0.0",
-			wantLength:    maxKafkaTopicNameBytes,
-		},
-		{
-			name:          "v2 one byte above boundary including suffix",
-			source:        strings.Repeat("s", 5),
-			schemaVersion: "2.0.0",
-			wantLength:    maxKafkaTopicNameBytes + 1,
-			wantErr:       ErrInvalidDestination,
+			name:            "one byte over: rejected before any broker call",
+			source:          strings.Repeat("s", maxSource+1),
+			wantErr:         ErrInvalidSource,
+			wantCommandsLen: kafkaNameLimit + 1,
 		},
 	}
 
@@ -148,16 +149,15 @@ func TestProducer_EmitPreFlight_TopicAtExactBoundary(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
+			if got := len(contract.AppCommandsTopic(tt.source)); got != tt.wantCommandsLen {
+				t.Fatalf("commands topic length = %d; want %d", got, tt.wantCommandsLen)
+			}
+
 			event := sampleEvent()
 			event.Source = tt.source
 			event.ResourceType = strings.Repeat("r", 120)
 			event.EventType = strings.Repeat("e", 120)
-			event.SchemaVersion = tt.schemaVersion
 			(&event).ApplyDefaults()
-
-			if got := len(event.Topic()); got != tt.wantLength {
-				t.Fatalf("topic length = %d; want %d", got, tt.wantLength)
-			}
 
 			err := p.preFlightWithPayload(context.Background(), event, true)
 			if !errors.Is(err, tt.wantErr) {
@@ -197,7 +197,7 @@ func TestProducer_Emit_DoesNotMutateCaller(t *testing.T) {
 		EventID:         "",          // zero — ApplyDefaults would fill uuid
 		Timestamp:       time.Time{}, // zero — ApplyDefaults would fill now UTC
 		SchemaVersion:   "",          // zero — ApplyDefaults would fill "1.0.0"
-		Source:          "//test/caller-mut",
+		Source:          "test-caller-mut",
 		DataContentType: "", // zero — ApplyDefaults would fill "application/json"
 		Payload:         json.RawMessage(`{"k":"v"}`),
 	}

@@ -262,7 +262,7 @@ func TestProducer_Emit_CircuitClosed_PublishesToBroker(t *testing.T) {
 	}
 
 	// Confirm a record actually landed on the broker.
-	consumer := newConsumer(t, cluster, "test.transaction.created")
+	consumer := newConsumer(t, cluster, "lerian.streaming.test")
 
 	fetchCtx, fetchCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer fetchCancel()
@@ -277,7 +277,7 @@ func TestProducer_Emit_CircuitClosed_PublishesToBroker(t *testing.T) {
 	})
 
 	if gotRec == nil {
-		t.Fatalf("no record fetched from %s; kfake did not receive", "test.transaction.created")
+		t.Fatalf("no record fetched from %s; kfake did not receive", "lerian.streaming.test")
 	}
 }
 
@@ -321,7 +321,7 @@ func TestProducer_Emit_CircuitOpen_ReturnsErrCircuitOpen(t *testing.T) {
 
 	// Broker must have zero records on our topic — the circuit open branch
 	// MUST bypass publishDirect.
-	consumer := newConsumer(t, cluster, "test.transaction.created")
+	consumer := newConsumer(t, cluster, "lerian.streaming.test")
 
 	fetchCtx, fetchCancel := context.WithTimeout(ctx, 1*time.Second)
 	defer fetchCancel()

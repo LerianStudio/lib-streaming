@@ -1,4 +1,4 @@
-module github.com/LerianStudio/lib-streaming/v2
+module github.com/LerianStudio/lib-streaming/v3
 
 go 1.26.3
 
@@ -24,7 +24,7 @@ require (
 	go.opentelemetry.io/otel/sdk/metric v1.44.0
 	go.opentelemetry.io/otel/trace v1.44.0
 	go.uber.org/goleak v1.3.0
-	golang.org/x/mod v0.37.0
+	golang.org/x/mod v0.40.0
 	golang.org/x/sync v0.22.0
 )
 

@@ -6,9 +6,9 @@ import (
 
 	"github.com/twmb/franz-go/pkg/kgo"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/cloudevents"
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/emitter"
+	"github.com/LerianStudio/lib-streaming/v3/internal/cloudevents"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/emitter"
 )
 
 // NOTE: This file deliberately carries NO build tag, unlike the
@@ -53,28 +53,14 @@ func ParseCloudEventsHeaders(headers []kgo.RecordHeader) (Event, error) {
 	return cloudevents.ParseCloudEventsHeaders(headers)
 }
 
-// parseMajorVersion forwards to the canonical contract.ParseMajorVersion so
-// producer-package property tests exercise the same implementation that
-// Topic() uses at runtime. Previously this was a manually-maintained
-// duplicate that could drift from the canonical version.
-func parseMajorVersion(version string) int {
-	return contract.ParseMajorVersion(version)
-}
-
-// sanitizeSourceSegment forwards to the canonical
-// contract.SanitizeSourceSegment so producer-package property tests
-// reconstruct the expected topic base using the SAME implementation that
-// Event.Topic() prepends at runtime. Mirrors the parseMajorVersion forwarder.
-func sanitizeSourceSegment(source string) string {
-	return contract.SanitizeSourceSegment(source)
-}
-
-// sourceTopicPrefix returns the service-namespace prefix that Event.Topic()
-// prepends for a given ce-source, i.e. "{sanitize(source)}.". Build-tagged
-// integration/chaos tests append a "<resource>.<event>" suffix to it to
-// reconstruct the exact topic the producer publishes to. This replaces the
-// former fixed "lerian.streaming." topicPrefix constant now that the topic
-// namespace is derived from the producing service's source.
-func sourceTopicPrefix(source string) string {
-	return contract.SanitizeSourceSegment(source) + "."
+// sourceTopic returns the ONE topic Event.Topic() derives for a given
+// ce-source. Build-tagged integration/chaos tests use it to name the topic
+// the producer publishes to.
+//
+// It replaced v2's sourceTopicPrefix / sanitizeSourceSegment /
+// parseMajorVersion forwarders: with the topic collapse there is no
+// per-event suffix to append and no lossy source reduction to mirror, so a
+// test no longer reconstructs a topic — it just asks for the app topic.
+func sourceTopic(source string) string {
+	return contract.AppTopic(source)
 }

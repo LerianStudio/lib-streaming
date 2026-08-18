@@ -7,8 +7,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport/fake"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport/fake"
 )
 
 // TestValidateRoutesAgainstTargets_KindMismatch_FiresAssertion pins T5
@@ -59,7 +59,7 @@ func TestValidateRoutesAgainstTargets_KindMismatch_FiresAssertion(t *testing.T) 
 
 	_, err = NewProducerMulti(
 		ctx,
-		MultiProducerConfig{Source: "svc://route-kind-assert"},
+		MultiProducerConfig{Source: "svc-route-kind-assert"},
 		nil,
 		[]TargetSpec{{Name: "primary", Kind: TransportKafkaLike, Adapter: primary}},
 		routes,

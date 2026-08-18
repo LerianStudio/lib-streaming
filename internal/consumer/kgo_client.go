@@ -6,9 +6,9 @@ import (
 
 	"github.com/twmb/franz-go/pkg/kgo"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/kafkasec"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/kafkasec"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
 )
 
 // kgoGroupClient is the production GroupClient backed by a franz-go group
@@ -41,7 +41,7 @@ func buildConsumerKgoOpts(cfg ConsumerConfig) ([]kgo.Opt, error) {
 	// (a rebalance hazard on a live broker; a ~50% group-join stall under kfake).
 	return append(base,
 		kgo.ConsumerGroup(cfg.Group),
-		kgo.ConsumeTopics(cfg.Topics...),
+		kgo.ConsumeTopics(cfg.ResolvedTopics()...),
 		// Req 3: freeze rebalances for the life of each polled batch so
 		// SetOffsets (seek-back) cannot race a group revoke. The runtime calls
 		// AllowRebalance exactly once per cycle after all seek-backs are staged.

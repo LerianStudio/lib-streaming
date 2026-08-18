@@ -10,14 +10,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/baggage"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/LerianStudio/lib-observability/v2/log"
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport/fake"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport/fake"
 )
 
 func TestProducer_EmitBatch_CapturesBoundedTraceCarrierAndRelayContinuesOriginTrace(t *testing.T) {
@@ -70,7 +71,7 @@ func TestProducer_EmitBatch_CapturesBoundedTraceCarrierAndRelayContinuesOriginTr
 
 	p, err := NewProducerMulti(
 		context.Background(),
-		MultiProducerConfig{Source: "svc://trace-batch"},
+		MultiProducerConfig{Source: "svc-trace-batch"},
 		nil,
 		[]TargetSpec{{Name: "primary", Kind: TransportKafkaLike, Adapter: adapter}},
 		routes,
@@ -164,17 +165,23 @@ func TestProducer_DeriveOutboxAggregateIDHonorsCustomPartitionAndSystemEvents(t 
 	p := &Producer{partFn: func(Event) string { return "custom-partition" }}
 	event := Event{TenantID: "tenant-1", Subject: "subject-1"}
 
-	got := p.deriveOutboxAggregateID(event)
-	want := deriveAggregateID(Event{Subject: "custom-partition"})
-	if got == want {
-		t.Fatal("custom partition function was ignored")
+	got := mustAggregateID(p, event)
+
+	want := uuid.NewSHA1(uuid.NameSpaceDNS, []byte("custom-partition"))
+	if got != want {
+		t.Fatalf("aggregate id = %s; want the SHA1 of the custom partition key %s", got, want)
 	}
-	if got != p.deriveOutboxAggregateID(event) {
+
+	if got == defaultAggregateID(event) {
+		t.Fatal("custom partition function was ignored — aggregate id matched the default derivation")
+	}
+
+	if got != mustAggregateID(p, event) {
 		t.Fatal("custom partition aggregate ID is not deterministic")
 	}
 
 	system := Event{SystemEvent: true}
-	if p.deriveOutboxAggregateID(system) == p.deriveOutboxAggregateID(system) {
+	if mustAggregateID(p, system) == mustAggregateID(p, system) {
 		t.Fatal("system event aggregate IDs must be random")
 	}
 }

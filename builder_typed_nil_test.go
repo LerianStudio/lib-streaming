@@ -7,9 +7,9 @@ import (
 	"errors"
 	"testing"
 
-	streaming "github.com/LerianStudio/lib-streaming/v2"
-	"github.com/LerianStudio/lib-streaming/v2/internal/producer"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
+	streaming "github.com/LerianStudio/lib-streaming/v3"
+	"github.com/LerianStudio/lib-streaming/v3/internal/producer"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
 )
 
 // The three tests below pin a single contract — and a single notorious Go
@@ -40,7 +40,7 @@ func TestBuilder_SQSTarget_RejectsTypedNilClient(t *testing.T) {
 	var c *fakeSQSClient // typed-nil
 
 	_, err := streaming.NewBuilder().
-		Source("svc://typed-nil-sqs").
+		Source("svc-typed-nil-sqs").
 		Catalog(catalog).
 		Routes(streaming.RouteDefinition{
 			Key:           "transaction.created.sqs.shadow",
@@ -66,7 +66,7 @@ func TestBuilder_RabbitMQTarget_RejectsTypedNilPublisher(t *testing.T) {
 	var p *fakeRabbitMQPublisher
 
 	_, err := streaming.NewBuilder().
-		Source("svc://typed-nil-rabbit").
+		Source("svc-typed-nil-rabbit").
 		Catalog(catalog).
 		Routes(streaming.RouteDefinition{
 			Key:           "transaction.created.rabbitmq.bus",
@@ -92,7 +92,7 @@ func TestBuilder_EventBridgeTarget_RejectsTypedNilClient(t *testing.T) {
 	var c *fakeEventBridgeClient
 
 	_, err := streaming.NewBuilder().
-		Source("svc://typed-nil-eb").
+		Source("svc-typed-nil-eb").
 		Catalog(catalog).
 		Routes(streaming.RouteDefinition{
 			Key:           "transaction.created.eventbridge.bus",
@@ -169,7 +169,7 @@ func TestBuilder_RegisterTransport_FactoryReturnsTypedNil_RejectedAtBuild(t *tes
 	catalog := mustCatalogForTypedNil(t)
 
 	_, err := streaming.NewBuilder().
-		Source("svc://typed-nil-custom").
+		Source("svc-typed-nil-custom").
 		Catalog(catalog).
 		Routes(streaming.RouteDefinition{
 			Key:           "transaction.created.custom.bus",

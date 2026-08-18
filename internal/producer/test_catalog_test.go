@@ -78,7 +78,7 @@ func testOutboxEnvelope(event Event, _topic, definitionKey string, policy Delive
 
 	return OutboxEnvelope{
 		Version:       outboxEnvelopeVersion,
-		RouteKey:      canonicalRouteKey(definitionKey) + ".kafka.primary",
+		RouteKey:      "primary.kafka",
 		DefinitionKey: definitionKey,
 		Target:        "primary",
 		Transport:     TransportKafkaLike,
@@ -88,4 +88,23 @@ func testOutboxEnvelope(event Event, _topic, definitionKey string, policy Delive
 		Policy:        policy.Normalize(),
 		Event:         event,
 	}
+}
+
+// defaultAggregateID is the outbox AggregateID an event gets with no
+// WithPartitionKey override wired — the baseline several tests compare an
+// overridden derivation against.
+func defaultAggregateID(event Event) uuid.UUID {
+	return mustAggregateID(&Producer{}, event)
+}
+
+// mustAggregateID derives the outbox aggregate id, panicking on a minting
+// error (only reachable when the process random source is broken). Test-only
+// helper so property closures without a testing.TB can call it.
+func mustAggregateID(p *Producer, event Event) uuid.UUID {
+	id, err := p.deriveOutboxAggregateID(event)
+	if err != nil {
+		panic(err)
+	}
+
+	return id
 }

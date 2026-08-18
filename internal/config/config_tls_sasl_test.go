@@ -51,7 +51,7 @@ func TestLoadConfig_TLSFieldsParsed(t *testing.T) {
 	ca := caCertPEMBase64(t)
 	t.Setenv("STREAMING_ENABLED", "true")
 	t.Setenv("STREAMING_BROKERS", "localhost:9092")
-	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.test/svc")
+	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "lerian-test-svc")
 	t.Setenv("STREAMING_TLS_ENABLED", "true")
 	t.Setenv("STREAMING_TLS_CA_CERT", ca)
 
@@ -83,7 +83,7 @@ func TestLoadConfig_SASLFieldsParsed(t *testing.T) {
 
 	t.Setenv("STREAMING_ENABLED", "true")
 	t.Setenv("STREAMING_BROKERS", "localhost:9092")
-	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.test/svc")
+	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "lerian-test-svc")
 	t.Setenv("STREAMING_TLS_ENABLED", "true")
 	t.Setenv("STREAMING_TLS_CA_CERT", caCertPEMBase64(t))
 	t.Setenv("STREAMING_SASL_MECHANISM", "SCRAM-SHA-256")
@@ -168,7 +168,7 @@ func TestLoadConfig_InvalidSASLMechanismRejected(t *testing.T) {
 
 	t.Setenv("STREAMING_ENABLED", "true")
 	t.Setenv("STREAMING_BROKERS", "localhost:9092")
-	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.test/svc")
+	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "lerian-test-svc")
 	t.Setenv("STREAMING_SASL_MECHANISM", "GSSAPI")
 	t.Setenv("STREAMING_SASL_USERNAME", "alice")
 	t.Setenv("STREAMING_SASL_PASSWORD", "hunter2-secret")
@@ -191,7 +191,7 @@ func TestLoadConfig_SASLMechanismMissingCredentialsRejected(t *testing.T) {
 
 	t.Setenv("STREAMING_ENABLED", "true")
 	t.Setenv("STREAMING_BROKERS", "localhost:9092")
-	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.test/svc")
+	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "lerian-test-svc")
 	t.Setenv("STREAMING_SASL_MECHANISM", "PLAIN")
 	// username and password intentionally omitted
 

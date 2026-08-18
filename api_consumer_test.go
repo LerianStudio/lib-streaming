@@ -6,7 +6,7 @@ import (
 	"context"
 	"testing"
 
-	streaming "github.com/LerianStudio/lib-streaming/v2"
+	streaming "github.com/LerianStudio/lib-streaming/v3"
 )
 
 // noopHandler is a do-nothing Handler for builder-construction tests.
@@ -25,6 +25,7 @@ func TestNewConsumer_DefaultsEnabled(t *testing.T) {
 	c, err := streaming.NewConsumer().
 		Brokers("localhost:9092").
 		Group("svc").
+		Source("test-consumer").
 		Topics("loan.created").
 		Handler(noopHandler{}).
 		Build(context.Background())
@@ -49,6 +50,7 @@ func TestNewConsumer_EnabledFalseYieldsNoop(t *testing.T) {
 		Enabled(false).
 		Brokers("localhost:9092").
 		Group("svc").
+		Source("test-consumer").
 		Topics("loan.created").
 		Handler(noopHandler{}).
 		Build(context.Background())

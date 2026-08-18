@@ -1,6 +1,6 @@
 package config
 
-import "github.com/LerianStudio/lib-streaming/v2/internal/contract"
+import "github.com/LerianStudio/lib-streaming/v3/internal/contract"
 
 type (
 	DeliveryPolicyOverride = contract.DeliveryPolicyOverride
@@ -12,6 +12,7 @@ type (
 var (
 	ErrMissingBrokers        = contract.ErrMissingBrokers
 	ErrMissingSource         = contract.ErrMissingSource
+	ErrInvalidSource         = contract.ErrInvalidSource
 	ErrInvalidCompression    = contract.ErrInvalidCompression
 	ErrInvalidAcks           = contract.ErrInvalidAcks
 	ErrInvalidDeliveryPolicy = contract.ErrInvalidDeliveryPolicy

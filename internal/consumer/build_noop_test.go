@@ -12,8 +12,8 @@ import (
 
 	"github.com/LerianStudio/lib-observability/v2/log"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport/fake"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport/fake"
 )
 
 // TestDefaultBuilderConfig proves the root builder seed is ENABLED and carries
@@ -40,13 +40,10 @@ func TestDefaultBuilderConfig(t *testing.T) {
 		t.Errorf("duration defaults not all applied: %+v", cfg)
 	}
 
-	if cfg.DLQTopicSuffix != DefaultDLQTopicSuffix {
-		t.Errorf("DLQTopicSuffix = %q; want %q", cfg.DLQTopicSuffix, DefaultDLQTopicSuffix)
-	}
-
 	// Seeded config + the required fields must validate clean.
 	cfg.Brokers = []string{"localhost:9092"}
 	cfg.Group = "g"
+	cfg.Source = "test-consumer"
 	cfg.Topics = []string{"t"}
 
 	if err := cfg.Validate(); err != nil {
@@ -82,6 +79,7 @@ func TestBuild_RealRuntimeConstructsOffline(t *testing.T) {
 	cfg := DefaultBuilderConfig()
 	cfg.Brokers = []string{"localhost:9092"}
 	cfg.Group = "build-test"
+	cfg.Source = "test-consumer"
 	cfg.Topics = []string{"loan.created"}
 
 	c, err := Build(context.Background(), cfg, &fakeHandler{})
@@ -101,28 +99,49 @@ func TestBuild_RealRuntimeConstructsOffline(t *testing.T) {
 	}
 }
 
-// TestBuild_BlankSuffixNormalized proves Build re-defaults an empty DLQ suffix to
-// ".dlq" before wiring, so a directly-constructed config never derives
-// <topic><""> == the source topic.
-func TestBuild_BlankSuffixNormalized(t *testing.T) {
+// TestBuild_QuarantinesIntoTheConsumersOwnDLQTopic proves Build derives the DLQ
+// target from the CONSUMER's own ce-source, not from the record's topic.
+//
+// The topic is not configurable: the two-name ACL contract
+// (lerian.streaming.<app> plus its .dlq) is the whole point, and a free-text
+// knob could rename the second half out from under it.
+func TestBuild_QuarantinesIntoTheConsumersOwnDLQTopic(t *testing.T) {
+	t.Parallel()
+
+	cfg := DefaultBuilderConfig()
+	cfg.Brokers = []string{"localhost:9092"}
+	cfg.Group = "g"
+	cfg.Source = "matcher"
+	cfg.Topics = []string{"lerian.streaming.lender"}
+
+	c, err := Build(context.Background(), cfg, &fakeHandler{})
+	if err != nil {
+		t.Fatalf("Build = %v; want nil", err)
+	}
+
+	want := contract.AppDLQTopic("matcher")
+	if got := c.(*consumerRuntime).dlq.(*transportDLQPublisher).dlqTopic; got != want {
+		t.Errorf("DLQ topic = %q; want %q (the consumer's own DLQ)", got, want)
+	}
+
+	_ = c.Close()
+}
+
+// TestBuild_RequiresTheConsumersOwnSource proves an enabled consumer without a
+// ce-source identity fails closed. It is not cosmetic: the identity names the
+// DLQ topic, and every enabled consumer has a DLQ path, so a missing one leaves
+// terminal records with nowhere to quarantine.
+func TestBuild_RequiresTheConsumersOwnSource(t *testing.T) {
 	t.Parallel()
 
 	cfg := DefaultBuilderConfig()
 	cfg.Brokers = []string{"localhost:9092"}
 	cfg.Group = "g"
 	cfg.Topics = []string{"t"}
-	cfg.DLQTopicSuffix = "" // blank -> must be normalized
 
-	c, err := Build(context.Background(), cfg, &fakeHandler{})
-	if err != nil {
-		t.Fatalf("Build with blank suffix = %v; want nil (normalized)", err)
+	if _, err := Build(context.Background(), cfg, &fakeHandler{}); !errors.Is(err, ErrMissingConsumerSource) {
+		t.Fatalf("Build(no source) = %v; want ErrMissingConsumerSource", err)
 	}
-
-	if got := c.(*consumerRuntime).cfg.DLQTopicSuffix; got != DefaultDLQTopicSuffix {
-		t.Errorf("normalized DLQTopicSuffix = %q; want %q", got, DefaultDLQTopicSuffix)
-	}
-
-	_ = c.Close()
 }
 
 // TestBuild_InvalidConfigRejected proves Build fails closed on a config that does
@@ -144,6 +163,7 @@ func TestBuild_NilHandlerRejected(t *testing.T) {
 	cfg := DefaultBuilderConfig()
 	cfg.Brokers = []string{"localhost:9092"}
 	cfg.Group = "g"
+	cfg.Source = "test-consumer"
 	cfg.Topics = []string{"t"}
 
 	if _, err := Build(context.Background(), cfg, nil); !errors.Is(err, ErrNilHandler) {
@@ -283,14 +303,18 @@ func TestConsumerOptions(t *testing.T) {
 }
 
 // TestPublishDLQ_StampsForensicHeaders drives the production transportDLQPublisher
-// against a SPY transport adapter (no broker): it asserts the destination suffix,
-// key preservation, original-header passthrough, and the eight stamped forensic
-// headers — the header-stamping contract of the DLQ seam.
+// against a SPY transport adapter (no broker): it asserts the consumer-owned DLQ
+// destination, key preservation, original-header passthrough, and the nine
+// stamped forensic headers — the header-stamping contract of the DLQ seam.
 func TestPublishDLQ_StampsForensicHeaders(t *testing.T) {
 	t.Parallel()
 
 	adapter := fake.NewAdapter(contract.TransportKafkaLike)
-	pub := &transportDLQPublisher{adapter: adapter, suffix: ".dlq", groupID: "svc-group"}
+	pub := &transportDLQPublisher{
+		adapter:  adapter,
+		dlqTopic: contract.AppDLQTopic("matcher"),
+		groupID:  "svc-group",
+	}
 
 	source := &kgo.Record{
 		Topic:     "loan.created",
@@ -305,7 +329,7 @@ func TestPublishDLQ_StampsForensicHeaders(t *testing.T) {
 	}
 
 	cause := errors.New("handler said no")
-	if err := pub.PublishDLQ(context.Background(), source, cause, 2); err != nil {
+	if err := pub.PublishDLQ(context.Background(), source, cause, dlqCauseHandler, 2); err != nil {
 		t.Fatalf("PublishDLQ = %v; want nil", err)
 	}
 
@@ -316,8 +340,8 @@ func TestPublishDLQ_StampsForensicHeaders(t *testing.T) {
 
 	m := msgs[0]
 
-	if m.Destination.Name != "loan.created.dlq" {
-		t.Errorf("destination = %q; want loan.created.dlq", m.Destination.Name)
+	if want := contract.AppDLQTopic("matcher"); m.Destination.Name != want {
+		t.Errorf("destination = %q; want %q (the consumer's own DLQ)", m.Destination.Name, want)
 	}
 
 	if m.Key != "tenant-x|loan-7" {
@@ -338,9 +362,10 @@ func TestPublishDLQ_StampsForensicHeaders(t *testing.T) {
 		t.Errorf("original CE headers not preserved: %v", hdr)
 	}
 
-	// The eight forensic headers (values that are deterministic here).
+	// The nine forensic headers (values that are deterministic here).
 	wantContains := map[string]string{
 		"x-lerian-dlq-source-topic":     "loan.created",
+		"x-lerian-dlq-cause-kind":       dlqCauseHandler,
 		"x-lerian-dlq-error-message":    "handler said no",
 		"x-lerian-dlq-retry-count":      "2",
 		"x-lerian-dlq-producer-id":      "svc-group",
@@ -371,8 +396,8 @@ func TestPublishDLQ_NilGuards(t *testing.T) {
 	t.Parallel()
 
 	// Nil adapter.
-	none := &transportDLQPublisher{adapter: nil, suffix: ".dlq", groupID: "g"}
-	if err := none.PublishDLQ(context.Background(), &kgo.Record{Topic: "t"}, nil, 0); !errors.Is(err, contract.ErrNilProducer) {
+	none := &transportDLQPublisher{adapter: nil, dlqTopic: contract.AppDLQTopic("matcher"), groupID: "g"}
+	if err := none.PublishDLQ(context.Background(), &kgo.Record{Topic: "t"}, nil, dlqCauseHandler, 0); !errors.Is(err, contract.ErrNilProducer) {
 		t.Errorf("PublishDLQ(nil adapter) = %v; want ErrNilProducer", err)
 	}
 
@@ -383,9 +408,9 @@ func TestPublishDLQ_NilGuards(t *testing.T) {
 
 	// Nil record with a real adapter.
 	adapter := fake.NewAdapter(contract.TransportKafkaLike)
-	pub := &transportDLQPublisher{adapter: adapter, suffix: ".dlq", groupID: "g"}
+	pub := newTestDLQPublisher(adapter, "matcher")
 
-	if err := pub.PublishDLQ(context.Background(), nil, nil, 0); !errors.Is(err, contract.ErrNilProducer) {
+	if err := pub.PublishDLQ(context.Background(), nil, nil, dlqCauseHandler, 0); !errors.Is(err, contract.ErrNilProducer) {
 		t.Errorf("PublishDLQ(nil rec) = %v; want ErrNilProducer", err)
 	}
 }

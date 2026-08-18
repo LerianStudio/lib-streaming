@@ -36,7 +36,7 @@ func TestBuildAndParseCloudEventsHeaders_RoundTrip(t *testing.T) {
 				EventID:         "evt-1",
 				SchemaVersion:   "1.0.0",
 				Timestamp:       ts,
-				Source:          "//lerian.midaz/tx",
+				Source:          "midaz-tx",
 				DataContentType: "application/json",
 				Payload:         json.RawMessage(`{"v":1}`),
 			},
@@ -50,7 +50,7 @@ func TestBuildAndParseCloudEventsHeaders_RoundTrip(t *testing.T) {
 				EventID:         "evt-full",
 				SchemaVersion:   "2.3.1",
 				Timestamp:       ts,
-				Source:          "//lerian.midaz/acct",
+				Source:          "midaz-acct",
 				Subject:         "acct-789",
 				DataContentType: "application/json",
 				DataSchema:      "https://schemas.lerian/account/updated/v2.json",
@@ -66,7 +66,7 @@ func TestBuildAndParseCloudEventsHeaders_RoundTrip(t *testing.T) {
 				EventID:         "evt-sys",
 				SchemaVersion:   "1.0.0",
 				Timestamp:       ts,
-				Source:          "//lerian.platform/reaper",
+				Source:          "platform-reaper",
 				DataContentType: "application/json",
 				SystemEvent:     true,
 				Payload:         json.RawMessage(`{"pass":true}`),
@@ -141,7 +141,7 @@ func TestBuildCloudEventsHeaders_SystemEventOmitsTenant(t *testing.T) {
 		EventID:         "evt-1",
 		SchemaVersion:   "1.0.0",
 		Timestamp:       time.Now().UTC(),
-		Source:          "//lerian.platform",
+		Source:          "platform",
 		DataContentType: "application/json",
 		SystemEvent:     true,
 	}
@@ -182,7 +182,7 @@ func TestBuildCloudEventsHeaders_NonSystemOmitsSystemEventFlag(t *testing.T) {
 		EventID:         "evt-1",
 		SchemaVersion:   "1.0.0",
 		Timestamp:       time.Now().UTC(),
-		Source:          "//lerian.midaz",
+		Source:          "midaz",
 		DataContentType: "application/json",
 		SystemEvent:     false,
 	}
@@ -196,8 +196,11 @@ func TestBuildCloudEventsHeaders_NonSystemOmitsSystemEventFlag(t *testing.T) {
 	}
 }
 
-// TestBuildCloudEventsHeaders_TypeComposition asserts ce-type follows the
-// "studio.lerian.<resource>.<event>" reverse-DNS shape verbatim.
+// TestBuildCloudEventsHeaders_TypeComposition asserts ce-type follows the v3
+// "studio.lerian.<source>.<resource>.<event>" reverse-DNS shape verbatim.
+// The <source> segment is the v3 addition: without it, two services emitting
+// the same resource/event names produce byte-identical ce-type values, a
+// homonym collision a consumer reading only ce-type cannot detect.
 func TestBuildCloudEventsHeaders_TypeComposition(t *testing.T) {
 	t.Parallel()
 
@@ -208,14 +211,14 @@ func TestBuildCloudEventsHeaders_TypeComposition(t *testing.T) {
 		EventID:         "evt-1",
 		SchemaVersion:   "1.0.0",
 		Timestamp:       time.Now().UTC(),
-		Source:          "//lerian.midaz",
+		Source:          "midaz-ledger",
 		DataContentType: "application/json",
 	}
 
 	headers := buildCloudEventsHeaders(event)
 
 	got := findHeader(headers, headerCEType)
-	want := "studio.lerian.transaction.created"
+	want := "studio.lerian.midaz-ledger.transaction.created"
 
 	if got != want {
 		t.Errorf("ce-type = %q; want %q", got, want)
@@ -257,7 +260,7 @@ func TestBuildCloudEventsHeaders_SkipsEmptyOptionals(t *testing.T) {
 		EventID:       "evt-1",
 		SchemaVersion: "1.0.0",
 		Timestamp:     time.Now().UTC(),
-		Source:        "//lerian.midaz",
+		Source:        "midaz",
 		// Subject, DataContentType, DataSchema deliberately empty.
 	}
 
@@ -279,7 +282,7 @@ func TestParseCloudEventsHeaders_MissingRequiredHeader(t *testing.T) {
 	// Deliberately missing ce-id.
 	headers := []kgo.RecordHeader{
 		{Key: headerCESpecVersion, Value: []byte("1.0")},
-		{Key: headerCESource, Value: []byte("//source")},
+		{Key: headerCESource, Value: []byte("source")},
 		{Key: headerCEType, Value: []byte("studio.lerian.t.e")},
 		{Key: headerCETime, Value: []byte(time.Now().UTC().Format(time.RFC3339Nano))},
 	}
@@ -303,7 +306,7 @@ func TestParseCloudEventsHeaders_UnsupportedSpecVersion(t *testing.T) {
 	headers := []kgo.RecordHeader{
 		{Key: headerCESpecVersion, Value: []byte("2.0")},
 		{Key: headerCEID, Value: []byte("evt-1")},
-		{Key: headerCESource, Value: []byte("//source")},
+		{Key: headerCESource, Value: []byte("source")},
 		{Key: headerCEType, Value: []byte("studio.lerian.t.e")},
 		{Key: headerCETime, Value: []byte(time.Now().UTC().Format(time.RFC3339Nano))},
 	}
@@ -327,7 +330,7 @@ func TestParseCloudEventsHeaders_InvalidTime(t *testing.T) {
 	headers := []kgo.RecordHeader{
 		{Key: headerCESpecVersion, Value: []byte("1.0")},
 		{Key: headerCEID, Value: []byte("evt-1")},
-		{Key: headerCESource, Value: []byte("//s")},
+		{Key: headerCESource, Value: []byte("s")},
 		{Key: headerCEType, Value: []byte("studio.lerian.t.e")},
 		{Key: headerCETime, Value: []byte("not-a-timestamp")},
 	}
@@ -384,7 +387,7 @@ func TestBuildHeaders(t *testing.T) {
 				EventID:       "evt-min",
 				SchemaVersion: "1.0.0",
 				Timestamp:     ts,
-				Source:        "//test/min",
+				Source:        "test-min",
 			},
 			// Required: ce-specversion, ce-id, ce-source, ce-type,
 			// ce-time, ce-schemaversion, ce-resourcetype, ce-eventtype = 8
@@ -399,7 +402,7 @@ func TestBuildHeaders(t *testing.T) {
 				EventID:       "evt-full",
 				SchemaVersion: "2.3.1",
 				Timestamp:     ts,
-				Source:        "//test/full",
+				Source:        "test-full",
 				Subject:       "acct-789",
 				DataSchema:    "https://schemas.lerian/account.json",
 			},
@@ -417,7 +420,7 @@ func TestBuildHeaders(t *testing.T) {
 				EventID:       "evt-sys",
 				SchemaVersion: "1.0.0",
 				Timestamp:     ts,
-				Source:        "//test/system",
+				Source:        "test-system",
 				SystemEvent:   true,
 			},
 			wantMinHeaders:   8,
@@ -525,6 +528,159 @@ func TestBuildHeaders_EmptyEvent(t *testing.T) {
 		}
 		if !found {
 			t.Errorf("required header %q missing from BuildHeaders(empty Event)", key)
+		}
+	}
+}
+
+// TestBuildCloudEventsHeaders_TypeDisambiguatesProducers pins the gap the v3
+// app segment closes: two services publishing a resource/event pair with the
+// same names must NOT produce the same ce-type. Under v2's source-blind
+// "studio.lerian.<resource>.<event>" they did, and a consumer reading ce-type
+// had no way to tell whose "payment.authorized" it was holding.
+func TestBuildCloudEventsHeaders_TypeDisambiguatesProducers(t *testing.T) {
+	t.Parallel()
+
+	build := func(source string) string {
+		return findHeader(buildCloudEventsHeaders(Event{
+			ResourceType:  "payment",
+			EventType:     "authorized",
+			EventID:       "evt-1",
+			SchemaVersion: "1.0.0",
+			Timestamp:     time.Now().UTC(),
+			Source:        source,
+		}), headerCEType)
+	}
+
+	lender := build("lender")
+	matcher := build("matcher")
+
+	if lender == matcher {
+		t.Fatalf("ce-type collision across producers: both %q", lender)
+	}
+
+	if lender != "studio.lerian.lender.payment.authorized" {
+		t.Errorf("ce-type = %q; want studio.lerian.lender.payment.authorized", lender)
+	}
+
+	if matcher != "studio.lerian.matcher.payment.authorized" {
+		t.Errorf("ce-type = %q; want studio.lerian.matcher.payment.authorized", matcher)
+	}
+}
+
+// TestBuildTransportHeaders_GoldenWireFormat pins the COMPLETE header sequence
+// a fully-populated event produces, as string literals.
+//
+// Literals, deliberately: every other test in this package spells the keys with
+// the headerCE* constants, so renaming a constant renames the expectation with
+// it and the test still passes. Mutation testing proved exactly that —
+// ce-resourcetype, ce-eventtype and ce-schemaversion could each be renamed with
+// ZERO unit failures, and those three are what a v3 consumer dispatches on. A
+// silent rename ships a producer no consumer can route.
+//
+// This is a WIRE CONTRACT. Changing any string here is a breaking change for
+// every deployed consumer, so this test is meant to fail loudly and be updated
+// deliberately, never adjusted to match the code.
+func TestBuildTransportHeaders_GoldenWireFormat(t *testing.T) {
+	t.Parallel()
+
+	event := Event{
+		TenantID:        "tenant-abc",
+		ResourceType:    "loan_contract",
+		EventType:       "disbursed",
+		EventID:         "evt-1",
+		SchemaVersion:   "2.1.0",
+		Timestamp:       time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC),
+		Source:          "lender",
+		Subject:         "loan-42",
+		DataContentType: "application/json",
+		DataSchema:      "https://schemas.lerian.studio/loan/disbursed/2.1.0",
+	}
+
+	want := []struct {
+		key   string
+		value string
+	}{
+		{"ce-specversion", "1.0"},
+		{"ce-id", "evt-1"},
+		{"ce-source", "lender"},
+		{"ce-type", "studio.lerian.lender.loan_contract.disbursed"},
+		{"ce-time", "2026-08-18T12:00:00Z"},
+		{"ce-schemaversion", "2.1.0"},
+		{"ce-resourcetype", "loan_contract"},
+		{"ce-eventtype", "disbursed"},
+		{"ce-subject", "loan-42"},
+		{"ce-datacontenttype", "application/json"},
+		{"ce-dataschema", "https://schemas.lerian.studio/loan/disbursed/2.1.0"},
+		{"ce-tenantid", "tenant-abc"},
+	}
+
+	got := BuildTransportHeaders(event)
+
+	if len(got) != len(want) {
+		keys := make([]string, 0, len(got))
+		for _, h := range got {
+			keys = append(keys, h.Key)
+		}
+
+		t.Fatalf("header count = %d %v; want %d (the full non-system set)", len(got), keys, len(want))
+	}
+
+	for i, w := range want {
+		if got[i].Key != w.key {
+			t.Errorf("header[%d].Key = %q; want %q — this is a WIRE CONTRACT, not an implementation detail", i, got[i].Key, w.key)
+		}
+
+		if string(got[i].Value) != w.value {
+			t.Errorf("header[%d] (%s) value = %q; want %q", i, w.key, string(got[i].Value), w.value)
+		}
+	}
+}
+
+// TestBuildTransportHeaders_SystemEventGoldenWireFormat pins the system-event
+// shape as literals too: ce-systemevent appears, ce-tenantid does NOT.
+func TestBuildTransportHeaders_SystemEventGoldenWireFormat(t *testing.T) {
+	t.Parallel()
+
+	event := Event{
+		ResourceType:  "ledger",
+		EventType:     "rolled_over",
+		EventID:       "evt-2",
+		SchemaVersion: "1.0.0",
+		Timestamp:     time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC),
+		Source:        "midaz-ledger",
+		SystemEvent:   true,
+	}
+
+	want := []struct {
+		key   string
+		value string
+	}{
+		{"ce-specversion", "1.0"},
+		{"ce-id", "evt-2"},
+		{"ce-source", "midaz-ledger"},
+		{"ce-type", "studio.lerian.midaz-ledger.ledger.rolled_over"},
+		{"ce-time", "2026-08-18T12:00:00Z"},
+		{"ce-schemaversion", "1.0.0"},
+		{"ce-resourcetype", "ledger"},
+		{"ce-eventtype", "rolled_over"},
+		{"ce-systemevent", "true"},
+	}
+
+	got := BuildTransportHeaders(event)
+
+	if len(got) != len(want) {
+		t.Fatalf("header count = %d; want %d", len(got), len(want))
+	}
+
+	for i, w := range want {
+		if got[i].Key != w.key || string(got[i].Value) != w.value {
+			t.Errorf("header[%d] = %s=%q; want %s=%q", i, got[i].Key, string(got[i].Value), w.key, w.value)
+		}
+	}
+
+	for _, h := range got {
+		if h.Key == "ce-tenantid" {
+			t.Error("system event emitted ce-tenantid; the contract omits it")
 		}
 	}
 }

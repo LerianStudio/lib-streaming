@@ -11,8 +11,8 @@ import (
 
 	"github.com/LerianStudio/lib-observability/v2/log"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport/fake"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport/fake"
 )
 
 // TestEmitMulti_PerTransportPayloadCap pins the C4 fix: a payload that
@@ -64,7 +64,7 @@ func TestEmitMulti_PerTransportPayloadCap_RejectsForRequiredSQSRoute(t *testing.
 
 	p, err := NewProducerMulti(
 		ctx,
-		MultiProducerConfig{Source: "svc://payload-cap-test"},
+		MultiProducerConfig{Source: "svc-payload-cap-test"},
 		nil,
 		[]TargetSpec{{Name: "primary", Kind: contract.TransportSQS, Adapter: primary}},
 		routes,
@@ -117,7 +117,7 @@ func TestEmitMulti_PerTransportPayloadCap_AllowsKafkaSizedForKafkaRoute(t *testi
 
 	p, err := NewProducerMulti(
 		ctx,
-		MultiProducerConfig{Source: "svc://payload-cap-kafka"},
+		MultiProducerConfig{Source: "svc-payload-cap-kafka"},
 		nil,
 		[]TargetSpec{{Name: "primary", Kind: TransportKafkaLike, Adapter: primary}},
 		routes,
@@ -176,7 +176,7 @@ func TestEmitMulti_PerTransportPayloadCap_OptionalRouteDoesNotRejectSync(t *test
 
 	p, err := NewProducerMulti(
 		ctx,
-		MultiProducerConfig{Source: "svc://payload-cap-optional"},
+		MultiProducerConfig{Source: "svc-payload-cap-optional"},
 		nil,
 		[]TargetSpec{
 			{Name: "primary", Kind: TransportKafkaLike, Adapter: primary},

@@ -4,15 +4,22 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
 )
 
 // PublisherDescriptor carries app-owned metadata used by manifest export and
 // runtime introspection. The app still owns routing, auth, server bootstrap,
 // and any publication of the manifest artifact.
 type PublisherDescriptor struct {
-	ServiceName     string `json:"serviceName"`
-	SourceBase      string `json:"sourceBase"`
+	ServiceName string `json:"serviceName"`
+	// Source is the producing application's CloudEvents ce-source: a single
+	// dot-free lowercase segment (see contract.ValidateSource). It is the
+	// sole input to the application's one topic, so it is validated here,
+	// not merely trimmed.
+	//
+	// Renamed from v2's SourceBase — nothing is "based" on it any more; it
+	// IS the source, verbatim, on every ce-source header and in the topic.
+	Source          string `json:"source"`
 	RoutePath       string `json:"routePath"`
 	OutboxSupported bool   `json:"outboxSupported"`
 	AppVersion      string `json:"appVersion,omitempty"`
@@ -30,7 +37,6 @@ type PublisherDescriptor struct {
 // NewPublisherDescriptor validates and normalizes a PublisherDescriptor.
 func NewPublisherDescriptor(descriptor PublisherDescriptor) (PublisherDescriptor, error) {
 	if contract.HasControlChar(descriptor.ServiceName) ||
-		contract.HasControlChar(descriptor.SourceBase) ||
 		contract.HasControlChar(descriptor.RoutePath) ||
 		contract.HasControlChar(descriptor.AppVersion) ||
 		contract.HasControlChar(descriptor.LibVersion) ||
@@ -39,7 +45,10 @@ func NewPublisherDescriptor(descriptor PublisherDescriptor) (PublisherDescriptor
 	}
 
 	descriptor.ServiceName = strings.TrimSpace(descriptor.ServiceName)
-	descriptor.SourceBase = strings.TrimSpace(descriptor.SourceBase)
+	// Source is deliberately NOT trimmed. Producer preflight validates the
+	// source untrimmed, so trimming here would make " lender " publishable
+	// in the manifest and a hard failure at the first Emit — two gates
+	// disagreeing about the same string.
 	descriptor.RoutePath = strings.TrimSpace(descriptor.RoutePath)
 	descriptor.AppVersion = strings.TrimSpace(descriptor.AppVersion)
 	descriptor.LibVersion = strings.TrimSpace(descriptor.LibVersion)
@@ -49,8 +58,12 @@ func NewPublisherDescriptor(descriptor PublisherDescriptor) (PublisherDescriptor
 		return PublisherDescriptor{}, fmt.Errorf("%w: service name required", ErrInvalidPublisherDescriptor)
 	}
 
-	if descriptor.SourceBase == "" {
-		return PublisherDescriptor{}, fmt.Errorf("%w: source base required", ErrInvalidPublisherDescriptor)
+	// Strict source validation, not a mere non-empty check, and applied to
+	// the value EXACTLY as given: the descriptor's Source is what the
+	// manifest advertises as the application's topic, so a value the
+	// producer would reject at Build must not be publishable here.
+	if err := contract.ValidateSource(descriptor.Source); err != nil {
+		return PublisherDescriptor{}, fmt.Errorf("%w: %w", ErrInvalidPublisherDescriptor, err)
 	}
 
 	if descriptor.RoutePath == "" {

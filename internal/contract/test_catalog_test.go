@@ -13,7 +13,7 @@ func sampleEvent() Event {
 		ResourceType:  "transaction",
 		EventType:     "created",
 		SchemaVersion: "1.0.0",
-		Source:        "//test/service",
+		Source:        "test-service",
 		Subject:       "tx-123",
 		Payload:       json.RawMessage(`{"amount":100}`),
 	}

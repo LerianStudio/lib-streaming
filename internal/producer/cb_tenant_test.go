@@ -13,8 +13,8 @@ import (
 	tmcore "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/core"
 	"github.com/LerianStudio/lib-observability/v2/log"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport/fake"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport/fake"
 )
 
 func TestProducer_TenantAwareCircuitBreakersIsolateTenants(t *testing.T) {
@@ -30,7 +30,7 @@ func TestProducer_TenantAwareCircuitBreakersIsolateTenants(t *testing.T) {
 	p, err := NewProducerMulti(
 		ctx,
 		MultiProducerConfig{
-			Source:         "svc://tenant-cb-test",
+			Source:         "svc-tenant-cb-test",
 			CBFailureRatio: 1,
 			CBMinRequests:  1,
 			CBTimeout:      time.Hour,
@@ -93,7 +93,7 @@ func TestProducer_TenantAwareCircuitOpenOutboxFallbackWritesEnvelope(t *testing.
 	p, err := NewProducerMulti(
 		ctx,
 		MultiProducerConfig{
-			Source:         "svc://tenant-cb-outbox-test",
+			Source:         "svc-tenant-cb-outbox-test",
 			CBFailureRatio: 1,
 			CBMinRequests:  1,
 			CBTimeout:      time.Hour,
@@ -165,7 +165,7 @@ func TestProducer_TenantAwareCircuitBreakerSkipsSystemEvents(t *testing.T) {
 	p, err := NewProducerMulti(
 		ctx,
 		MultiProducerConfig{
-			Source:         "svc://system-cb-test",
+			Source:         "svc-system-cb-test",
 			CBFailureRatio: 1,
 			CBMinRequests:  1,
 			CBTimeout:      time.Hour,
@@ -216,7 +216,7 @@ func TestProducer_TenantAwareRecoveryPokesRegisteredTenantBreakers(t *testing.T)
 	p, err := NewProducerMulti(
 		ctx,
 		MultiProducerConfig{
-			Source:         "svc://tenant-cb-recovery-test",
+			Source:         "svc-tenant-cb-recovery-test",
 			CBFailureRatio: 1,
 			CBMinRequests:  1,
 			CBTimeout:      50 * time.Millisecond,
@@ -318,7 +318,7 @@ func TestCBListener_TenantTransitionDoesNotPoisonNoTenantMirror(t *testing.T) {
 		metrics:            newStreamingMetrics(nil, log.NewNop()),
 		primaryTargetName:  "primary",
 		targets:            map[string]*targetRuntime{},
-		cloudEventsSource:  "svc://tenant-listener-test",
+		cloudEventsSource:  "svc-tenant-listener-test",
 		cbRecoveryInterval: time.Hour,
 	}
 	rt := &targetRuntime{name: "primary", kind: TransportKafkaLike, cbServiceName: targetCBServiceName(p.producerID, "primary")}

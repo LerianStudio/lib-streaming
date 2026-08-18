@@ -7,7 +7,7 @@ import (
 	"errors"
 	"testing"
 
-	streaming "github.com/LerianStudio/lib-streaming/v2"
+	streaming "github.com/LerianStudio/lib-streaming/v3"
 	"github.com/twmb/franz-go/pkg/sasl/plain"
 )
 
@@ -146,16 +146,21 @@ func minimalValidBuilder(t *testing.T) *streaming.Builder {
 		t.Fatalf("NewCatalog: %v", err)
 	}
 
+	appTopic, err := streaming.AppTopic("lerian-test-svc")
+	if err != nil {
+		t.Fatalf("AppTopic: %v", err)
+	}
+
 	route := streaming.RouteDefinition{
 		Key:           "transaction.created.kafka",
 		DefinitionKey: "transaction.created",
 		Target:        "primary",
-		Destination:   streaming.KafkaTopic("streaming.transaction.created"),
+		Destination:   streaming.KafkaTopic(appTopic),
 		Requirement:   streaming.RouteRequired,
 	}
 
 	return streaming.NewBuilder().
-		Source("//lerian.test/svc").
+		Source("lerian-test-svc").
 		Catalog(catalog).
 		Routes(route).
 		Target(streaming.TargetConfig{

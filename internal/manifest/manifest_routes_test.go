@@ -7,13 +7,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
 )
 
 func descriptorFixture() PublisherDescriptor {
 	return PublisherDescriptor{
 		ServiceName: "lib-streaming-test",
-		SourceBase:  "svc://lib-streaming-test",
+		Source:      "lib-streaming-test",
 		AppVersion:  "0.0.0",
 		LibVersion:  "0.0.0",
 	}

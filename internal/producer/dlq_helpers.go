@@ -1,20 +1,23 @@
 package producer
 
+import "github.com/LerianStudio/lib-streaming/v3/internal/contract"
+
 // The six DLQ forensic header keys live in internal/dlqheader so the
 // consumer's DLQ publisher (later wave) reuses the exact same string values
 // — a shared wire contract, not a producer-private detail.
 
-// dlqTopicSuffix is the literal suffix appended to the source topic to
-// derive the per-topic DLQ name. Per-topic DLQ (TRD §C8) is preferred over
-// a global DLQ because it lets operators scope replay tooling to a single
-// topic and keeps failure-class cardinality proportional to topic count,
-// not to the product of topic × error_class.
-const dlqTopicSuffix = ".dlq"
-
-// dlqTopic derives "{source}.dlq" from the source topic name. Split out as
-// a named helper so the naming convention surfaces in exactly one place.
+// dlqTopic derives "<topic>.dlq" from a destination topic name. Split out as
+// a named helper so the naming convention surfaces in exactly one place; the
+// suffix itself lives on contract.DLQTopicSuffix, shared with the exported
+// AppDLQTopic so provisioning tooling and the runtime cannot disagree.
+//
+// Per-topic DLQ (TRD §C8) is preferred over a global DLQ because it lets
+// operators scope replay tooling to a single topic and keeps failure-class
+// cardinality proportional to topic count, not to topic × error_class. Under
+// the v3 topic collapse that resolves to one DLQ per producing application —
+// the derivation is unchanged, the topic count simply dropped to one.
 func dlqTopic(sourceTopic string) string {
-	return sourceTopic + dlqTopicSuffix
+	return sourceTopic + contract.DLQTopicSuffix
 }
 
 // isDLQRoutable reports whether a classified error should route to the

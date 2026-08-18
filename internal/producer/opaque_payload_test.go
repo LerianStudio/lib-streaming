@@ -20,7 +20,7 @@ var xmlPayload = []byte{
 
 // xmlCatalog registers a single definition whose DataContentType is
 // application/xml, mapped to the same resource/event as sampleCatalog's
-// "transaction.created" so its derived topic ("test.transaction.created")
+// "transaction.created" so its derived topic ("lerian.streaming.test")
 // matches the topic kfakeConfig pre-seeds.
 func xmlCatalog(tb testing.TB) Catalog {
 	tb.Helper()

@@ -14,7 +14,7 @@ import (
 
 	"github.com/LerianStudio/lib-observability/v2/log"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
 )
 
 // This file is the docs/design/consumer.md §9 mandated kfake-backed smoke test.
@@ -36,6 +36,9 @@ import (
 
 const (
 	kfakeSourceTopic = "lerian.streaming.loan.created"
+	// kfakeConsumerApp is THIS consumer's own ce-source; it names the DLQ the
+	// consumer quarantines into.
+	kfakeConsumerApp = "consumer-kfake"
 	kfakeGroup       = "consumer-kfake-smoke"
 	// closeBudget bounds Close(): a clean LeaveGroup is sub-second; a frozen
 	// rebalance never returns. 10s is generous headroom over the franz-go
@@ -95,7 +98,9 @@ func kfakeCluster(t *testing.T) *kfake.Cluster {
 		kfake.NumBrokers(1),
 		kfake.AllowAutoTopicCreation(),
 		kfake.DefaultNumPartitions(1),
-		kfake.SeedTopics(1, kfakeSourceTopic, kfakeSourceTopic+".dlq"),
+		// Both the source topic and the CONSUMER's own DLQ — a consumer
+		// quarantines into its own, never the producer's.
+		kfake.SeedTopics(1, kfakeSourceTopic, contract.AppDLQTopic(kfakeConsumerApp)),
 	)
 	if err != nil {
 		t.Fatalf("kfake.NewCluster err = %v", err)
@@ -113,6 +118,7 @@ func kfakeConsumerConfig(cluster *kfake.Cluster) ConsumerConfig {
 		Enabled:             true,
 		Brokers:             cluster.ListenAddrs(),
 		Group:               kfakeGroup,
+		Source:              kfakeConsumerApp,
 		Topics:              []string{kfakeSourceTopic},
 		ClientID:            "consumer-kfake-smoke",
 		RetryBudget:         1,
@@ -122,7 +128,6 @@ func kfakeConsumerConfig(cluster *kfake.Cluster) ConsumerConfig {
 		HaltBackoff:         time.Millisecond,
 		PollTimeout:         200 * time.Millisecond,
 		CloseTimeout:        closeBudget,
-		DLQTopicSuffix:      ".dlq",
 	}
 }
 
@@ -203,7 +208,7 @@ func ceHeadersForKfake(tenant string) []kgo.RecordHeader {
 	return []kgo.RecordHeader{
 		{Key: "ce-specversion", Value: []byte("1.0")},
 		{Key: "ce-id", Value: []byte("evt-kfake-1")},
-		{Key: "ce-source", Value: []byte("//test/source")},
+		{Key: "ce-source", Value: []byte("test-source")},
 		{Key: "ce-type", Value: []byte("studio.lerian.loan.created")},
 		{Key: "ce-time", Value: []byte(time.Now().UTC().Format(time.RFC3339Nano))},
 		{Key: "ce-resourcetype", Value: []byte("loan")},

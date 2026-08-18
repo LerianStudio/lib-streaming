@@ -24,8 +24,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
 )
 
 // MaxBodyBytes is the SQS message size cap (256 KiB). The adapter validates

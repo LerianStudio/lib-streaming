@@ -37,25 +37,42 @@ func TestResolveEvent_NilReceiverReturnsZero(t *testing.T) {
 // Producer and then zero the field to exercise the in-resolveEvent guard.
 // This proves the function surfaces ErrMissingSource even in the defensive
 // case where validation somehow did not run.
-func TestResolveEvent_MissingSourceReturnsErrMissingSource(t *testing.T) {
-	cfg, _ := kfakeConfig(t)
-
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
-	if err != nil {
-		t.Fatalf("New err = %v", err)
+// TestNewProducer_RejectsMissingOrMalformedSource pins that the ce-source gate
+// is a CONSTRUCTION-time gate, not a per-Emit one.
+//
+// The source is the sole input to the application's topic, its DLQ name, and
+// the manifest's advertised topic — and it is immutable once the Producer
+// exists. Validating it once at construction is what makes "validate before
+// you derive" true by construction instead of re-proving a fact about a
+// constant on every Emit. A service with a malformed source now fails to
+// start rather than failing on its first business event.
+func TestNewProducer_RejectsMissingOrMalformedSource(t *testing.T) {
+	cases := []struct {
+		name   string
+		source string
+		want   error
+	}{
+		{"empty", "", ErrMissingSource},
+		{"v2 uri shape", "//lerian.midaz/tx", ErrInvalidSource},
+		{"capitalized", "Lender", ErrInvalidSource},
+		{"dotted namespace", "lerian.midaz", ErrInvalidSource},
 	}
 
-	t.Cleanup(func() { _ = emitter.Close() })
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, _ := kfakeConfig(t)
+			cfg.CloudEventsSource = tc.source
 
-	p := asProducer(t, emitter)
+			emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
+			if err == nil {
+				_ = emitter.Close()
+				t.Fatalf("New(source=%q) = nil error; want %v at CONSTRUCTION", tc.source, tc.want)
+			}
 
-	// Simulate a Producer that slipped past config validation with an empty
-	// CloudEventsSource. resolveEvent's guard is defense in depth.
-	p.cloudEventsSource = ""
-
-	_, err = p.resolveEventAllowDisabled(sampleRequest())
-	if !errors.Is(err, ErrMissingSource) {
-		t.Fatalf("resolveEvent err = %v; want ErrMissingSource", err)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("New(source=%q) err = %v; want %v", tc.source, err, tc.want)
+			}
+		})
 	}
 }
 
@@ -154,5 +171,66 @@ func TestResolveEvent_SystemEventLegalWithoutTenantID(t *testing.T) {
 	partitionKey := resolved.Event.PartitionKey()
 	if !strings.HasPrefix(partitionKey, "system:") {
 		t.Errorf("PartitionKey() = %q; want prefix system:", partitionKey)
+	}
+}
+
+// TestResolveEvent_SystemEventDropsTenantID pins that a system event never
+// carries ce-tenantid, no matter what the caller passed.
+//
+// The contract says so in two places — Event.SystemEvent's godoc ("omits
+// ce-tenantid from headers") and the header builder, which emits ce-tenantid
+// whenever TenantID is non-empty. Those two disagreed: a system event with a
+// TenantID set shipped the header anyway, so a platform-level event arrived
+// looking tenant-scoped and any consumer filtering on ce-tenantid would route
+// it into one tenant's processing.
+func TestResolveEvent_SystemEventDropsTenantID(t *testing.T) {
+	t.Parallel()
+
+	cfg, _ := kfakeConfig(t)
+
+	catalog, err := NewCatalog(EventDefinition{
+		Key:          "ledger.rolled_over",
+		ResourceType: "ledger",
+		EventType:    "rolled_over",
+		SystemEvent:  true,
+	})
+	if err != nil {
+		t.Fatalf("NewCatalog err = %v", err)
+	}
+
+	emitter, err := New(context.Background(), cfg,
+		WithLogger(log.NewNop()),
+		WithCatalog(catalog),
+		WithAllowSystemEvents(),
+	)
+	if err != nil {
+		t.Fatalf("New err = %v", err)
+	}
+
+	t.Cleanup(func() { _ = emitter.Close() })
+
+	p := asProducer(t, emitter)
+
+	resolved, err := p.resolveEventAllowDisabled(EmitRequest{
+		DefinitionKey: "ledger.rolled_over",
+		TenantID:      "t-should-be-dropped",
+		Payload:       []byte(`{}`),
+	})
+	if err != nil {
+		t.Fatalf("resolveEvent err = %v", err)
+	}
+
+	if resolved.Event.TenantID != "" {
+		t.Fatalf("system event TenantID = %q; want empty", resolved.Event.TenantID)
+	}
+
+	for _, h := range buildTransportHeaders(context.Background(), resolved.Event) {
+		if h.Key == "ce-tenantid" {
+			t.Fatalf("system event emitted ce-tenantid = %q; the contract omits it", string(h.Value))
+		}
+	}
+
+	if got := resolved.Event.PartitionKey(); got != "system:"+resolved.Event.EventType {
+		t.Errorf("system PartitionKey() = %q; want the system prefix", got)
 	}
 }
