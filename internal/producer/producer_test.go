@@ -291,7 +291,8 @@ func TestProducer_EmitPreFlight_InvalidJSON(t *testing.T) {
 
 // TestProducer_EmitPreFlight_MissingResourceType: empty ResourceType surfaces
 // ErrMissingResourceType synchronously. Guards against the degenerate
-// degenerate "{service}.." topic and malformed "studio.lerian." ce-type header
+// malformed "studio.lerian.<source>.." ce-type header and an event no
+// consumer dispatch table can match
 // that a caller-blank ResourceType would produce — no consumer routes those,
 // so the emit would silently vanish at the worst possible layer.
 func TestProducer_EmitPreFlight_MissingResourceType(t *testing.T) {

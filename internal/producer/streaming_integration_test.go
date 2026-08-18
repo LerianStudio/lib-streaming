@@ -390,9 +390,11 @@ func TestIntegration_RoundTripHeaders(t *testing.T) {
 	assert.Equal(t, event.TenantID, parsed.TenantID, "ce-tenantid")
 	assert.True(t, parsed.Timestamp.Equal(now), "ce-time mismatch: got=%s want=%s", parsed.Timestamp, now)
 
-	// ce-type composition: studio.lerian.<resource>.<event>
+	// ce-type composition: studio.lerian.<source>.<resource>.<event>. The
+	// <source> segment is the v3 addition — without it, two services'
+	// same-named events produce byte-identical ce-type values.
 	headers := headerMap(r.Headers)
-	assert.Equal(t, "studio.lerian.transaction.created", headers["ce-type"], "ce-type")
+	assert.Equal(t, "studio.lerian."+integrationSource+".transaction.created", headers["ce-type"], "ce-type")
 	assert.Equal(t, cloudEventsSpecVersion, headers["ce-specversion"], "ce-specversion")
 
 	// Byte-equal body preservation: the kgo record value is exactly the
@@ -655,7 +657,7 @@ func TestIntegration_DLQRouting(t *testing.T) {
 	// emitted here is the correct invariant.
 	assert.Equal(t, cloudEventsSpecVersion, hdrs["ce-specversion"])
 	assert.Equal(t, event.Source, hdrs["ce-source"])
-	assert.Equal(t, "studio.lerian."+resourceType+"."+eventType, hdrs["ce-type"])
+	assert.Equal(t, "studio.lerian."+integrationSource+"."+resourceType+"."+eventType, hdrs["ce-type"])
 	assert.Equal(t, event.Subject, hdrs["ce-subject"])
 	assert.Equal(t, event.TenantID, hdrs["ce-tenantid"])
 	assert.Equal(t, resourceType, hdrs["ce-resourcetype"])
@@ -996,7 +998,7 @@ func TestIntegration_CloudEventsSDKContract(t *testing.T) {
 	require.NoError(t, ce.Validate(), "cloudevents.Event.Validate()")
 
 	assert.Equal(t, event.EventID, ce.ID(), "ID")
-	assert.Equal(t, "studio.lerian.transaction.created", ce.Type(), "Type")
+	assert.Equal(t, "studio.lerian."+integrationSource+".transaction.created", ce.Type(), "Type")
 	assert.Equal(t, event.Source, ce.Source(), "Source")
 	assert.True(t, ce.Time().Equal(now), "Time")
 }

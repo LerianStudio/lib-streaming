@@ -419,7 +419,7 @@
 //
 // github.com/LerianStudio/lib-commons/v6/commons/dlq is a Redis-backed
 // retriable work-item queue with consumer-driven dequeue semantics. This
-// package's per-topic Kafka DLQ (<source>.dlq) is an immutable,
+// package's per-topic Kafka DLQ (lerian.streaming.<source>.dlq) is an immutable,
 // consumer-pull, append-only quarantine log for failed event publications.
 // They are orthogonal and not substitutes:
 //
@@ -478,6 +478,15 @@
 //   - topic: distinguishes destinations across routes for a given Emit. For
 //     non-Kafka transports the label still carries the route's logical
 //     destination identifier so route-level dashboards remain meaningful.
+//
+//     OPERATIONAL NOTE for v3: with one topic per producing application, a
+//     single-Kafka-target producer emits ONE value for this label. Dashboards
+//     that used to break streaming_emitted_total down by event topic now see a
+//     flat series. Break down by resource/event using trace spans instead —
+//     resource_type and event_type are span attributes and are deliberately
+//     NOT metric labels (cardinality discipline). Multi-target producers still
+//     see one label value per distinct destination.
+//
 //   - outcome: one of produced, outboxed, circuit_open, caller_error, dlq,
 //     failed, outbox_failed. There is no optional_failed metric outcome in
 //     the current code. Optional-route failures add a route.optional_failed
