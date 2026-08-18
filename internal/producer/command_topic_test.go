@@ -175,118 +175,103 @@ func TestEmit_CommandDLQIsTheAppDLQNotACommandsDLQ(t *testing.T) {
 	}
 }
 
-// TestEmit_ExplicitKafkaDestinationIsNotRewrittenForCommands pins the
-// escape hatch: only an AppTopic-derived destination moves. A route the caller
-// pointed somewhere on purpose — a mirror, a migration window — stays exactly
-// where it was pointed, class or no class.
+// commandProducerWithRoute wires a producer over one caller-supplied route so
+// a test can pin what the class split does to a destination the route table
+// named explicitly.
+func commandProducerWithRoute(t *testing.T, adapter transport.TransportAdapter, route contract.RouteDefinition) *Producer {
+	t.Helper()
+
+	catalog := commandMixedCatalog(t)
+
+	routes, err := contract.NewRouteTable(route)
+	if err != nil {
+		t.Fatalf("NewRouteTable() error = %v", err)
+	}
+
+	p, err := NewProducerMulti(
+		context.Background(),
+		MultiProducerConfig{Source: commandTestSource},
+		nil,
+		[]TargetSpec{{Name: "primary", Kind: TransportKafkaLike, Adapter: adapter}},
+		routes,
+		catalog,
+		WithLogger(log.NewNop()),
+		WithCatalog(catalog),
+	)
+	if err != nil {
+		t.Fatalf("NewProducerMulti() error = %v", err)
+	}
+
+	t.Cleanup(func() { _ = p.Close() })
+
+	return p
+}
+
+// TestEmit_ExplicitKafkaDestinationIsNotRewrittenForCommands pins the real
+// rule, which is textual, not provenance-based: a destination that EQUALS
+// AppTopic(source) moves onto the commands queue, however it was named — by
+// the convenience constructor or typed out by hand in a route table. Any other
+// destination stays exactly where the caller pointed it.
 func TestEmit_ExplicitKafkaDestinationIsNotRewrittenForCommands(t *testing.T) {
 	t.Parallel()
 
-	adapter := fake.NewAdapter(TransportKafkaLike)
-	catalog := commandMixedCatalog(t)
+	t.Run("a foreign destination stays put", func(t *testing.T) {
+		t.Parallel()
 
-	routes, err := contract.NewRouteTable(contract.RouteDefinition{
-		Key:         "primary.mirror",
-		Target:      "primary",
-		Destination: contract.Destination{Kind: TransportKafkaLike, Name: "legacy.mirror.stream"},
-		Requirement: contract.RouteRequired,
-	})
-	if err != nil {
-		t.Fatalf("NewRouteTable() error = %v", err)
-	}
+		adapter := fake.NewAdapter(TransportKafkaLike)
+		p := commandProducerWithRoute(t, adapter, contract.RouteDefinition{
+			Key:         "primary.mirror",
+			Target:      "primary",
+			Destination: contract.Destination{Kind: TransportKafkaLike, Name: "legacy.mirror.stream"},
+			Requirement: contract.RouteRequired,
+		})
 
-	p, err := NewProducerMulti(
-		context.Background(),
-		MultiProducerConfig{Source: commandTestSource},
-		nil,
-		[]TargetSpec{{Name: "primary", Kind: TransportKafkaLike, Adapter: adapter}},
-		routes,
-		catalog,
-		WithLogger(log.NewNop()),
-		WithCatalog(catalog),
-	)
-	if err != nil {
-		t.Fatalf("NewProducerMulti() error = %v", err)
-	}
-
-	t.Cleanup(func() { _ = p.Close() })
-
-	if err := commandEmit(t, p, "margin.reserve"); err != nil {
-		t.Fatalf("Emit(command) error = %v", err)
-	}
-
-	msgs := adapter.Messages()
-	if len(msgs) != 1 {
-		t.Fatalf("published = %d messages; want 1", len(msgs))
-	}
-
-	if got := msgs[0].Destination.Name; got != "legacy.mirror.stream" {
-		t.Errorf("explicit destination = %q; want legacy.mirror.stream (untouched by the class rewrite)", got)
-	}
-}
-
-// TestEmit_ExplicitCommandsDestinationStillPinsTheAppDLQ pins that the DLQ
-// pin follows the DESTINATION, not the rewrite. A caller who names the
-// commands queue explicitly skips the AppTopic rewrite, but without the pin
-// the route-DLQ derivation would still invent "<app>.commands.dlq" — the
-// exact unprovisioned fourth name the pin exists to prevent.
-func TestEmit_ExplicitCommandsDestinationStillPinsTheAppDLQ(t *testing.T) {
-	t.Parallel()
-
-	// Fails only the command publish, so the DLQ copy on the SAME adapter
-	// still lands and can be inspected.
-	adapter := &topicFailingAdapter{failFor: commandTestCommandsTopic}
-	catalog := commandMixedCatalog(t)
-
-	routes, err := contract.NewRouteTable(contract.RouteDefinition{
-		Key:         "primary.commands-explicit",
-		Target:      "primary",
-		Destination: contract.Destination{Kind: TransportKafkaLike, Name: commandTestCommandsTopic},
-		Requirement: contract.RouteRequired,
-	})
-	if err != nil {
-		t.Fatalf("NewRouteTable() error = %v", err)
-	}
-
-	p, err := NewProducerMulti(
-		context.Background(),
-		MultiProducerConfig{Source: commandTestSource},
-		nil,
-		[]TargetSpec{{Name: "primary", Kind: TransportKafkaLike, Adapter: adapter}},
-		routes,
-		catalog,
-		WithLogger(log.NewNop()),
-		WithCatalog(catalog),
-	)
-	if err != nil {
-		t.Fatalf("NewProducerMulti() error = %v", err)
-	}
-
-	t.Cleanup(func() { _ = p.Close() })
-
-	if err := commandEmit(t, p, "margin.reserve"); err == nil {
-		t.Fatal("Emit(command) error = nil; want the required-route failure")
-	}
-
-	var dlq *transport.TransportMessage
-
-	for _, msg := range adapter.published {
-		if msg.Destination.Name == commandTestCommandsTopic {
-			continue
+		if err := commandEmit(t, p, "margin.reserve"); err != nil {
+			t.Fatalf("Emit(command) error = %v", err)
 		}
 
-		m := msg
-		dlq = &m
-	}
+		msgs := adapter.Messages()
+		if len(msgs) != 1 {
+			t.Fatalf("published = %d messages; want 1", len(msgs))
+		}
 
-	if dlq == nil {
-		t.Fatal("no DLQ copy was published for the failed command")
-	}
+		if got := msgs[0].Destination.Name; got != "legacy.mirror.stream" {
+			t.Errorf("explicit destination = %q; want legacy.mirror.stream (untouched by the class rewrite)", got)
+		}
+	})
 
-	if dlq.Destination.Name != commandTestDLQTopic {
-		t.Errorf("command DLQ destination = %q; want %q (there is no %q)",
-			dlq.Destination.Name, commandTestDLQTopic, commandTestCommandsTopic+".dlq")
-	}
+	// The case the comment used to deny: a route table that spells the app
+	// topic out by hand is indistinguishable from the generated one, and gets
+	// the same treatment — the command moves, and the DLQ is pinned to the
+	// app's own ".dlq" so the redirect cannot derive a ".commands.dlq".
+	t.Run("a destination spelled as the app topic still moves", func(t *testing.T) {
+		t.Parallel()
+
+		adapter := &topicFailingAdapter{failFor: commandTestCommandsTopic}
+		p := commandProducerWithRoute(t, adapter, contract.RouteDefinition{
+			Key:         "primary.handwritten",
+			Target:      "primary",
+			Destination: contract.Destination{Kind: TransportKafkaLike, Name: commandTestAppTopic},
+			Requirement: contract.RouteRequired,
+		})
+
+		if err := commandEmit(t, p, "margin.reserve"); err == nil {
+			t.Fatal("Emit(command) error = nil; want the required-route failure")
+		}
+
+		if len(adapter.published) != 2 {
+			t.Fatalf("published = %d messages; want 2 (the command attempt plus its DLQ copy)", len(adapter.published))
+		}
+
+		if got := adapter.published[0].Destination.Name; got != commandTestCommandsTopic {
+			t.Errorf("command destination = %q; want %q — a hand-written app topic moves too", got, commandTestCommandsTopic)
+		}
+
+		if got := adapter.published[1].Destination.Name; got != commandTestDLQTopic {
+			t.Errorf("command DLQ destination = %q; want %q (never %q)",
+				got, commandTestDLQTopic, commandTestCommandsTopic+".dlq")
+		}
+	})
 }
 
 // TestEmit_CommandOutboxEnvelopeCarriesTheCommandsTopic pins that a durable
