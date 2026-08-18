@@ -279,10 +279,11 @@ emitter, err := streaming.NewBuilder().
             Destination: streaming.KafkaTopic(streaming.AppTopic("midaz-ledger")),
             Requirement: streaming.RouteRequired,
         },
-        // Definition-scoped: shadow ONE event to SQS. A route naming a
-        // definition wins over the catch-all for that definition, so this
-        // event is not double-published — set the DefinitionKey on both
-        // routes if you want it on Kafka too.
+        // Definition-scoped: shadow ONE event to SQS. Resolution is
+        // ADDITIVE per target — this route names a DIFFERENT target than
+        // the catch-all, so transaction.created goes to BOTH the app topic
+        // and the SQS queue. A definition-scoped route only replaces the
+        // catch-all when it names the SAME target.
         streaming.RouteDefinition{
             Key:           "transaction_created.sqs.shadow",
             DefinitionKey: "transaction.created",

@@ -299,18 +299,36 @@ func validateRoutesAgainstTargets(ctx context.Context, logger log.Logger, routes
 		}
 	}
 
-	// Every catalog entry MUST have at least one route, otherwise
-	// emit-time would surface ErrNoRoutesConfigured for any caller using
-	// that key. Catching at construction is far better.
+	// Every catalog entry MUST resolve to at least one REQUIRED route.
+	//
+	// "At least one route" is not enough: a definition served only by
+	// optional routes has no route whose failure the caller ever hears
+	// about, so a total outage of those destinations is a silent, durable
+	// loss reported as a successful Emit. Durability has to be provable at
+	// construction, not discovered at emit.
 	for _, def := range catalog.Definitions() {
-		if len(routes.Routes(def.Key)) == 0 {
-			a := newAsserterForLogger(logger, "producer_multi.validate_routes_orphan_definition")
-			_ = a.That(ctx, false, "catalog entry must have at least one route",
-				"definition_key", def.Key,
-			)
+		resolved := routes.Routes(def.Key)
 
-			return fmt.Errorf("%w: definition %q has no routes", contract.ErrNoRoutesConfigured, def.Key)
+		required := 0
+
+		for _, route := range resolved {
+			if route.Requirement == contract.RouteRequired {
+				required++
+			}
 		}
+
+		if required > 0 {
+			continue
+		}
+
+		a := newAsserterForLogger(logger, "producer_multi.validate_routes_orphan_definition")
+		_ = a.That(ctx, false, "catalog entry must resolve to at least one required route",
+			"definition_key", def.Key,
+			"resolved_routes", len(resolved),
+		)
+
+		return fmt.Errorf("%w: definition %q resolves to %d route(s), none of them required — delivery would not be provable",
+			contract.ErrNoRoutesConfigured, def.Key, len(resolved))
 	}
 
 	return nil

@@ -4,6 +4,7 @@ package contract
 
 import (
 	"errors"
+	"slices"
 	"testing"
 )
 
@@ -78,30 +79,110 @@ func TestRouteTable_CatchAllServesEveryDefinition(t *testing.T) {
 	}
 }
 
-// TestRouteTable_DefinitionScopedRouteWinsOverCatchAll pins the precedence
-// that makes "shadow only THESE events to SQS" expressible: a definition with
-// its own route does NOT also fire the catch-all, so the selected events are
-// not double-published.
-func TestRouteTable_DefinitionScopedRouteWinsOverCatchAll(t *testing.T) {
+// TestRouteTable_DefinitionScopedRouteIsAdditiveAcrossTargets pins the v3
+// resolution semantics, which are ADDITIVE per target, not winner-take-all.
+//
+// The old winner-take-all rule silently diverted an event OFF the app topic:
+// scoping a definition to a SECOND target (the "shadow these events to SQS"
+// shape) suppressed the catch-all Kafka route for that definition, so the
+// event never reached the app stream at all while Emit still reported success.
+// Durable loss with a green dashboard.
+//
+// The rule now: for a definition key, resolution returns the definition-scoped
+// routes PLUS every catch-all route whose Target no scoped route already
+// covers. Scoping the SAME target overrides the catch-all for that target
+// only; scoping a DIFFERENT target adds to it and never suppresses it.
+func TestRouteTable_DefinitionScopedRouteIsAdditiveAcrossTargets(t *testing.T) {
+	t.Parallel()
+
+	t.Run("different target adds to the catch-all", func(t *testing.T) {
+		t.Parallel()
+
+		table, err := NewRouteTable(
+			kafkaRoute("primary.kafka", "", "primary", "lerian.streaming.lender"),
+			kafkaRoute("loan_disbursed.replica", "loan.disbursed", "replica", "lerian.streaming.lender"),
+		)
+		if err != nil {
+			t.Fatalf("NewRouteTable() error = %v", err)
+		}
+
+		targets := routeTargets(table.Routes("loan.disbursed"))
+		if len(targets) != 2 || !slices.Contains(targets, "primary") || !slices.Contains(targets, "replica") {
+			t.Fatalf("Routes(loan.disbursed) targets = %v; want both the catch-all primary and the scoped replica", targets)
+		}
+	})
+
+	t.Run("same target overrides the catch-all for that target", func(t *testing.T) {
+		t.Parallel()
+
+		table, err := NewRouteTable(
+			kafkaRoute("primary.kafka", "", "primary", "lerian.streaming.lender"),
+			kafkaRoute("loan_disbursed.primary", "loan.disbursed", "primary", "lerian.streaming.lender_override"),
+		)
+		if err != nil {
+			t.Fatalf("NewRouteTable() error = %v", err)
+		}
+
+		scoped := table.Routes("loan.disbursed")
+		if len(scoped) != 1 {
+			t.Fatalf("Routes(loan.disbursed) = %+v; want exactly one route (scoped overrides catch-all on the same target)", scoped)
+		}
+
+		if scoped[0].Key != "loan_disbursed.primary" {
+			t.Errorf("Routes(loan.disbursed)[0].Key = %q; want the scoped override", scoped[0].Key)
+		}
+	})
+
+	t.Run("unscoped definitions still resolve to the catch-all", func(t *testing.T) {
+		t.Parallel()
+
+		table, err := NewRouteTable(
+			kafkaRoute("primary.kafka", "", "primary", "lerian.streaming.lender"),
+			kafkaRoute("loan_disbursed.replica", "loan.disbursed", "replica", "lerian.streaming.lender"),
+		)
+		if err != nil {
+			t.Fatalf("NewRouteTable() error = %v", err)
+		}
+
+		fallback := table.Routes("installment.settled")
+		if len(fallback) != 1 || fallback[0].Target != "primary" {
+			t.Fatalf("Routes(installment.settled) = %+v; want the catch-all route", fallback)
+		}
+	})
+}
+
+// TestRouteTable_SecondCatchAllMirrorsEveryDefinition NAMES the consequence of
+// additive resolution that is easiest to reach for by accident: a second route
+// with an empty DefinitionKey mirrors the app's ENTIRE stream to a second
+// destination. That is app-wide mirroring, and it is intended — the only way
+// to express "everything, twice" — but it is double-publish, so it is pinned
+// here deliberately rather than discovered in production.
+func TestRouteTable_SecondCatchAllMirrorsEveryDefinition(t *testing.T) {
 	t.Parallel()
 
 	table, err := NewRouteTable(
 		kafkaRoute("primary.kafka", "", "primary", "lerian.streaming.lender"),
-		kafkaRoute("loan_disbursed.replica", "loan.disbursed", "replica", "lerian.streaming.lender"),
+		kafkaRoute("mirror.kafka", "", "mirror", "lerian.streaming.lender"),
 	)
 	if err != nil {
 		t.Fatalf("NewRouteTable() error = %v", err)
 	}
 
-	scoped := table.Routes("loan.disbursed")
-	if len(scoped) != 1 || scoped[0].Target != "replica" {
-		t.Fatalf("Routes(loan.disbursed) = %+v; want exactly the replica-scoped route", scoped)
+	for _, definitionKey := range []string{"loan.disbursed", "installment.settled"} {
+		targets := routeTargets(table.Routes(definitionKey))
+		if len(targets) != 2 {
+			t.Fatalf("Routes(%q) targets = %v; want app-wide mirroring to both catch-all targets", definitionKey, targets)
+		}
+	}
+}
+
+func routeTargets(routes []RouteDefinition) []string {
+	targets := make([]string, 0, len(routes))
+	for _, route := range routes {
+		targets = append(targets, route.Target)
 	}
 
-	fallback := table.Routes("installment.settled")
-	if len(fallback) != 1 || fallback[0].Target != "primary" {
-		t.Fatalf("Routes(installment.settled) = %+v; want the catch-all route", fallback)
-	}
+	return targets
 }
 
 // TestRouteTable_NoCatchAllYieldsNoRoutes pins that an unmatched definition

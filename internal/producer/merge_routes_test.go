@@ -78,9 +78,10 @@ func TestAutoGenerateKafkaRoutes_SingleCatchAllRoute(t *testing.T) {
 }
 
 // TestAutoGenerateKafkaRoutes_AppliesOverride proves the single-target path
-// merges overrides via the shared helper: a definition-scoped override wins
-// for its own definition (no double-publish alongside the catch-all), while
-// every other definition still resolves through the catch-all route.
+// merges overrides via the shared helper, under the ADDITIVE-per-target
+// resolution rule: an override on a DIFFERENT target adds a destination for
+// its definition and leaves the app-topic catch-all route in place, so the
+// event still reaches the app stream. Every other definition is untouched.
 func TestAutoGenerateKafkaRoutes_AppliesOverride(t *testing.T) {
 	t.Parallel()
 
@@ -90,12 +91,17 @@ func TestAutoGenerateKafkaRoutes_AppliesOverride(t *testing.T) {
 	}
 
 	billingRoutes := table.Routes("billing_recorded")
-	if len(billingRoutes) != 1 {
-		t.Fatalf("billing routes = %d, want exactly 1 (scoped override beats catch-all)", len(billingRoutes))
+	if len(billingRoutes) != 2 {
+		t.Fatalf("billing routes = %d, want 2 (catch-all primary PLUS the replica override)", len(billingRoutes))
 	}
 
-	if billingRoutes[0].Target != "replica" {
-		t.Errorf("billing route target = %q, want the override target %q", billingRoutes[0].Target, "replica")
+	targets := map[string]bool{}
+	for _, route := range billingRoutes {
+		targets[route.Target] = true
+	}
+
+	if !targets["primary"] || !targets["replica"] {
+		t.Errorf("billing route targets = %v; want both primary (app topic, never suppressed) and replica (override)", targets)
 	}
 
 	transactionRoutes := table.Routes("transaction.created")
@@ -105,5 +111,32 @@ func TestAutoGenerateKafkaRoutes_AppliesOverride(t *testing.T) {
 
 	if transactionRoutes[0].Target != "primary" {
 		t.Errorf("transaction route target = %q, want the catch-all target %q", transactionRoutes[0].Target, "primary")
+	}
+}
+
+// TestAutoGenerateKafkaRoutes_SameTargetOverrideReplacesCatchAll is the other
+// half of the additive rule: an override that names the SAME target as the
+// catch-all replaces it for that definition, so re-pointing a handful of
+// events at a different topic does not double-publish them.
+func TestAutoGenerateKafkaRoutes_SameTargetOverrideReplacesCatchAll(t *testing.T) {
+	t.Parallel()
+
+	override := billingOverrideRoute()
+	override.Key = "billing_recorded.kafka.primary"
+	override.Target = "primary"
+	override.Destination.Name = "lerian.streaming.billing-svc-audit"
+
+	table, err := autoGenerateKafkaRoutes("billing-svc", []contract.RouteDefinition{override})
+	if err != nil {
+		t.Fatalf("autoGenerateKafkaRoutes() error = %v", err)
+	}
+
+	billingRoutes := table.Routes("billing_recorded")
+	if len(billingRoutes) != 1 {
+		t.Fatalf("billing routes = %d, want exactly 1 (same-target override replaces the catch-all)", len(billingRoutes))
+	}
+
+	if got := billingRoutes[0].Destination.Name; got != "lerian.streaming.billing-svc-audit" {
+		t.Errorf("billing destination = %q; want the override topic", got)
 	}
 }

@@ -66,9 +66,30 @@ definition has no topic of its own. `EventDefinition.EventKey()` returns the
 ### BREAKING: route model simplification
 
 `RouteDefinition.DefinitionKey` is now OPTIONAL. Empty means CATCH-ALL: the
-route serves every definition in the catalog. A definition-scoped route WINS
-over a catch-all for its own definition, so "shadow only THESE events to SQS"
-stays expressible without double-publishing everything else.
+route serves every definition in the catalog.
+
+Resolution is **ADDITIVE PER TARGET**. A definition resolves to its
+definition-scoped routes PLUS every catch-all route whose `Target` no scoped
+route already claims:
+
+- Scoping the **same** target overrides the catch-all for that target only —
+  re-point a handful of events at a different topic, no double-publish.
+- Scoping a **different** target ADDS — "shadow only THESE events to SQS" gives
+  those events an SQS destination *and* leaves them on the app topic.
+
+Winner-take-all (a scoped route on any target suppressing every catch-all for
+that definition) was the earlier v3 draft rule and is DELETED: the SQS-shadow
+shape it was meant to serve is exactly the case where it diverted the event OFF
+the app topic entirely, and with the shadow target down the event was durably
+lost while `Emit` reported success.
+
+Two catch-all routes on different targets therefore mean deliberate app-wide
+mirroring: the whole stream published twice.
+
+`validateRoutesAgainstTargets` now FAILS construction when a catalog definition
+resolves to zero `RouteRequired` routes. An all-optional definition can lose
+every copy and still return a nil `Emit` error; delivery must be provable at
+build time, not discovered in production.
 
 The single-Kafka `NewProducer` path now synthesizes exactly ONE catch-all route
 to the app topic on the `"primary"` target; v2's route-per-catalog-entry fanout

@@ -139,10 +139,13 @@ type RouteDefinition struct {
 	// every event goes to the same destination — so a single catch-all
 	// route replaces v2's one-route-per-catalog-entry table.
 	//
-	// A definition-scoped route takes precedence: when a definition has at
-	// least one route naming it explicitly, catch-all routes do NOT also
-	// fire for that definition. That is what makes "shadow only THESE
-	// events to SQS" expressible without double-publishing the rest.
+	// A definition-scoped route overrides the catch-all PER TARGET: it
+	// replaces the catch-all route sharing its Target for that definition,
+	// and ADDS to catch-all routes on every other Target. So "shadow only
+	// THESE events to SQS" adds an SQS destination for those events while
+	// leaving their Kafka app-topic route in place, and "send THESE events
+	// to a different Kafka topic" replaces the app-topic route for exactly
+	// those events without double-publishing.
 	DefinitionKey string
 	Target        string
 	Destination   Destination
@@ -274,8 +277,11 @@ func newRouteDefinition(route RouteDefinition, sqsValidationCache map[string]err
 	return route, nil
 }
 
-// Routes returns the routes that serve definitionKey in deterministic order:
-// the routes naming it explicitly, or — when none do — the catch-all routes.
+// Routes returns every route that serves definitionKey, in deterministic
+// order: the routes naming it explicitly, PLUS the catch-all routes whose
+// Target no explicit route already claims. See routesUnsafe for the full
+// additive-per-target rule.
+//
 // The returned slice and every element is a defensive copy, so callers may
 // mutate freely without affecting the immutable RouteTable.
 func (t RouteTable) Routes(definitionKey string) []RouteDefinition {
@@ -300,10 +306,20 @@ func (t RouteTable) Routes(definitionKey string) []RouteDefinition {
 // Reachable from internal/producer via the package-internal RoutesUnsafe
 // helper below — both packages are under internal/, so the uppercase
 // helper is acceptable as an "internal-only escape hatch" form.
-// Definition-scoped routes WIN over catch-all routes: when a definition has
-// at least one route naming it, the catch-all routes do not also fire for it.
-// That precedence is what lets a caller re-route a handful of events without
-// double-publishing them alongside the default app-topic route.
+// Resolution is ADDITIVE PER TARGET, resolved once at construction (see
+// buildRoutesByDefinition) so this stays a single map lookup:
+//
+//   - A definition-scoped route OVERRIDES the catch-all for ITS OWN Target.
+//     Re-pointing "loan.disbursed" at a different topic on target "primary"
+//     replaces the primary catch-all for that definition and does not
+//     double-publish.
+//   - A definition-scoped route on a DIFFERENT Target ADDS to the catch-all.
+//     Shadowing a handful of events to SQS therefore leaves the Kafka app-topic
+//     route intact for those events.
+//
+// The earlier winner-take-all rule made the second case silently divert the
+// event OFF the app topic — a durable loss that Emit reported as success
+// whenever the shadow target was the only surviving route and it went down.
 func (t RouteTable) routesUnsafe(definitionKey string) []RouteDefinition {
 	if routes := t.byDefinition[definitionKey]; len(routes) > 0 {
 		return routes
@@ -982,12 +998,20 @@ func sortRouteDefinitions(routes []RouteDefinition) {
 	})
 }
 
-// buildRoutesByDefinition splits the validated route slice into the
-// definition-scoped index and the catch-all bucket (routes whose
-// DefinitionKey is empty). Both preserve the caller-visible deterministic
+// buildRoutesByDefinition splits the validated route slice into the catch-all
+// bucket (routes whose DefinitionKey is empty) and a PRE-RESOLVED index keyed
+// by definition key.
+//
+// Resolution is ADDITIVE PER TARGET and is done here, once, at construction:
+// a definition's entry holds its own scoped routes plus every catch-all route
+// whose Target no scoped route already claims. Doing it at construction keeps
+// routesUnsafe a single map lookup on the Emit hot path — the additive union
+// costs nothing per emit.
+//
+// Both the index entries and the catch-all bucket preserve the deterministic
 // order established by sortRouteDefinitions.
 func buildRoutesByDefinition(routes []RouteDefinition) (map[string][]RouteDefinition, []RouteDefinition) {
-	byDefinition := make(map[string][]RouteDefinition)
+	scoped := make(map[string][]RouteDefinition)
 
 	var catchAll []RouteDefinition
 
@@ -998,7 +1022,31 @@ func buildRoutesByDefinition(routes []RouteDefinition) (map[string][]RouteDefini
 			continue
 		}
 
-		byDefinition[route.DefinitionKey] = append(byDefinition[route.DefinitionKey], clone)
+		scoped[route.DefinitionKey] = append(scoped[route.DefinitionKey], clone)
+	}
+
+	byDefinition := make(map[string][]RouteDefinition, len(scoped))
+
+	for definitionKey, defRoutes := range scoped {
+		claimed := make(map[string]struct{}, len(defRoutes))
+		for _, route := range defRoutes {
+			claimed[route.Target] = struct{}{}
+		}
+
+		resolved := make([]RouteDefinition, 0, len(defRoutes)+len(catchAll))
+		resolved = append(resolved, defRoutes...)
+
+		for _, route := range catchAll {
+			if _, taken := claimed[route.Target]; taken {
+				continue
+			}
+
+			resolved = append(resolved, cloneRouteDefinition(route))
+		}
+
+		sortRouteDefinitions(resolved)
+
+		byDefinition[definitionKey] = resolved
 	}
 
 	return byDefinition, catchAll

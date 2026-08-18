@@ -569,13 +569,17 @@ func TestNewProducerMulti_AllOptionalFail_ReturnsNilButRecordsOptional(t *testin
 
 	catalog := sampleCatalog(t)
 	routes := mustMultiRouteTable(t,
-		// Override the default Required route for "transaction.created"
-		// so this definition has THREE Optional routes and zero Required.
-		// mustMultiRouteTable's auto-attach only fills DefinitionKeys it
-		// hasn't seen — we control transaction.created here entirely.
+		// THREE Optional routes for "transaction.created", all of which
+		// fail, plus the one Required route the construction-time
+		// durability gate demands (validateRoutesAgainstTargets rejects a
+		// definition that resolves to zero Required routes — an
+		// all-optional definition can lose every copy and still report a
+		// successful Emit). The Required route's adapter succeeds, so the
+		// thing under test is unchanged: Optional failures never surface.
 		multiTestRoute("transaction.created.kafka.opt-a", "transaction.created", "opt-a", "lerian.streaming.transaction.created.a", contract.RouteOptional),
 		multiTestRoute("transaction.created.kafka.opt-b", "transaction.created", "opt-b", "lerian.streaming.transaction.created.b", contract.RouteOptional),
 		multiTestRoute("transaction.created.kafka.opt-c", "transaction.created", "opt-c", "lerian.streaming.transaction.created.c", contract.RouteOptional),
+		multiTestRoute("transaction.created.kafka.primary", "transaction.created", "primary", "lerian.streaming.transaction.created", contract.RouteRequired),
 	)
 
 	factory, snapshot := newManualMeterSetup(t)
@@ -589,9 +593,11 @@ func TestNewProducerMulti_AllOptionalFail_ReturnsNilButRecordsOptional(t *testin
 			{Name: "opt-b", Kind: TransportKafkaLike, Adapter: optB},
 			{Name: "opt-c", Kind: TransportKafkaLike, Adapter: optC},
 			// Default mustMultiRouteTable Required routes pin to "primary";
-			// we register a primary target so the route table validates.
-			// It receives no traffic from this test (we Emit only the
-			// transaction.created definition).
+			// primary carries the one Required route for
+			// transaction.created (and the default routes for every other
+			// definition). Its adapter succeeds, so Emit's nil return is
+			// attributable to the Optional failures being swallowed, which
+			// is what this test is about.
 			{Name: "primary", Kind: TransportKafkaLike, Adapter: fake.NewAdapter(TransportKafkaLike)},
 		},
 		routes,
