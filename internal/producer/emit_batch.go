@@ -110,7 +110,14 @@ func (p *Producer) buildBatchRequestEnvelopes(
 	envelopes := make([]OutboxEnvelope, 0, len(routes))
 
 	for routeIndex := range routes {
-		routePolicy, err := applyRoutePolicy(resolved.Policy, routes[routeIndex])
+		// Apply the fact/command split BEFORE the envelope is built, exactly
+		// as dispatchRoute does on the direct path. The relay republishes from
+		// the persisted Destination days later with no catalog in hand, so an
+		// envelope naming the fact topic would quietly reclassify the command
+		// as a fact — onto a stream whose consumer ignores unmatched keys.
+		route := commandRoute(routes[routeIndex], resolved.Event.Source, resolved.Class)
+
+		routePolicy, err := applyRoutePolicy(resolved.Policy, route)
 		if err != nil {
 			return nil, fmt.Errorf("streaming: resolve outbox batch request %d route %d: %w", requestIndex, routeIndex, err)
 		}
@@ -119,12 +126,12 @@ func (p *Producer) buildBatchRequestEnvelopes(
 			return nil, fmt.Errorf(
 				"streaming: outbox batch request %d route %q: %w",
 				requestIndex,
-				routes[routeIndex].Key,
+				route.Key,
 				ErrEventDisabled,
 			)
 		}
 
-		envelope := p.newOutboxEnvelope(ctx, resolved.Event, resolved.DefinitionKey, routes[routeIndex], routePolicy)
+		envelope := p.newOutboxEnvelope(ctx, resolved.Event, resolved.DefinitionKey, route, routePolicy)
 		if err := envelope.ValidateShape(); err != nil {
 			return nil, fmt.Errorf("streaming: validate outbox batch request %d route %d: %w", requestIndex, routeIndex, err)
 		}

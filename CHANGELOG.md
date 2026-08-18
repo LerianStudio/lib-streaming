@@ -299,7 +299,9 @@ streaming.EventDefinition{
 
 The route table is untouched. The synthesized catch-all route, and any
 `AppTopic`-derived destination, redirect command-class definitions to the
-commands queue at dispatch; an explicit `KafkaTopic(...)` pointed somewhere on
+commands queue — on the direct path, on the outbox fallback, and on the
+transactional `EmitBatch` path, so a replayed command lands on the same queue a
+direct emit would have used. An explicit `KafkaTopic(...)` pointed somewhere on
 purpose is never rewritten. The durability gate (every definition needs at least
 one required route) and the DLQ size rules apply to commands identically.
 

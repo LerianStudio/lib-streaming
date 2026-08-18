@@ -306,6 +306,60 @@ func (a *topicFailingAdapter) Classify(err error) contract.ErrorClass {
 	return contract.ClassBrokerUnavailable
 }
 
+// TestEmitBatch_CommandEnvelopeCarriesTheCommandsTopic closes the same hole on
+// the BATCH path. A batched command persists an envelope the relay republishes
+// from days later; one naming the fact topic would quietly reclassify the
+// command as a fact, on a stream whose consumer ignores unmatched keys — the
+// exact silent loss the commands queue exists to prevent, arriving through the
+// one path nobody watches.
+func TestEmitBatch_CommandEnvelopeCarriesTheCommandsTopic(t *testing.T) {
+	t.Parallel()
+
+	adapter := fake.NewAdapter(TransportKafkaLike)
+	catalog := commandMixedCatalog(t)
+
+	routes, err := contract.NewRouteTable(appTopicRoutes(commandTestSource)...)
+	if err != nil {
+		t.Fatalf("NewRouteTable() error = %v", err)
+	}
+
+	p, err := NewProducerMulti(
+		context.Background(),
+		MultiProducerConfig{Source: commandTestSource},
+		nil,
+		[]TargetSpec{{Name: "primary", Kind: TransportKafkaLike, Adapter: adapter}},
+		routes,
+		catalog,
+		WithLogger(log.NewNop()),
+		WithCatalog(catalog),
+	)
+	if err != nil {
+		t.Fatalf("NewProducerMulti() error = %v", err)
+	}
+
+	t.Cleanup(func() { _ = p.Close() })
+
+	envelopes, err := p.buildBatchEnvelopes(context.Background(), []EmitRequest{
+		{DefinitionKey: "loan.disbursed", TenantID: "tenant-abc", Payload: []byte(`{}`)},
+		{DefinitionKey: "margin.reserve", TenantID: "tenant-abc", Payload: []byte(`{}`)},
+	})
+	if err != nil {
+		t.Fatalf("buildBatchEnvelopes() error = %v", err)
+	}
+
+	if len(envelopes) != 2 {
+		t.Fatalf("envelopes = %d; want 2", len(envelopes))
+	}
+
+	if got := envelopes[0].Destination.Name; got != commandTestAppTopic {
+		t.Errorf("fact envelope destination = %q; want %q", got, commandTestAppTopic)
+	}
+
+	if got := envelopes[1].Destination.Name; got != commandTestCommandsTopic {
+		t.Errorf("command envelope destination = %q; want %q", got, commandTestCommandsTopic)
+	}
+}
+
 // recordingOutboxWriter captures every envelope handed to the outbox seam.
 type recordingOutboxWriter struct {
 	envelopes []OutboxEnvelope
