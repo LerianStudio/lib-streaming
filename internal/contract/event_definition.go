@@ -101,17 +101,27 @@ func NewEventDefinition(definition EventDefinition) (EventDefinition, error) {
 	return definition, nil
 }
 
-// EventKey is the "<resourceType>.<eventType>" dispatch key a consumer
-// registers a handler under. It is the routing unit that replaced the
-// per-definition topic: under one-topic-per-app, a consumer receives the
-// producer's whole stream on one subscription and selects by this key,
-// which it reads from the ce-resourcetype / ce-eventtype headers.
+// EventKey composes the "<resourceType>.<eventType>" dispatch key from its two
+// parts. It is the SINGLE owner of that formula: the producer's catalog spells
+// the key with it, the manifest advertises the result, and the consumer's
+// dispatcher recomposes it from the ce-resourcetype / ce-eventtype headers to
+// look up a handler. Two independent concatenations of the same shape is one
+// separator change away from a consumer that silently matches nothing.
+func EventKey(resourceType, eventType string) string {
+	return resourceType + "." + eventType
+}
+
+// EventKey is the dispatch key a consumer registers a handler under. It is the
+// routing unit that replaced the per-definition topic: under one-topic-per-app,
+// a consumer receives the producer's whole stream on one subscription and
+// selects by this key, which it reads from the ce-resourcetype /
+// ce-eventtype headers.
 //
 // There is deliberately no EventDefinition.Topic in v3. A definition has no
 // topic of its own — the producing APPLICATION has exactly one (AppTopic),
 // and it is a property of the producer's ce-source, not of any catalog entry.
 func (d EventDefinition) EventKey() string {
-	return d.ResourceType + "." + d.EventType
+	return EventKey(d.ResourceType, d.EventType)
 }
 
 func validateEventDefinitionHeaderFields(definition EventDefinition) error {

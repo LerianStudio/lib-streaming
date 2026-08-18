@@ -36,7 +36,20 @@ const (
 	metricFetchErrorDataLoss = "streaming_consumer_fetch_error_data_loss_total"
 	metricSystemEvent        = "streaming_consumer_system_event_total"
 	metricPartitionHalted    = "streaming_consumer_partition_halted_total"
+	metricUnmatchedTotal     = "streaming_consumer_unmatched_total"
 )
+
+// maxUnmatchedEventKeyLabels bounds the distinct event_key label values on
+// streaming_consumer_unmatched_total. The keys a consumer legitimately sees are
+// bounded by its producers' catalogs, but the topic is writable by anything the
+// ce-source allowlist admits, so the label is capped and the overflow folds
+// into "other". An unbounded label here would be a metrics-backend hazard
+// dressed up as observability.
+const maxUnmatchedEventKeyLabels = 64
+
+// unmatchedEventKeyOverflow is the label used once maxUnmatchedEventKeyLabels
+// distinct keys have been metered.
+const unmatchedEventKeyOverflow = "other"
 
 // tenantContextKey is the unexported context key under which the validated
 // tenant id is seeded onto the handler ctx. A tenant-aware downstream repo reads
@@ -114,6 +127,12 @@ type consumerRuntime struct {
 	closed    atomic.Bool
 	// lastPollOK records the most recent poll-cycle completion for Healthy.
 	lastPollOK atomic.Bool
+
+	// unmatchedSeen records the event keys already metered/logged as
+	// unmatched, so the log fires once per key rather than once per record,
+	// and so the metric's event_key label stays bounded.
+	unmatchedSeen  sync.Map
+	unmatchedCount atomic.Int64
 }
 
 // New constructs the real consumer runtime from validated config and resolved
@@ -159,7 +178,51 @@ func New(cfg ConsumerConfig, client GroupClient, handler Handler, opts ...Option
 		return nil, ErrNilDLQPublisher
 	}
 
+	// Give the dispatcher a voice for the events it drops. UnmatchedIgnore is
+	// the right default and stays the default; what changes is that it stops
+	// being invisible. A typo'd On("loan.disbursd") otherwise builds clean,
+	// commits every record, reports Healthy, and processes nothing forever.
+	if d, ok := handler.(*Dispatcher); ok {
+		d.ObserveUnmatched(c.recordUnmatched)
+	}
+
 	return c, nil
+}
+
+// recordUnmatched meters and logs one event the dispatcher had no handler for.
+//
+// The metric carries the event key so an operator can see WHICH stream is going
+// unread, bounded by maxUnmatchedEventKeyLabels. The log fires once per key —
+// per record would drown the log in exactly the high-volume case that makes the
+// signal matter.
+func (c *consumerRuntime) recordUnmatched(ctx context.Context, eventKey string) {
+	label := eventKey
+
+	if _, seen := c.unmatchedSeen.Load(eventKey); !seen {
+		if c.unmatchedCount.Load() >= maxUnmatchedEventKeyLabels {
+			label = unmatchedEventKeyOverflow
+		} else if _, loaded := c.unmatchedSeen.LoadOrStore(eventKey, struct{}{}); !loaded {
+			c.unmatchedCount.Add(1)
+
+			c.logger.Log(ctx, log.LevelWarn,
+				"streaming consumer: no handler registered for event key — records are being skipped and committed",
+				log.String("event_key", eventKey),
+				log.String("policy", string(c.unmatchedPolicy())),
+			)
+		}
+	}
+
+	c.recordMetricWithLabels(ctx, metricUnmatchedTotal, map[string]string{"event_key": label})
+}
+
+// unmatchedPolicy reports the dispatcher's unmatched policy for logging, or
+// the ignore default when the handler is not a dispatcher.
+func (c *consumerRuntime) unmatchedPolicy() UnmatchedPolicy {
+	if d, ok := c.handler.(*Dispatcher); ok {
+		return d.unmatched
+	}
+
+	return UnmatchedIgnore
 }
 
 // Consumer runtime sentinels surfaced by New when a collaborator is missing.
@@ -833,6 +896,21 @@ func (c *consumerRuntime) recordMetric(ctx context.Context, name string) {
 	}
 
 	_ = counter.Add(ctx, 1)
+}
+
+// recordMetricWithLabels is recordMetric with a bounded label set. Callers own
+// the cardinality bound on every label value they pass.
+func (c *consumerRuntime) recordMetricWithLabels(ctx context.Context, name string, labels map[string]string) {
+	if c.metrics == nil {
+		return
+	}
+
+	counter, err := c.metrics.Counter(metrics.Metric{Name: name})
+	if err != nil || counter == nil {
+		return
+	}
+
+	_ = counter.WithLabels(labels).Add(ctx, 1)
 }
 
 // errSource names the ORIGIN of a non-nil error so classify can apply the

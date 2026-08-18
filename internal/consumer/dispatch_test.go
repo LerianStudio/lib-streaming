@@ -212,3 +212,111 @@ func TestDispatcher_NilSafe(t *testing.T) {
 		t.Errorf("Handle() with a nil registered func = %v; want nil (treated as unregistered)", err)
 	}
 }
+
+// TestDispatcher_ObserveUnmatchedFiresForEveryDroppedEvent pins that ignoring
+// an unmatched event is observable.
+//
+// UnmatchedIgnore is the right default — an app stream carries every event its
+// producer emits — but the SILENT version of it is a trap: a typo'd
+// On("loan.disbursd") builds clean, commits the whole stream, reports Healthy,
+// and processes nothing forever. The observation hook is what the runtime turns
+// into streaming_consumer_unmatched_total plus a first-sight warning.
+func TestDispatcher_ObserveUnmatchedFiresForEveryDroppedEvent(t *testing.T) {
+	t.Parallel()
+
+	var observed []string
+
+	d := NewDispatcher().
+		On("loan.disbursed", func(context.Context, contract.Event, []byte) error { return nil }).
+		ObserveUnmatched(func(_ context.Context, eventKey string) {
+			observed = append(observed, eventKey)
+		})
+
+	// A typo'd registration means the real event is the unmatched one.
+	if err := d.Handle(context.Background(), dispatchEvent("lender", "loan", "disbursd"), nil); err != nil {
+		t.Fatalf("Handle(unmatched) = %v; want nil under the ignore default", err)
+	}
+
+	if err := d.Handle(context.Background(), dispatchEvent("lender", "audit", "logged"), nil); err != nil {
+		t.Fatalf("Handle(sibling) = %v; want nil", err)
+	}
+
+	if len(observed) != 2 || observed[0] != "loan.disbursd" || observed[1] != "audit.logged" {
+		t.Fatalf("observed unmatched keys = %v; want [loan.disbursd audit.logged]", observed)
+	}
+
+	// A MATCHED event must not be reported as unmatched.
+	if err := d.Handle(context.Background(), dispatchEvent("lender", "loan", "disbursed"), nil); err != nil {
+		t.Fatalf("Handle(matched) = %v; want nil", err)
+	}
+
+	if len(observed) != 2 {
+		t.Fatalf("observed = %v; a matched event must not be reported unmatched", observed)
+	}
+}
+
+// TestDispatcher_ObserveUnmatchedFiresUnderErrorPolicyToo pins that opting into
+// UnmatchedError does not cost the metric: the quarantine decision and the
+// visibility of what is being quarantined are separate concerns.
+func TestDispatcher_ObserveUnmatchedFiresUnderErrorPolicyToo(t *testing.T) {
+	t.Parallel()
+
+	observed := 0
+
+	d := NewDispatcher().
+		On("loan.disbursed", func(context.Context, contract.Event, []byte) error { return nil }).
+		OnUnmatched(UnmatchedError).
+		ObserveUnmatched(func(context.Context, string) { observed++ })
+
+	if err := d.Handle(context.Background(), dispatchEvent("lender", "audit", "logged"), nil); !errors.Is(err, ErrUnhandledEvent) {
+		t.Fatalf("Handle(unmatched) = %v; want ErrUnhandledEvent", err)
+	}
+
+	if observed != 1 {
+		t.Fatalf("observed = %d; want 1", observed)
+	}
+}
+
+// TestDispatcher_OnUnmatchedRejectsUnknownPolicy pins the fail-safe fallback: an
+// unrecognized policy value must land on Ignore, never on Error. Getting that
+// backwards would fail-closed a producer's entire sibling stream into the DLQ
+// because of a typo in one config string.
+func TestDispatcher_OnUnmatchedRejectsUnknownPolicy(t *testing.T) {
+	t.Parallel()
+
+	d := NewDispatcher().
+		On("loan.disbursed", func(context.Context, contract.Event, []byte) error { return nil }).
+		OnUnmatched(UnmatchedPolicy("garbage"))
+
+	if d.unmatched != UnmatchedIgnore {
+		t.Fatalf("unmatched policy = %q; want the safe %q fallback", d.unmatched, UnmatchedIgnore)
+	}
+
+	if err := d.Handle(context.Background(), dispatchEvent("lender", "audit", "logged"), nil); err != nil {
+		t.Fatalf("Handle(unmatched) = %v; want nil under the fallback", err)
+	}
+}
+
+// TestRuntime_WiresUnmatchedObservation pins the wiring, not just the seam: a
+// dispatcher handed to the runtime must come back metered, without the caller
+// asking for it. An unobserved drop is the failure mode this whole path exists
+// to close.
+func TestRuntime_WiresUnmatchedObservation(t *testing.T) {
+	t.Parallel()
+
+	d := NewDispatcher().On("loan.disbursed", func(context.Context, contract.Event, []byte) error { return nil })
+
+	if d.observeUnmatched != nil {
+		t.Fatal("a bare dispatcher must start unobserved")
+	}
+
+	_ = newTestRuntime(t, &fakeGroupClient{}, d, &fakeDLQ{})
+
+	if d.observeUnmatched == nil {
+		t.Fatal("the runtime did not wire unmatched observation onto the dispatcher")
+	}
+
+	// The wired callback must be safe to call with no metrics factory and no
+	// logger configured — observability is optional, never a panic source.
+	d.observeUnmatched(context.Background(), "audit.logged")
+}

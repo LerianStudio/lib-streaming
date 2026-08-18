@@ -68,6 +68,17 @@ type Dispatcher struct {
 	// opt-in for the raw .Topics(...) escape hatch.
 	expectedSources []string
 	unmatched       UnmatchedPolicy
+	// observeUnmatched, when set, is called for every event whose key has no
+	// registered handler. The consumer runtime wires it at Build so the
+	// dispatcher can meter and log without owning a metrics factory of its
+	// own. Nil is the valid standalone-dispatcher case.
+	//
+	// Ignoring unmatched events is the correct DEFAULT — an app stream carries
+	// every event its producer emits — but the silent version of it is a trap:
+	// a typo'd On("loan.disbursd") builds clean, commits the entire stream,
+	// reports Healthy, and processes nothing, forever. This is the seam that
+	// makes that visible.
+	observeUnmatched func(ctx context.Context, eventKey string)
 }
 
 // Compile-time assertion: a Dispatcher must satisfy the Handler surface the
@@ -177,10 +188,14 @@ func (d *Dispatcher) Handle(ctx context.Context, event contract.Event, payload [
 		return fmt.Errorf("%w: got %q, want one of %v", ErrUnexpectedSource, event.Source, d.expectedSources)
 	}
 
-	key := event.ResourceType + "." + event.EventType
+	key := contract.EventKey(event.ResourceType, event.EventType)
 
 	handler, ok := d.handlers[key]
 	if !ok || handler == nil {
+		if d.observeUnmatched != nil {
+			d.observeUnmatched(ctx, key)
+		}
+
 		if d.unmatched == UnmatchedError {
 			return fmt.Errorf("%w: %q", ErrUnhandledEvent, key)
 		}
@@ -189,6 +204,20 @@ func (d *Dispatcher) Handle(ctx context.Context, event contract.Event, payload [
 	}
 
 	return handler(ctx, event, payload)
+}
+
+// ObserveUnmatched wires the callback invoked for every event with no
+// registered handler. The consumer runtime calls it at Build with a recorder
+// that meters streaming_consumer_unmatched_total and logs each key the first
+// time it is seen. Passing nil disables observation.
+func (d *Dispatcher) ObserveUnmatched(fn func(ctx context.Context, eventKey string)) *Dispatcher {
+	if d == nil {
+		return d
+	}
+
+	d.observeUnmatched = fn
+
+	return d
 }
 
 // sourceAccepted reports whether source is in the expected set. An empty set
