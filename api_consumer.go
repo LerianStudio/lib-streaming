@@ -35,9 +35,14 @@ type Handler = consumer.Handler
 // MUST supply one marking its known-transient downstream faults (Midaz/Postgres
 // down, etc.) as retry, else a transient outage over-quarantines into the DLQ.
 // Return true for an error that should be retried (a recoverable downstream
-// blip), false to let it take the fail-closed terminal path. It governs ONLY
-// handler-return errors — transport errors are classified by the transport seam
-// and codec-decode errors are always terminal. See docs/design/consumer.md §7a.
+// blip), false to let it take the fail-closed terminal path. It governs ONLY a
+// service handler's OWN errors — transport errors are classified by the
+// transport seam, codec-decode errors are always terminal, and the library's
+// own structural verdicts (ErrUnexpectedSource, ErrUnhandledEvent) quarantine
+// without ever reaching it. That last exclusion matters: the common classifier
+// shape is "retry anything that is not my business rule", and routing a
+// never-satisfiable verdict through it wedges the partition forever. See
+// docs/design/consumer.md §7a.
 type Classifier = consumer.Classifier
 
 // Consumer is the hardened at-least-once group consumer surface (Run/Close/
@@ -74,8 +79,9 @@ func LoadConsumerConfig() (ConsumerConfig, []string, error) {
 	return consumer.LoadConsumerConfig()
 }
 
-// HandlerFunc is a single-event handler registered under an event key via
-// ConsumerBuilder.On. Same signature as Handler.Handle.
+// HandlerFunc is a single-event handler registered under a (producing app,
+// event key) pair via ConsumerBuilder.OnFrom, or via ConsumerBuilder.On for a
+// single-producer consumer. Same signature as Handler.Handle.
 type HandlerFunc = consumer.HandlerFunc
 
 // UnmatchedPolicy decides what happens to an event on the subscribed stream
@@ -94,15 +100,18 @@ const (
 	UnmatchedError = consumer.UnmatchedError
 )
 
-// Consumer dispatch sentinels. Both are handler-return errors and therefore
-// obey the usual Classifier / fail-closed disposition rules.
+// Consumer runtime sentinels. Both are synthesized BY the library, so both
+// quarantine outright and NEITHER is offered to the service Classifier: they
+// are structural and can never become satisfiable by waiting, exactly like a
+// codec fault.
 var (
-	// ErrUnhandledEvent surfaces under UnmatchedError for an event key with no
-	// registered handler.
+	// ErrUnhandledEvent surfaces under UnmatchedError for an (app, event key)
+	// pair with no registered handler.
 	ErrUnhandledEvent = consumer.ErrUnhandledEvent
-	// ErrUnexpectedSource surfaces when an event's ce-source is not one of the
+	// ErrUnexpectedSource surfaces when a record's ce-source is not one of the
 	// consumer's expected producers — a producer misconfiguration or a foreign
-	// write to the application's topic.
+	// write to a topic this consumer reads. Verified in the runtime, ahead of
+	// either handler mode.
 	ErrUnexpectedSource = consumer.ErrUnexpectedSource
 )
 
@@ -122,17 +131,19 @@ func WithConsumerTracer(t trace.Tracer) ConsumerOption { return consumer.WithTra
 // client (with BlockRebalanceOnPoll + DisableAutoCommit) and the at-least-once
 // runtime.
 //
-// Under one-topic-per-app the ergonomic path is Apps + On: name the producing
-// applications you consume, register one handler per event you care about,
-// and the library subscribes to the right topics, verifies each event came
-// from an expected producer, and dispatches by event key.
+// Under one-topic-per-app the ergonomic path is Source + Apps + OnFrom: declare
+// this application's own identity, name the producing applications you consume,
+// register one handler per (producer, event) pair you care about, and the
+// library subscribes to the right topics, verifies each record came from an
+// expected producer, and dispatches.
 //
 //	c, err := streaming.NewConsumer().
 //	    Brokers(cfg.Brokers...).
 //	    Group("my-service").
-//	    Apps("lender", "matcher").          // -> lerian.streaming.{lender,matcher}
-//	    On("loan.disbursed", onDisbursed).  // "<resourceType>.<eventType>"
-//	    On("loan.settled", onSettled).
+//	    Source(cfg.CloudEventsSource).                     // REQUIRED; names this app's own DLQ
+//	    Apps("lender", "matcher").                         // -> lerian.streaming.{lender,matcher}
+//	    OnFrom("lender", "loan.disbursed", onLenderLoan).  // "<resourceType>.<eventType>"
+//	    OnFrom("matcher", "loan.disbursed", onMatcherLoan).
 //	    TLS(tlsCfg).
 //	    SASL(mech).
 //	    RetryBudget(3).
@@ -142,15 +153,21 @@ func WithConsumerTracer(t trace.Tracer) ConsumerOption { return consumer.WithTra
 //	go func() { _ = c.Run(ctx) }()  // SafeGo in production
 //	defer c.Close()
 //
+// Those two loan.disbursed registrations are the point: lender's and matcher's
+// are different facts with different payloads. A single-producer consumer keeps
+// the terse form — Apps("lender").On("loan.disbursed", h) binds to the sole app
+// — and a bare On under SEVERAL apps fails the build rather than binding to
+// whichever record happens to arrive.
+//
 // Every other event on those streams is skipped and committed
 // (UnmatchedIgnore); call UnmatchedPolicy(streaming.UnmatchedError) to
-// quarantine unknown keys instead. An event whose ce-source is not one of the
+// quarantine unknown keys instead. A record whose ce-source is not one of the
 // named Apps never reaches a handler — that check used to be hand-rolled in
 // every consuming repo.
 //
 // Handler(...) remains for consumers that want the raw stream: it takes the
-// whole record set itself and does its own selection. Handler and On are
-// mutually exclusive.
+// whole record set itself and does its own selection, and gets the same
+// ce-source verification. Handler and On/OnFrom are mutually exclusive.
 //
 // There is deliberately no DLQ(emitter) knob: the DLQ must not flow through the
 // public Emitter (its catalog/payload/header gates reject the very poison it
@@ -162,11 +179,11 @@ type ConsumerBuilder struct {
 	handler    Handler
 	dispatcher *consumer.Dispatcher
 	// dispatchWanted records that the caller asked for per-event dispatch,
-	// which ONLY On(...) does. UnmatchedPolicy and ExpectSources also
-	// allocate the dispatcher because they have somewhere to write, but
-	// allocating it is not a request for it: reading intent off `dispatcher
-	// != nil` made .Handler(h).ExpectSources(...) fail with "Handler and On
-	// are mutually exclusive" when the caller had never written On.
+	// which ONLY On(...) / OnFrom(...) do. UnmatchedPolicy also allocates the
+	// dispatcher because it has somewhere to write, but allocating it is not a
+	// request for it: reading intent off `dispatcher != nil` made
+	// .Handler(h).UnmatchedPolicy(...) fail with "Handler and On are mutually
+	// exclusive" when the caller had never written On.
 	dispatchWanted bool
 	// unmatchedSet records that UnmatchedPolicy was called. The dispatcher's
 	// own field cannot answer this — UnmatchedIgnore is both the default and a

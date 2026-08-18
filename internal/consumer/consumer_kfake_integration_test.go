@@ -36,6 +36,9 @@ import (
 
 const (
 	kfakeSourceTopic = "lerian.streaming.loan.created"
+	// kfakeConsumerApp is THIS consumer's own ce-source; it names the DLQ the
+	// consumer quarantines into.
+	kfakeConsumerApp = "consumer-kfake"
 	kfakeGroup       = "consumer-kfake-smoke"
 	// closeBudget bounds Close(): a clean LeaveGroup is sub-second; a frozen
 	// rebalance never returns. 10s is generous headroom over the franz-go
@@ -95,7 +98,9 @@ func kfakeCluster(t *testing.T) *kfake.Cluster {
 		kfake.NumBrokers(1),
 		kfake.AllowAutoTopicCreation(),
 		kfake.DefaultNumPartitions(1),
-		kfake.SeedTopics(1, kfakeSourceTopic, kfakeSourceTopic+".dlq"),
+		// Both the source topic and the CONSUMER's own DLQ — a consumer
+		// quarantines into its own, never the producer's.
+		kfake.SeedTopics(1, kfakeSourceTopic, contract.AppDLQTopic(kfakeConsumerApp)),
 	)
 	if err != nil {
 		t.Fatalf("kfake.NewCluster err = %v", err)
@@ -113,6 +118,7 @@ func kfakeConsumerConfig(cluster *kfake.Cluster) ConsumerConfig {
 		Enabled:             true,
 		Brokers:             cluster.ListenAddrs(),
 		Group:               kfakeGroup,
+		Source:              kfakeConsumerApp,
 		Topics:              []string{kfakeSourceTopic},
 		ClientID:            "consumer-kfake-smoke",
 		RetryBudget:         1,

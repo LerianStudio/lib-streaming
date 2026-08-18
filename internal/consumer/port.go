@@ -56,6 +56,12 @@ type Handler interface {
 // lost). The fail-closed default is deliberate: an unrecognized error quarantines
 // ONE record (alertable, replayable) instead of wedging the partition.
 //
+// It governs a service handler's OWN errors only. The library's structural
+// verdicts — ErrUnexpectedSource and ErrUnhandledEvent — quarantine without
+// ever reaching it, because neither can become satisfiable by waiting and the
+// common classifier shape ("retry anything that is not my business rule") would
+// turn each into an infinite redelivery loop.
+//
 // Classifier is deliberately a func, not an errors.Is sentinel match: error
 // recognition must not depend on fragile per-error-value comparisons across
 // module boundaries (Req 2).

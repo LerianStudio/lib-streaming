@@ -32,12 +32,18 @@ import (
 // quarantined to the DLQ with the source-mismatch cause kind, never dispatched.
 
 const (
-	dispatchApp        = "lender"
-	dispatchTopic      = "lerian.streaming.lender"
-	dispatchDLQTopic   = "lerian.streaming.lender.dlq"
-	dispatchGroup      = "consumer-dispatch-kfake"
-	dispatchEventKey   = "loan_contract.disbursed"
-	dispatchWaitBudget = 20 * time.Second
+	dispatchApp      = "lender"
+	dispatchTopic    = "lerian.streaming.lender"
+	dispatchDLQTopic = "lerian.streaming.lender.dlq"
+	// The CONSUMING application, and its OWN dead-letter topic. A consumer
+	// quarantines here, never into dispatchDLQTopic — that one belongs to the
+	// producer, and writing to it would need a grant this application does not
+	// have.
+	dispatchConsumerApp      = "loan-projector"
+	dispatchConsumerDLQTopic = "lerian.streaming.loan-projector.dlq"
+	dispatchGroup            = "consumer-dispatch-kfake"
+	dispatchEventKey         = "loan_contract.disbursed"
+	dispatchWaitBudget       = 20 * time.Second
 )
 
 // dispatchCluster spins up a kfake cluster seeded with the app topic and its
@@ -49,7 +55,7 @@ func dispatchCluster(t *testing.T) *kfake.Cluster {
 		kfake.NumBrokers(1),
 		kfake.AllowAutoTopicCreation(),
 		kfake.DefaultNumPartitions(1),
-		kfake.SeedTopics(1, dispatchTopic, dispatchDLQTopic),
+		kfake.SeedTopics(1, dispatchTopic, dispatchDLQTopic, dispatchConsumerDLQTopic),
 	)
 	if err != nil {
 		t.Fatalf("kfake.NewCluster err = %v", err)
@@ -166,7 +172,7 @@ func TestIntegration_ConsumerDispatchKfakeRoundTrip(t *testing.T) {
 	consumer, err := streaming.NewConsumer().
 		Brokers(cluster.ListenAddrs()...).
 		Group(dispatchGroup).
-		Source("test-consumer").
+		Source(dispatchConsumerApp).
 		Apps(dispatchApp).
 		On(dispatchEventKey, func(_ context.Context, ev streaming.Event, body []byte) error {
 			mu.Lock()
@@ -303,6 +309,7 @@ func TestIntegration_ConsumerDispatchForeignSourceQuarantines(t *testing.T) {
 	consumer, err := streaming.NewConsumer().
 		Brokers(cluster.ListenAddrs()...).
 		Group(dispatchGroup+"-foreign").
+		Source(dispatchConsumerApp).
 		Apps(dispatchApp).
 		On(dispatchEventKey, func(context.Context, streaming.Event, []byte) error {
 			select {
@@ -332,7 +339,9 @@ func TestIntegration_ConsumerDispatchForeignSourceQuarantines(t *testing.T) {
 
 	go func() { runDone <- consumer.Run(ctx) }()
 
-	quarantined := awaitDLQRecord(t, cluster, dispatchDLQTopic, dispatchWaitBudget)
+	// The CONSUMER's own DLQ, not the producer's: quarantining is the consuming
+	// application's act and lands on the consuming application's topic.
+	quarantined := awaitDLQRecord(t, cluster, dispatchConsumerDLQTopic, dispatchWaitBudget)
 
 	close(stop)
 	producers.Wait()
@@ -360,8 +369,14 @@ func TestIntegration_ConsumerDispatchForeignSourceQuarantines(t *testing.T) {
 		t.Errorf("x-lerian-dlq-cause-kind = %q; want source_mismatch", got)
 	}
 
+	// Load-bearing now, not merely forensic: the DLQ topic no longer implies
+	// where the record came from, so this is the only route back to it.
 	if got := headers["x-lerian-dlq-source-topic"]; got != dispatchTopic {
 		t.Errorf("x-lerian-dlq-source-topic = %q; want %q", got, dispatchTopic)
+	}
+
+	if _, ok := headers["x-lerian-dlq-source-offset"]; !ok {
+		t.Error("quarantined record carries no x-lerian-dlq-source-offset; the original is unreachable without it")
 	}
 
 	if got := headers["ce-source"]; got != "matcher" {

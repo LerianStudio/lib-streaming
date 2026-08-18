@@ -216,8 +216,8 @@ func (d *Dispatcher) Bind(sources ...string) error {
 
 	switch {
 	case len(bare) > 0 && len(sources) > 1:
-		return fmt.Errorf("%w: On(%s) with %d producing applications in scope %v — use OnFrom(app, eventKey, handler)",
-			ErrBareOnWithMultipleApps, strings.Join(bare, "), On("), len(sources), sources)
+		return fmt.Errorf("%w: bare On(...) registered for %v while subscribing to %v — use OnFrom(app, eventKey, handler)",
+			ErrBareOnWithMultipleApps, bare, sources)
 
 	case len(bare) > 0 && len(sources) == 1:
 		for _, eventKey := range bare {

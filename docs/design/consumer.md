@@ -77,7 +77,9 @@ catalog/JSON/header gating. The DLQ is a first-class, default-on terminal sink �
 never a silent drop.
 
 There is therefore **no public DLQ knob at all**. The DLQ topic is always
-`<topic>.dlq`, from `contract.DLQTopicSuffix`.
+`contract.AppDLQTopic(ConsumerConfig.Source)` — this CONSUMER's own
+`lerian.streaming.<source>.dlq`, never derived per-record from the producer's
+topic (§6).
 
 Optional knobs via `ConsumerOption`: `WithConsumerLogger`,
 `WithConsumerMetricsFactory`, `WithConsumerTracer`, plus internal
@@ -179,7 +181,7 @@ DLQ is **classification-driven only**. A record reaches the DLQ **iff** it is
 classified terminal/poison — bad payload, unknown/drifted topic, nil uuid,
 illegal transition, not-found. Empty `ce-tenantid` is NOT a DLQ reason — it is a
 valid single-tenant scope, dispatched (§7b, mirrors producer v1.6.2). It is
-republished to `<topic>.dlq` via the internal
+republished to the CONSUMER's own `lerian.streaming.<source>.dlq` via the internal
 `transport.TransportAdapter` seam (`dlqPublisher`, constructed by `Build` over
 the same Brokers/TLS/SASL config) — NOT via the public `Emitter`, whose
 catalog/payload/header gates would reject the very poison we must quarantine
@@ -335,11 +337,12 @@ producer lacks). Prefix `STREAMING_CONSUMER_`.
 | PollTimeout           | STREAMING_CONSUMER_POLL_TIMEOUT_MS           | 0       | per-poll cap (0 = block) |
 | CloseTimeout          | STREAMING_CONSUMER_CLOSE_TIMEOUT_S           | 30s     | graceful drain bound |
 
-There is deliberately **no DLQ-suffix knob**. The DLQ topic is always
-`<topic>.dlq`, owned by `contract.DLQTopicSuffix`. The whole point of the topic
-collapse is that a Kafka ACL covers exactly two names — `lerian.streaming.<app>`
-and its `.dlq` — and a free-text suffix could rename the second half out from
-under that grant. `STREAMING_CONSUMER_DLQ_SUFFIX` is retired.
+There is deliberately **no DLQ-suffix knob**. A consumer quarantines into
+`contract.AppDLQTopic(Source)` — its OWN `lerian.streaming.<source>.dlq`. The
+whole point of the topic collapse is that a Kafka ACL covers exactly two WRITES
+per application — `lerian.streaming.<app>` and its `.dlq` — and a free-text
+suffix could rename the second half out from under that grant.
+`STREAMING_CONSUMER_DLQ_SUFFIX` is retired.
 
 `LoadConsumerConfig` reads this table; `ConsumerBuilder.FromConfig(cfg)` adopts
 the result. Without `FromConfig`, none of these variables is read by anything:

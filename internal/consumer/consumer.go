@@ -552,8 +552,9 @@ func (c *consumerRuntime) pollCycle(ctx context.Context) (stop bool, halted map[
 	halted = c.processFetches(ctx, fetches)
 
 	// Fold this cycle's halts into the consecutive-cycle streaks Healthy reads.
-	// It runs on the normal path only: the stop path returned above, and a
-	// shutdown must not be recorded as a wedge.
+	// The drainFetchErrors stop path returned above without touching them, and a
+	// mid-handle shutdown halt cannot accumulate a streak either — Run exits on
+	// the same signal that produced it, so it never gets a second cycle.
 	c.trackHalts(halted)
 
 	// A fetch-error cycle (auth / data-loss / other non-shutdown error) must leave
