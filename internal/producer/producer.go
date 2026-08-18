@@ -346,10 +346,18 @@ func generateProducerID() string {
 // emit_span.go). Keeping producer.go focused on construction/lifecycle
 // makes it easier to audit the hot path in isolation.
 
-// Descriptor returns a validated PublisherDescriptor with ProducerID populated
-// from this Producer instance. Callers pass their app-owned base descriptor
-// (service name, source base, versions, route path) and receive back the
-// normalized descriptor with the runtime-generated ProducerID attached.
+// Descriptor returns a validated PublisherDescriptor stamped with this
+// Producer's identity. Callers pass their app-owned base descriptor (service
+// name, versions, route path) and receive back the normalized descriptor with
+// the runtime-generated ProducerID and the producer's ce-source attached.
+//
+// Source is OVERWRITTEN, not defaulted: whatever the caller set is discarded
+// in favour of the producer's own cloudEventsSource. The manifest's
+// document-level topic is derived from descriptor.Source, so a caller-supplied
+// value that disagreed with the running producer would advertise a topic the
+// producer never publishes to — the Hub would subscribe to an empty topic
+// forever while both sides reported healthy. There is exactly one authority
+// for a producer's source, and it is the producer.
 //
 // The ProducerID is an opaque identifier chosen at construction (currently a
 // UUIDv7, but callers must treat it as opaque); it is NOT stable across
@@ -364,6 +372,7 @@ func (p *Producer) Descriptor(base PublisherDescriptor) (PublisherDescriptor, er
 	}
 
 	base.ProducerID = p.producerID
+	base.Source = p.cloudEventsSource
 
 	return NewPublisherDescriptor(base)
 }

@@ -353,7 +353,7 @@ doc, err := streaming.BuildManifest(descriptor, catalog, routeTable)
 
 The manifest version is exposed as `streaming.ManifestVersion`. Routes are deterministically ordered (definition key, then route key) so the JSON document is byte-stable across builds.
 
-`(*Producer).Descriptor(base PublisherDescriptor)` returns the validated descriptor with the per-process `ProducerID` populated. Use it to feed `BuildManifest` or to stamp identity into custom DLQ metadata without re-validating the descriptor surface manually.
+`(*Producer).Descriptor(base PublisherDescriptor)` returns the validated descriptor with the per-process `ProducerID` populated and `Source` replaced by the producer's own `ce-source` (the manifest topic derives from it, so the producer is its only authority — a caller-supplied value is discarded). Use it to feed `BuildManifest` or to stamp identity into custom DLQ metadata without re-validating the descriptor surface manually.
 
 **SECURITY**: the manifest exposes event taxonomy, schema versions, service metadata, and producer IDs. Callers MUST wrap the handler in their app's auth middleware before mounting it publicly. The library does not enforce authentication.
 

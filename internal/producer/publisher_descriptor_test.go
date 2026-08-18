@@ -102,6 +102,38 @@ func TestProducer_Descriptor_PopulatesProducerID(t *testing.T) {
 	}
 }
 
+// TestProducer_Descriptor_StampsProducerSource pins that the descriptor's
+// Source is taken from the running Producer, never from the caller.
+//
+// The manifest's document-level topic is derived from descriptor.Source. If
+// the caller could supply a different one, the manifest would advertise a
+// topic the producer never publishes to, and the Hub would subscribe to an
+// empty topic forever while both sides report healthy.
+func TestProducer_Descriptor_StampsProducerSource(t *testing.T) {
+	cfg, _ := kfakeConfig(t)
+
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
+	if err != nil {
+		t.Fatalf("New err = %v", err)
+	}
+
+	t.Cleanup(func() { _ = emitter.Close() })
+
+	p := asProducer(t, emitter)
+
+	for _, callerSource := range []string{"", "some-other-app", "  test  "} {
+		got, err := p.Descriptor(PublisherDescriptor{ServiceName: "svc", Source: callerSource})
+		if err != nil {
+			t.Fatalf("Descriptor(Source=%q) err = %v", callerSource, err)
+		}
+
+		if got.Source != p.cloudEventsSource {
+			t.Errorf("Descriptor(Source=%q).Source = %q; want the producer's own source %q",
+				callerSource, got.Source, p.cloudEventsSource)
+		}
+	}
+}
+
 // TestProducer_Descriptor_NilReceiverReturnsSentinel asserts Descriptor is
 // nil-safe: a zero *Producer returns a zero descriptor and ErrNilProducer
 // rather than panicking.

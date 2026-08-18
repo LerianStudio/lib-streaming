@@ -45,7 +45,10 @@ func NewPublisherDescriptor(descriptor PublisherDescriptor) (PublisherDescriptor
 	}
 
 	descriptor.ServiceName = strings.TrimSpace(descriptor.ServiceName)
-	descriptor.Source = strings.TrimSpace(descriptor.Source)
+	// Source is deliberately NOT trimmed. Producer preflight validates the
+	// source untrimmed, so trimming here would make " lender " publishable
+	// in the manifest and a hard failure at the first Emit — two gates
+	// disagreeing about the same string.
 	descriptor.RoutePath = strings.TrimSpace(descriptor.RoutePath)
 	descriptor.AppVersion = strings.TrimSpace(descriptor.AppVersion)
 	descriptor.LibVersion = strings.TrimSpace(descriptor.LibVersion)
@@ -55,9 +58,10 @@ func NewPublisherDescriptor(descriptor PublisherDescriptor) (PublisherDescriptor
 		return PublisherDescriptor{}, fmt.Errorf("%w: service name required", ErrInvalidPublisherDescriptor)
 	}
 
-	// Strict source validation, not a mere non-empty check: the descriptor's
-	// Source is what the manifest advertises as the application's topic, so a
-	// value the producer would reject at Build must not be publishable here.
+	// Strict source validation, not a mere non-empty check, and applied to
+	// the value EXACTLY as given: the descriptor's Source is what the
+	// manifest advertises as the application's topic, so a value the
+	// producer would reject at Build must not be publishable here.
 	if err := contract.ValidateSource(descriptor.Source); err != nil {
 		return PublisherDescriptor{}, fmt.Errorf("%w: %w", ErrInvalidPublisherDescriptor, err)
 	}

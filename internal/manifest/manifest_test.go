@@ -257,3 +257,24 @@ func TestManifestVersion_IsStable(t *testing.T) {
 		t.Errorf("ManifestVersion = %q; want %q (bumping this constant is an operational decision — coordinate with downstream consumers)", ManifestVersion, "2.0.0")
 	}
 }
+
+// TestNewPublisherDescriptor_RejectsUntrimmedSource pins that the descriptor
+// validates Source EXACTLY as given, with no trim.
+//
+// Trimming here while producer preflight validates untrimmed made " lender "
+// publishable in the manifest and a hard failure at the first Emit — two
+// gates disagreeing about the same string. The producer's rule wins: a source
+// is a single dot-free lowercase segment, whitespace included in the check.
+func TestNewPublisherDescriptor_RejectsUntrimmedSource(t *testing.T) {
+	t.Parallel()
+
+	for _, source := range []string{" lender ", "lender ", " lender", "\tlender"} {
+		_, err := NewPublisherDescriptor(PublisherDescriptor{
+			ServiceName: "lender-svc",
+			Source:      source,
+		})
+		if !errors.Is(err, ErrInvalidPublisherDescriptor) {
+			t.Errorf("NewPublisherDescriptor(Source=%q) error = %v; want ErrInvalidPublisherDescriptor (no trim)", source, err)
+		}
+	}
+}
