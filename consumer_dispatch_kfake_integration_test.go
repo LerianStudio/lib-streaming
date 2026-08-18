@@ -176,6 +176,15 @@ func TestIntegration_ConsumerDispatchKfakeRoundTrip(t *testing.T) {
 		t.Fatal("handler never ran: a literal-header record on the app topic was not dispatched by event key")
 	}
 
+	// The group's committed offset must advance past the handled record — that
+	// is what makes this at-least-once rather than at-most-once.
+	//
+	// Read it while the consumer is STILL RUNNING. Commits are staged during a
+	// poll cycle and flushed at its end, so the handler firing does not mean
+	// the commit has landed yet; asserting immediately after Close raced that
+	// flush and read -1.
+	committed := awaitCommittedOffset(t, cluster, dispatchGroup, dispatchTopic, dispatchWaitBudget)
+
 	close(stop)
 	producers.Wait()
 	cancel()
@@ -212,11 +221,35 @@ func TestIntegration_ConsumerDispatchKfakeRoundTrip(t *testing.T) {
 		t.Errorf("payload = %q; want %q (verbatim)", string(gotBody), string(payload))
 	}
 
-	// The group's committed offset must have advanced past the handled record,
-	// which is what makes this at-least-once rather than at-most-once.
-	if committed := committedOffset(t, cluster, dispatchGroup, dispatchTopic); committed <= 0 {
+	if committed <= 0 {
 		t.Errorf("committed offset = %d; want > 0 (the handled record must be committed)", committed)
 	}
+}
+
+// awaitCommittedOffset polls the group's committed offset for partition 0 until
+// it is positive or the budget expires, returning the last value seen.
+//
+// The retry is the point: the runtime stages a commit watermark during a poll
+// cycle and flushes it at the end of that cycle, so a handler that has just
+// returned is not yet a committed offset. A single immediate read races the
+// flush and observes -1.
+func awaitCommittedOffset(t *testing.T, cluster *kfake.Cluster, group, topic string, budget time.Duration) int64 {
+	t.Helper()
+
+	deadline := time.Now().Add(budget)
+
+	var last int64 = -1
+
+	for time.Now().Before(deadline) {
+		last = committedOffset(t, cluster, group, topic)
+		if last > 0 {
+			return last
+		}
+
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	return last
 }
 
 // TestIntegration_ConsumerDispatchForeignSourceQuarantines is the negative case: the
