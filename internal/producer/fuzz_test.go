@@ -23,14 +23,14 @@ func FuzzParseCloudEventsHeaders(f *testing.F) {
 	f.Add(encodeHeaders([]kgo.RecordHeader{
 		{Key: "ce-specversion", Value: []byte("1.0")},
 		{Key: "ce-id", Value: []byte("seed-valid-1")},
-		{Key: "ce-source", Value: []byte("//seed/service")},
+		{Key: "ce-source", Value: []byte("seed-service")},
 		{Key: "ce-type", Value: []byte("studio.lerian.transaction.created")},
 		{Key: "ce-time", Value: []byte("2026-04-18T00:00:00Z")},
 		{Key: "ce-tenantid", Value: []byte("t-seed")},
 	}))
 	f.Add(encodeHeaders([]kgo.RecordHeader{
 		{Key: "ce-specversion", Value: []byte("1.0")},
-		{Key: "ce-source", Value: []byte("//seed/service")},
+		{Key: "ce-source", Value: []byte("seed-service")},
 		{Key: "ce-type", Value: []byte("studio.lerian.x.y")},
 		{Key: "ce-time", Value: []byte("2026-04-18T00:00:00Z")},
 	}))
@@ -38,7 +38,7 @@ func FuzzParseCloudEventsHeaders(f *testing.F) {
 	f.Add(encodeHeaders([]kgo.RecordHeader{
 		{Key: "ce-specversion", Value: []byte("1.0")},
 		{Key: "ce-id", Value: []byte("seed-bad-time")},
-		{Key: "ce-source", Value: []byte("//seed/service")},
+		{Key: "ce-source", Value: []byte("seed-service")},
 		{Key: "ce-type", Value: []byte("studio.lerian.x.y")},
 		{Key: "ce-time", Value: []byte("not-a-timestamp")},
 	}))
@@ -46,7 +46,7 @@ func FuzzParseCloudEventsHeaders(f *testing.F) {
 		{Key: "ce-specversion", Value: []byte("1.0")},
 		{Key: "ce-id", Value: []byte("seed-dup-1")},
 		{Key: "ce-id", Value: []byte("seed-dup-2")},
-		{Key: "ce-source", Value: []byte("//seed/service")},
+		{Key: "ce-source", Value: []byte("seed-service")},
 		{Key: "ce-type", Value: []byte("studio.lerian.x.y")},
 		{Key: "ce-time", Value: []byte("2026-04-18T00:00:00Z")},
 	}))
@@ -64,7 +64,7 @@ func FuzzParseCloudEventsHeaders(f *testing.F) {
 	f.Add(encodeHeaders([]kgo.RecordHeader{
 		{Key: "ce-specversion", Value: []byte("1.0")},
 		{Key: "ce-id", Value: []byte("seed-crlf\r\nce-source: //attacker")},
-		{Key: "ce-source", Value: []byte("//seed/service")},
+		{Key: "ce-source", Value: []byte("seed-service")},
 		{Key: "ce-type", Value: []byte("studio.lerian.x.y")},
 		{Key: "ce-time", Value: []byte("2026-04-18T00:00:00Z")},
 	}))
@@ -73,7 +73,7 @@ func FuzzParseCloudEventsHeaders(f *testing.F) {
 	f.Add(encodeHeaders([]kgo.RecordHeader{
 		{Key: "ce-specversion", Value: []byte("1.0")},
 		{Key: "ce-id", Value: []byte("seed-with-nul\x00trailing")},
-		{Key: "ce-source", Value: []byte("//seed/service")},
+		{Key: "ce-source", Value: []byte("seed-service")},
 		{Key: "ce-type", Value: []byte("studio.lerian.x.y")},
 		{Key: "ce-time", Value: []byte("2026-04-18T00:00:00Z")},
 	}))
@@ -82,7 +82,7 @@ func FuzzParseCloudEventsHeaders(f *testing.F) {
 	f.Add(encodeHeaders([]kgo.RecordHeader{
 		{Key: "ce-specversion", Value: []byte("1.0")},
 		{Key: "ce-id", Value: []byte("seed-long-key")},
-		{Key: "ce-source", Value: []byte("//seed/service")},
+		{Key: "ce-source", Value: []byte("seed-service")},
 		{Key: "ce-type", Value: []byte("studio.lerian.x.y")},
 		{Key: "ce-time", Value: []byte("2026-04-18T00:00:00Z")},
 		{Key: "x-extension-" + strings.Repeat("k", 240), Value: []byte("v")},
@@ -92,7 +92,7 @@ func FuzzParseCloudEventsHeaders(f *testing.F) {
 	f.Add(encodeHeaders([]kgo.RecordHeader{
 		{Key: "ce-specversion", Value: []byte("1.0")},
 		{Key: "ce-id", Value: []byte("seed-utf8-emoji-✓")},
-		{Key: "ce-source", Value: []byte("//seed/service")},
+		{Key: "ce-source", Value: []byte("seed-service")},
 		{Key: "ce-type", Value: []byte("studio.lerian.x.y")},
 		{Key: "ce-time", Value: []byte("2026-04-18T00:00:00Z")},
 		{Key: "ce-subject", Value: []byte("订单-1234")},

@@ -10,9 +10,9 @@ import (
 
 	"github.com/LerianStudio/lib-observability/v2/log"
 
-	streaming "github.com/LerianStudio/lib-streaming/v2"
-	"github.com/LerianStudio/lib-streaming/v2/internal/producer"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
+	streaming "github.com/LerianStudio/lib-streaming/v3"
+	"github.com/LerianStudio/lib-streaming/v3/internal/producer"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
 )
 
 // captureLoggerSentinel is a no-op logger that wraps log.NewNop so a test
@@ -56,7 +56,7 @@ func TestBuilder_Logger_FlowsToTransportFactory(t *testing.T) {
 	customKind := streaming.TransportCustom
 
 	b := streaming.NewBuilder().
-		Source("svc://logger-flow-test").
+		Source("svc-logger-flow-test").
 		Catalog(builderCatalog(t)).
 		Routes(streaming.RouteDefinition{
 			Key:           "transaction.created.custom.primary",
@@ -103,7 +103,7 @@ func TestBuilder_Logger_DefaultsToNopWhenUnset(t *testing.T) {
 	customKind := streaming.TransportCustom
 
 	b := streaming.NewBuilder().
-		Source("svc://default-logger-test").
+		Source("svc-default-logger-test").
 		Catalog(builderCatalog(t)).
 		Routes(streaming.RouteDefinition{
 			Key:           "transaction.created.custom.default",
@@ -177,7 +177,7 @@ func TestBuilder_CBSetters_PropagateToMultiProducerConfig(t *testing.T) {
 	customKind := streaming.TransportCustom
 
 	emitter, err := streaming.NewBuilder().
-		Source("svc://cb-test").
+		Source("svc-cb-test").
 		Catalog(builderCatalog(t)).
 		Routes(streaming.RouteDefinition{
 			Key:           "transaction.created.custom.cb",

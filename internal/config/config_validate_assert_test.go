@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
 )
 
 // validBaseConfig returns a Config that passes every existing
@@ -30,7 +30,7 @@ func validBaseConfig() Config {
 		CBMinRequests:         10,
 		CBTimeout:             30 * time.Second,
 		CloseTimeout:          30 * time.Second,
-		CloudEventsSource:     "//svc/test",
+		CloudEventsSource:     "svc-test",
 	}
 }
 

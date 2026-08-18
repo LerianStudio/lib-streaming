@@ -447,7 +447,7 @@ func TestProducer_Emit_CircuitOpen_OutboxFailure_MetricsOutboxFailed(t *testing.
 	fakeMgr.ForceTransition(p.targets["primary"].cbServiceName, circuitbreaker.StateOpen)
 
 	event := sampleRequest()
-	topic := "test.transaction.created"
+	topic := "lerian.streaming.test"
 
 	if err := emitter.Emit(context.Background(), event); err == nil {
 		t.Fatal("Emit err = nil; want non-nil (outbox failure must surface)")

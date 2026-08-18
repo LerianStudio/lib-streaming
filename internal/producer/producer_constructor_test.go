@@ -27,7 +27,7 @@ func TestProducer_New_DisabledReturnsNoop(t *testing.T) {
 		Brokers:           []string{"broker:9092"},
 		Compression:       "lz4",
 		RequiredAcks:      "all",
-		CloudEventsSource: "//test",
+		CloudEventsSource: "test",
 	}
 
 	emitter, err := New(context.Background(), cfg)
@@ -51,7 +51,7 @@ func TestProducer_New_NoBrokersReturnsErrMissingBrokers(t *testing.T) {
 		Brokers:           []string{},
 		Compression:       "lz4",
 		RequiredAcks:      "all",
-		CloudEventsSource: "//test",
+		CloudEventsSource: "test",
 	}
 
 	_, err := New(context.Background(), cfg)
@@ -70,7 +70,7 @@ func TestProducer_NewProducer_FailsOnInvalidConfig(t *testing.T) {
 		Brokers:           []string{},
 		Compression:       "lz4",
 		RequiredAcks:      "all",
-		CloudEventsSource: "//test",
+		CloudEventsSource: "test",
 	}
 
 	_, err := NewProducer(context.Background(), cfg)
@@ -93,7 +93,7 @@ func TestProducer_NewProducer_WithSASLWithoutTLS_DefaultRejectsPlaintext(t *test
 		RecordDeliveryTimeout: time.Second,
 		RequiredAcks:          "all",
 		CloseTimeout:          time.Second,
-		CloudEventsSource:     "//test",
+		CloudEventsSource:     "test",
 	}
 
 	_, err := NewProducer(
@@ -309,7 +309,7 @@ func TestProducer_New_WithPartitionKeyOverride(t *testing.T) {
 		t.Fatalf("Emit err = %v", err)
 	}
 
-	consumer := newConsumer(t, cluster, sourceTopicPrefix(cfg.CloudEventsSource)+"transaction.created")
+	consumer := newConsumer(t, cluster, sourceTopic(cfg.CloudEventsSource))
 
 	fetchCtx, fetchCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer fetchCancel()

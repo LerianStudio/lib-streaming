@@ -17,7 +17,7 @@ func TestPublisherDescriptor_DefaultRoutePath(t *testing.T) {
 
 	descriptor, err := NewPublisherDescriptor(PublisherDescriptor{
 		ServiceName: "transaction-service",
-		SourceBase:  "//lerian.midaz/transaction-service",
+		Source:      "midaz-transaction-service",
 	})
 	if err != nil {
 		t.Fatalf("NewPublisherDescriptor() error = %v", err)
@@ -34,13 +34,13 @@ func TestPublisherDescriptor_RejectsInvalidShape(t *testing.T) {
 		name       string
 		descriptor PublisherDescriptor
 	}{
-		{name: "missing service", descriptor: PublisherDescriptor{SourceBase: "//source"}},
+		{name: "missing service", descriptor: PublisherDescriptor{Source: "source"}},
 		{name: "missing source", descriptor: PublisherDescriptor{ServiceName: "svc"}},
 		{
 			name: "relative route",
 			descriptor: PublisherDescriptor{
 				ServiceName: "svc",
-				SourceBase:  "//source",
+				Source:      "source",
 				RoutePath:   "streaming",
 			},
 		},
@@ -48,7 +48,7 @@ func TestPublisherDescriptor_RejectsInvalidShape(t *testing.T) {
 			name: "control char",
 			descriptor: PublisherDescriptor{
 				ServiceName: "svc\n",
-				SourceBase:  "//source",
+				Source:      "source",
 			},
 		},
 	}
@@ -82,7 +82,7 @@ func TestProducer_Descriptor_PopulatesProducerID(t *testing.T) {
 
 	got, err := p.Descriptor(PublisherDescriptor{
 		ServiceName: "svc",
-		SourceBase:  "//s",
+		Source:      "s",
 	})
 	if err != nil {
 		t.Fatalf("Descriptor err = %v", err)
@@ -110,7 +110,7 @@ func TestProducer_Descriptor_NilReceiverReturnsSentinel(t *testing.T) {
 
 	var nilProducer *Producer
 
-	got, err := nilProducer.Descriptor(PublisherDescriptor{ServiceName: "svc", SourceBase: "//s"})
+	got, err := nilProducer.Descriptor(PublisherDescriptor{ServiceName: "svc", Source: "s"})
 	if !errors.Is(err, ErrNilProducer) {
 		t.Fatalf("nil.Descriptor err = %v; want ErrNilProducer", err)
 	}

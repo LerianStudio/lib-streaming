@@ -9,12 +9,12 @@ import (
 	"github.com/LerianStudio/lib-observability/v2/tracing"
 	"github.com/twmb/franz-go/pkg/kgo"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/cloudevents"
-	"github.com/LerianStudio/lib-streaming/v2/internal/config"
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/emitter"
-	"github.com/LerianStudio/lib-streaming/v2/internal/manifest"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
+	"github.com/LerianStudio/lib-streaming/v3/internal/cloudevents"
+	"github.com/LerianStudio/lib-streaming/v3/internal/config"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/emitter"
+	"github.com/LerianStudio/lib-streaming/v3/internal/manifest"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
 )
 
 type (

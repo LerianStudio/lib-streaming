@@ -15,8 +15,8 @@ import (
 	"github.com/LerianStudio/lib-observability/v2/metrics"
 	"go.opentelemetry.io/otel/trace/noop"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/consumer"
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/consumer"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
 )
 
 // noopHandler is a do-nothing Handler for white-box builder-construction tests

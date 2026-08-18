@@ -10,9 +10,9 @@ import (
 
 	"github.com/LerianStudio/lib-commons/v6/commons/circuitbreaker"
 	"github.com/LerianStudio/lib-observability/v2/log"
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport/kafka"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport/kafka"
 )
 
 // TargetSpec is the per-target wiring fed to NewProducerMulti. The
@@ -278,6 +278,13 @@ func validateRoutesAgainstTargets(ctx context.Context, logger log.Logger, routes
 
 			return fmt.Errorf("%w: route %q destination kind %q does not match target %q transport %q",
 				contract.ErrInvalidRouteDefinition, route.Key, route.Destination.Kind, route.Target, kind)
+		}
+
+		// A catch-all route (empty DefinitionKey) serves every definition, so
+		// there is no single catalog entry to check it against. Only a
+		// definition-scoped route must name a key the catalog actually holds.
+		if route.DefinitionKey == "" {
+			continue
 		}
 
 		if _, err := catalog.Require(route.DefinitionKey); err != nil {

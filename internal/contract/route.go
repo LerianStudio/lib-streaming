@@ -126,10 +126,23 @@ func (d Destination) validate(sqsValidationCache map[string]error) error {
 	return validateDestinationAttributes(d.Attributes)
 }
 
-// RouteDefinition maps one catalog event definition to one transport target and
+// RouteDefinition maps catalog event definitions to one transport target and
 // destination.
 type RouteDefinition struct {
-	Key           string
+	Key string
+	// DefinitionKey scopes the route to ONE catalog definition. It is
+	// OPTIONAL: an empty DefinitionKey makes the route a CATCH-ALL that
+	// serves every definition the catalog holds.
+	//
+	// The catch-all is the shape the default Kafka path uses. Under
+	// one-topic-per-app there is nothing left to fan out per definition —
+	// every event goes to the same destination — so a single catch-all
+	// route replaces v2's one-route-per-catalog-entry table.
+	//
+	// A definition-scoped route takes precedence: when a definition has at
+	// least one route naming it explicitly, catch-all routes do NOT also
+	// fire for that definition. That is what makes "shadow only THESE
+	// events to SQS" expressible without double-publishing the rest.
 	DefinitionKey string
 	Target        string
 	Destination   Destination
@@ -145,10 +158,14 @@ func NewRouteDefinition(route RouteDefinition) (RouteDefinition, error) {
 }
 
 // RouteTable is an immutable, deterministically ordered registry of routes
-// keyed by catalog definition key.
+// keyed by catalog definition key, with a catch-all bucket for routes that
+// declare no definition key.
 type RouteTable struct {
 	definitions  []RouteDefinition
 	byDefinition map[string][]RouteDefinition
+	// catchAll holds routes with an empty DefinitionKey. They serve any
+	// definition that has no route naming it explicitly.
+	catchAll []RouteDefinition
 }
 
 // NewRouteTable validates routes, rejects duplicate route keys, and stores
@@ -185,9 +202,12 @@ func NewRouteTable(routes ...RouteDefinition) (RouteTable, error) {
 
 	sortRouteDefinitions(ordered)
 
+	byDefinition, catchAll := buildRoutesByDefinition(ordered)
+
 	return RouteTable{
 		definitions:  ordered,
-		byDefinition: buildRoutesByDefinition(ordered),
+		byDefinition: byDefinition,
+		catchAll:     catchAll,
 	}, nil
 }
 
@@ -200,9 +220,8 @@ func newRouteDefinition(route RouteDefinition, sqsValidationCache map[string]err
 		return RouteDefinition{}, fmt.Errorf("%w: key must be lower-case dot-delimited", ErrInvalidRouteDefinition)
 	}
 
-	if route.DefinitionKey == "" {
-		return RouteDefinition{}, fmt.Errorf("%w: definition key required", ErrInvalidRouteDefinition)
-	}
+	// DefinitionKey is intentionally NOT required: empty means catch-all
+	// (see the RouteDefinition field doc).
 
 	if route.Target == "" {
 		return RouteDefinition{}, fmt.Errorf("%w: %w", ErrInvalidRouteDefinition, ErrMissingTarget)
@@ -255,11 +274,12 @@ func newRouteDefinition(route RouteDefinition, sqsValidationCache map[string]err
 	return route, nil
 }
 
-// Routes returns the routes registered for definitionKey in deterministic
-// order. The returned slice and every element is a defensive copy — callers
-// may mutate freely without affecting the immutable RouteTable.
+// Routes returns the routes that serve definitionKey in deterministic order:
+// the routes naming it explicitly, or — when none do — the catch-all routes.
+// The returned slice and every element is a defensive copy, so callers may
+// mutate freely without affecting the immutable RouteTable.
 func (t RouteTable) Routes(definitionKey string) []RouteDefinition {
-	routes := t.byDefinition[definitionKey]
+	routes := t.routesUnsafe(definitionKey)
 	if len(routes) == 0 {
 		return []RouteDefinition{}
 	}
@@ -280,8 +300,16 @@ func (t RouteTable) Routes(definitionKey string) []RouteDefinition {
 // Reachable from internal/producer via the package-internal RoutesUnsafe
 // helper below — both packages are under internal/, so the uppercase
 // helper is acceptable as an "internal-only escape hatch" form.
+// Definition-scoped routes WIN over catch-all routes: when a definition has
+// at least one route naming it, the catch-all routes do not also fire for it.
+// That precedence is what lets a caller re-route a handful of events without
+// double-publishing them alongside the default app-topic route.
 func (t RouteTable) routesUnsafe(definitionKey string) []RouteDefinition {
-	return t.byDefinition[definitionKey]
+	if routes := t.byDefinition[definitionKey]; len(routes) > 0 {
+		return routes
+	}
+
+	return t.catchAll
 }
 
 // RoutesUnsafe is the cross-internal-package accessor for RouteTable's
@@ -713,7 +741,14 @@ func validateRouteHeaderFields(route RouteDefinition) error {
 }
 
 var (
-	routeKeyPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*(\.[a-z0-9][a-z0-9-]*)+$`)
+	// routeKeyPattern accepts underscores inside each dot-delimited segment.
+	//
+	// v2 forbade them, which forced every consuming repo (midaz, matcher,
+	// lender, br-consignado-gw) to carry '_'→'-' translation machinery,
+	// because ResourceTypes are snake_case and route keys derived from them
+	// were not. That dual representation already produced one latent bug.
+	// v3 removes the reason the machinery exists.
+	routeKeyPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*(\.[a-z0-9][a-z0-9_-]*)+$`)
 	// Matches assignment-like fields; sensitivity of the captured key is decided
 	// by lib-observability/redaction plus streaming-specific extras.
 	sensitiveAssignmentPattern = regexp.MustCompile(`(?i)(^|[^a-z0-9])([a-z][a-z0-9._-]*)([[:space:]]*[:=])`)
@@ -947,11 +982,24 @@ func sortRouteDefinitions(routes []RouteDefinition) {
 	})
 }
 
-func buildRoutesByDefinition(routes []RouteDefinition) map[string][]RouteDefinition {
+// buildRoutesByDefinition splits the validated route slice into the
+// definition-scoped index and the catch-all bucket (routes whose
+// DefinitionKey is empty). Both preserve the caller-visible deterministic
+// order established by sortRouteDefinitions.
+func buildRoutesByDefinition(routes []RouteDefinition) (map[string][]RouteDefinition, []RouteDefinition) {
 	byDefinition := make(map[string][]RouteDefinition)
+
+	var catchAll []RouteDefinition
+
 	for _, route := range routes {
-		byDefinition[route.DefinitionKey] = append(byDefinition[route.DefinitionKey], cloneRouteDefinition(route))
+		clone := cloneRouteDefinition(route)
+		if route.DefinitionKey == "" {
+			catchAll = append(catchAll, clone)
+			continue
+		}
+
+		byDefinition[route.DefinitionKey] = append(byDefinition[route.DefinitionKey], clone)
 	}
 
-	return byDefinition
+	return byDefinition, catchAll
 }

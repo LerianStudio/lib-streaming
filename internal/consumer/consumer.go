@@ -15,9 +15,9 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport/kafka"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport/kafka"
 )
 
 // errTerminalQuarantine is the stable cause stamped on a DLQ forensic header

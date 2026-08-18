@@ -69,7 +69,7 @@ Improvements:
 
 BREAKING CHANGES:
 - Migrate to `github.com/LerianStudio/lib-commons/v6` (and `github.com/LerianStudio/lib-observability/v2`). Because the public lifecycle surface exposes lib-commons types — `(*Producer).Run(launcher *commons.Launcher) error` and `(*Producer).RunContext(ctx, launcher *commons.Launcher) error`, plus the `commons.App` compile-time assertion — the underlying `commons.Launcher` / `commons.App` types now resolve to their lib-commons/v6 identities. This is a source-incompatible change for consumers that pass a v5 `*commons.Launcher`.
-- Cut the `/v2` module major: the module path is now `github.com/LerianStudio/lib-streaming/v2`. Consumers MUST update their import paths from `github.com/LerianStudio/lib-streaming[...]` to `github.com/LerianStudio/lib-streaming/v2[...]` and pass a lib-commons/v6 `*commons.Launcher` to `Run`/`RunContext`.
+- Cut the `/v2` module major: the module path is now `github.com/LerianStudio/lib-streaming/v3`. Consumers MUST update their import paths from `github.com/LerianStudio/lib-streaming[...]` to `github.com/LerianStudio/lib-streaming/v3[...]` and pass a lib-commons/v6 `*commons.Launcher` to `Run`/`RunContext`.
 - Rework the `billing` package onto the Protobuf / Schema-Registry contract. The payload is now the generated Protobuf message and the wire format is Confluent-framed Protobuf (`application/vnd.confluent.protobuf`), not JSON. Public API migration:
   - `billing.MustMarshal(p)` → `billing.NewSerializer(ctx, client)` then `serializer.Serialize(&p)` (build `client` via `streaming.NewSchemaRegistryClient(cfg)`).
   - `BillablePayload.SubscriptionID` field → `SubscriptionId` (generated casing).
@@ -267,9 +267,9 @@ Contributors: @bedatty, @fredcamaral
 
   Operationally this aligns version-mismatch with every other envelope failure mode: dashboards and alerting paths that already filter on `ErrInvalidOutboxEnvelope` (or on `IsCallerError`) will now see version-mismatch failures alongside kind/transport mismatches without separate plumbing. Wire text prefix changed: was `"streaming: unsupported outbox envelope version 0"`, now `"streaming: invalid outbox envelope: unsupported outbox envelope version 0"`. Callers parsing the wire text (which they should not) need updating; callers using `errors.Is` keep working — and now match a strictly larger set of failures.
 
-- **Module path normalized to bare path.** Imports across the library moved from `github.com/LerianStudio/lib-streaming/v2/...` to `github.com/LerianStudio/lib-streaming/...`. This corrects an early-bring-up error: while on v0/v1 Go's semantic-import-versioning rules forbid a `/vN` path-major suffix. The bare path is the canonical import for v0.x and v1.x. A `/v2` suffix will reappear only when the first v2.0.0 breaking release is cut.
+- **Module path normalized to bare path.** Imports across the library moved from `github.com/LerianStudio/lib-streaming/v3/...` to `github.com/LerianStudio/lib-streaming/...`. This corrects an early-bring-up error: while on v0/v1 Go's semantic-import-versioning rules forbid a `/vN` path-major suffix. The bare path is the canonical import for v0.x and v1.x. A `/v2` suffix will reappear only when the first v2.0.0 breaking release is cut.
 
-  Migration for any in-flight downstream consumer that ever imported `github.com/LerianStudio/lib-streaming/v2`: replace the import path with the bare path and re-run `go mod tidy`. The current repo HEAD is the initial commit, so there are no published `/v2.x.x` tags in the wild — this is a pre-publication correction, not a tag-incompatible breaking change.
+  Migration for any in-flight downstream consumer that ever imported `github.com/LerianStudio/lib-streaming/v3`: replace the import path with the bare path and re-run `go mod tidy`. The current repo HEAD is the initial commit, so there are no published `/v2.x.x` tags in the wild — this is a pre-publication correction, not a tag-incompatible breaking change.
 
 ### Notes
 

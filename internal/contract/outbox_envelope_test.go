@@ -35,7 +35,7 @@ func validOutboxEnvelope(t *testing.T) OutboxEnvelope {
 			TenantID:        "tenant-1",
 			ResourceType:    "transaction",
 			EventType:       "created",
-			Source:          "//svc/test",
+			Source:          "svc-test",
 			SchemaVersion:   "1.0.0",
 			DataContentType: "application/json",
 			EventID:         "01939c11-1d49-7abc-bd3f-1fa8cafe1234",

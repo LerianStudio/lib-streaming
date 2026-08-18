@@ -10,9 +10,9 @@ import (
 
 	"github.com/LerianStudio/lib-observability/v2/log"
 
-	streaming "github.com/LerianStudio/lib-streaming/v2"
-	"github.com/LerianStudio/lib-streaming/v2/internal/producer"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
+	streaming "github.com/LerianStudio/lib-streaming/v3"
+	"github.com/LerianStudio/lib-streaming/v3/internal/producer"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
 )
 
 // captureEmptyTenantAdapter records every published message so the test can
@@ -55,7 +55,7 @@ func buildEmptyTenantBuilder(t *testing.T, captured *captureEmptyTenantAdapter) 
 	customKind := streaming.TransportCustom
 
 	return streaming.NewBuilder().
-		Source("svc://empty-tenant-test").
+		Source("svc-empty-tenant-test").
 		Catalog(builderCatalog(t)).
 		Routes(streaming.RouteDefinition{
 			Key:           "transaction.created.custom.primary",

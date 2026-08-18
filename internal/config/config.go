@@ -12,7 +12,8 @@ import (
 	"github.com/LerianStudio/lib-commons/v6/commons"
 	"github.com/LerianStudio/lib-observability/v2/assert"
 	"github.com/LerianStudio/lib-observability/v2/log"
-	"github.com/LerianStudio/lib-streaming/v2/internal/kafkasec"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/kafkasec"
 )
 
 // configAsserterComponent matches internal/producer.asserterComponent so
@@ -75,7 +76,12 @@ type Config struct {
 	CBTimeout time.Duration
 	// CloseTimeout is the max drain+flush window on Close. Default: 30s.
 	CloseTimeout time.Duration
-	// CloudEventsSource is the ce-source default (required when Enabled=true).
+	// CloudEventsSource is this application's ce-source (required when
+	// Enabled=true). It must be a single dot-free lowercase segment
+	// matching ^[a-z0-9][a-z0-9_-]*$ — e.g. "lender", "midaz-ledger",
+	// "br_consignado_gw" — because it is the sole input to the ONE topic
+	// this application publishes to ("lerian.streaming.<source>").
+	// STREAMING_CLOUDEVENTS_SOURCE.
 	CloudEventsSource string
 	// PolicyOverrides is a map of event definition key -> delivery policy
 	// override. Parsed from STREAMING_EVENT_POLICIES.
@@ -165,7 +171,7 @@ var validAcks = map[string]struct{}{
 // never nil (empty when there are no warnings) so callers can range-for
 // without a nil check.
 //
-// Errors: ErrMissingBrokers, ErrMissingSource, ErrInvalidCompression,
+// Errors: ErrMissingBrokers, ErrMissingSource, ErrInvalidSource, ErrInvalidCompression,
 // ErrInvalidAcks, ErrInvalidConfigField. Each wraps with fmt.Errorf where
 // context is added so callers can errors.Is.
 func LoadConfig() (Config, []string, error) {
@@ -312,8 +318,14 @@ func (c Config) validate() error {
 		return ErrMissingBrokers
 	}
 
-	if c.CloudEventsSource == "" {
-		return ErrMissingSource
+	// Strict ce-source validation: a single dot-free lowercase segment,
+	// short enough that "lerian.streaming.<source>.dlq" fits Kafka's
+	// 249-byte topic-name limit. The source IS this application's topic, so
+	// a malformed one is a bootstrap failure, never a silently-rewritten
+	// value (v2 folded it through a lossy sanitizer that could merge two
+	// services onto one topic namespace).
+	if err := contract.ValidateSource(c.CloudEventsSource); err != nil {
+		return err
 	}
 
 	if _, ok := validCompressionCodecs[c.Compression]; !ok {

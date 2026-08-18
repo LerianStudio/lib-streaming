@@ -1,6 +1,6 @@
 package manifest
 
-import "github.com/LerianStudio/lib-streaming/v2/internal/contract"
+import "github.com/LerianStudio/lib-streaming/v3/internal/contract"
 
 // ManifestVersion is the wire-version of the JSON document returned by
 // BuildManifest / NewStreamingHandler. Follows semver:
@@ -8,14 +8,26 @@ import "github.com/LerianStudio/lib-streaming/v2/internal/contract"
 //     changes. Existing consumers parse the new manifest unchanged.
 //   - Major bumps (X.0.0) remove or change a field. Coordinate with all
 //     downstream contract-diffing tools before bumping.
-const ManifestVersion = "1.0.0"
+//
+// 2.0.0 is the one-topic-per-app cut: the per-event "topic" field is GONE
+// (a definition has no topic of its own) and the document carries the
+// application's single "topic" / "dlqTopic" pair instead. The publisher's
+// "sourceBase" field was renamed "source" to match the strict single-segment
+// ce-source it now holds.
+const ManifestVersion = "2.0.0"
 
 // ManifestDocument is the JSON-serializable description of a producer's event
 // catalog and default delivery policies.
 type ManifestDocument struct {
 	Version   string              `json:"version"`
 	Publisher PublisherDescriptor `json:"publisher"`
-	Events    []ManifestEvent     `json:"events"`
+	// Topic is the ONE topic this application publishes every event to,
+	// derived from the publisher's source. Under the v3 one-topic-per-app
+	// contract this is a document-level fact, not a per-event one.
+	Topic string `json:"topic"`
+	// DLQTopic is the dead-letter topic derived from Topic.
+	DLQTopic string          `json:"dlqTopic"`
+	Events   []ManifestEvent `json:"events"`
 	// Routes is the active route table for this producer. Omitted (nil/empty)
 	// when no routes are wired so producers without a multi-target topology
 	// emit a clean catalog-only document.
@@ -24,10 +36,14 @@ type ManifestDocument struct {
 
 // ManifestEvent is one catalog entry rendered for export and introspection.
 type ManifestEvent struct {
-	Key             string `json:"key"`
-	ResourceType    string `json:"resourceType"`
-	EventType       string `json:"eventType"`
-	Topic           string `json:"topic"`
+	Key          string `json:"key"`
+	ResourceType string `json:"resourceType"`
+	EventType    string `json:"eventType"`
+	// EventKey is "<resourceType>.<eventType>" — the dispatch key a consumer
+	// registers a handler under. It replaced the per-event "topic" field:
+	// there is no per-definition topic in v3, only this selector inside the
+	// application's single stream.
+	EventKey        string `json:"eventKey"`
 	SchemaVersion   string `json:"schemaVersion"`
 	DataContentType string `json:"dataContentType"`
 	DataSchema      string `json:"dataSchema,omitempty"`
@@ -78,7 +94,7 @@ func BuildManifest(descriptor PublisherDescriptor, catalog Catalog, routes Route
 			Key:             definition.Key,
 			ResourceType:    definition.ResourceType,
 			EventType:       definition.EventType,
-			Topic:           definition.Topic(descriptor.SourceBase),
+			EventKey:        definition.EventKey(),
 			SchemaVersion:   definition.SchemaVersion,
 			DataContentType: definition.DataContentType,
 			DataSchema:      definition.DataSchema,
@@ -91,6 +107,8 @@ func BuildManifest(descriptor PublisherDescriptor, catalog Catalog, routes Route
 	return ManifestDocument{
 		Version:   ManifestVersion,
 		Publisher: descriptor,
+		Topic:     contract.AppTopic(descriptor.Source),
+		DLQTopic:  contract.AppDLQTopic(descriptor.Source),
 		Events:    events,
 		Routes:    renderRoutes(routes),
 	}, nil

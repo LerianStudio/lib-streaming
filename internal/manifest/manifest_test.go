@@ -36,7 +36,7 @@ func TestManifest_BuildManifest(t *testing.T) {
 
 	manifest, err := BuildManifest(PublisherDescriptor{
 		ServiceName:     "transaction-service",
-		SourceBase:      "//lerian.midaz/transaction-service",
+		Source:          "midaz-transaction-service",
 		RoutePath:       "/streaming",
 		OutboxSupported: true,
 		AppVersion:      "v1.2.3",
@@ -58,8 +58,16 @@ func TestManifest_BuildManifest(t *testing.T) {
 	if manifest.Events[0].Key != "account.closed" {
 		t.Errorf("Events[0].Key = %q; want sorted key account.closed", manifest.Events[0].Key)
 	}
-	if manifest.Events[0].Topic != "lerian.midaz-transaction-service.account.closed" {
-		t.Errorf("Events[0].Topic = %q", manifest.Events[0].Topic)
+	// v3: the topic is a DOCUMENT-level fact (one topic per producing
+	// application), and a catalog entry contributes only its dispatch key.
+	if manifest.Topic != "lerian.streaming.midaz-transaction-service" {
+		t.Errorf("Topic = %q; want lerian.streaming.midaz-transaction-service", manifest.Topic)
+	}
+	if manifest.DLQTopic != "lerian.streaming.midaz-transaction-service.dlq" {
+		t.Errorf("DLQTopic = %q; want lerian.streaming.midaz-transaction-service.dlq", manifest.DLQTopic)
+	}
+	if manifest.Events[0].EventKey != "account.closed" {
+		t.Errorf("Events[0].EventKey = %q; want account.closed", manifest.Events[0].EventKey)
 	}
 	if !manifest.Events[0].SystemEvent {
 		t.Error("Events[0].SystemEvent = false; want true")
@@ -95,7 +103,7 @@ func TestBuildManifest_EmptyCatalogYieldsEmptyArray(t *testing.T) {
 
 	manifest, err := BuildManifest(PublisherDescriptor{
 		ServiceName: "svc",
-		SourceBase:  "//s",
+		Source:      "s",
 	}, Catalog{}, RouteTable{})
 	if err != nil {
 		t.Fatalf("BuildManifest() error = %v", err)
@@ -135,7 +143,7 @@ func TestManifest_ProducerIDRoundTrips(t *testing.T) {
 
 	manifest, err := BuildManifest(PublisherDescriptor{
 		ServiceName: "svc",
-		SourceBase:  "//s",
+		Source:      "s",
 		ProducerID:  producerID,
 	}, catalog, RouteTable{})
 	if err != nil {
@@ -187,7 +195,7 @@ func TestManifest_DeterministicJSON(t *testing.T) {
 	}
 	descriptor := PublisherDescriptor{
 		ServiceName: "svc",
-		SourceBase:  "//s",
+		Source:      "s",
 	}
 
 	catalog1, err := NewCatalog(defA, defB)
@@ -245,7 +253,7 @@ func TestManifest_DeterministicJSON(t *testing.T) {
 func TestManifestVersion_IsStable(t *testing.T) {
 	t.Parallel()
 
-	if ManifestVersion != "1.0.0" {
-		t.Errorf("ManifestVersion = %q; want %q (bumping this constant is an operational decision — coordinate with downstream consumers)", ManifestVersion, "1.0.0")
+	if ManifestVersion != "2.0.0" {
+		t.Errorf("ManifestVersion = %q; want %q (bumping this constant is an operational decision — coordinate with downstream consumers)", ManifestVersion, "2.0.0")
 	}
 }

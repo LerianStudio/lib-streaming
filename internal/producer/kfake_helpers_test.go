@@ -63,7 +63,7 @@ func readDLQRecord(t *testing.T, cluster *kfake.Cluster, topic string, timeout t
 func kfakeDLQConfig(t *testing.T) (Config, *kfake.Cluster) {
 	t.Helper()
 
-	sourceTopic := "test.transaction.created"
+	sourceTopic := "lerian.streaming.test"
 	dlq := sourceTopic + ".dlq"
 
 	cluster, err := kfake.NewCluster(
@@ -93,7 +93,7 @@ func kfakeDLQConfig(t *testing.T) (Config, *kfake.Cluster) {
 		CBMinRequests:         1_000_000,
 		CBTimeout:             5 * time.Second,
 		CloseTimeout:          5 * time.Second,
-		CloudEventsSource:     "//test",
+		CloudEventsSource:     "test",
 	}, cluster
 }
 

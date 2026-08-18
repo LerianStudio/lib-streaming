@@ -11,8 +11,8 @@ import (
 
 	"github.com/LerianStudio/lib-commons/v6/commons"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/kafkasec"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
+	"github.com/LerianStudio/lib-streaming/v3/internal/kafkasec"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
 )
 
 // Config validation sentinels. Callers use errors.Is to branch on a specific

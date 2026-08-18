@@ -14,7 +14,7 @@ import (
 	"github.com/LerianStudio/lib-commons/v6/commons"
 	"github.com/LerianStudio/lib-commons/v6/commons/circuitbreaker"
 	"github.com/LerianStudio/lib-observability/v2/log"
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
 )
 
 // tracerName + emitSpanName live in emit_span.go (colocated with the
@@ -183,8 +183,9 @@ func New(ctx context.Context, cfg Config, opts ...EmitterOption) (Emitter, error
 // case used by tests and simple bootstrap paths. Internally it routes
 // through NewProducerMulti — there is no separate single-target code path.
 //
-// Auto-generates a RouteTable from the catalog: one RouteDefinition per
-// EventDefinition pointing at the synthesized "primary" Kafka target.
+// Auto-generates a RouteTable holding ONE catch-all RouteDefinition that
+// points the whole catalog at the application's topic on the synthesized
+// "primary" Kafka target.
 //
 // Belt-and-suspenders Config validation runs first so ad-hoc Config{}
 // constructions don't slip past with missing fields.
@@ -206,11 +207,11 @@ func NewProducer(ctx context.Context, cfg Config, opts ...EmitterOption) (*Produ
 		return nil, err
 	}
 
-	// Auto-generate a RouteTable: one required Kafka route per catalog
-	// definition, all pointing at the synthesized "primary" target. Any
-	// caller-supplied route overrides (WithRouteOverrides) replace the
-	// auto-generated route sharing their DefinitionKey and extend the set.
-	routes, err := autoGenerateKafkaRoutes(resolvedOpts.catalog, cfg.CloudEventsSource, resolvedOpts.routeOverrides)
+	// Auto-generate a RouteTable: ONE required catch-all Kafka route to the
+	// application's topic on the synthesized "primary" target. Any
+	// caller-supplied route overrides (WithRouteOverrides) replace it or
+	// extend the set.
+	routes, err := autoGenerateKafkaRoutes(cfg.CloudEventsSource, resolvedOpts.routeOverrides)
 	if err != nil {
 		_ = adapter.Close(context.Background())
 		return nil, err
@@ -233,70 +234,38 @@ func NewProducer(ctx context.Context, cfg Config, opts ...EmitterOption) (*Produ
 	return NewProducerMulti(ctx, mpc, cfg.PolicyOverrides, specs, routes, resolvedOpts.catalog, opts...)
 }
 
-// autoGenerateKafkaRoutes synthesizes one required Kafka route per catalog
-// definition (all pointing at the conventional "primary" target), applies any
-// caller-supplied overrides via contract.MergeRouteOverrides, and builds the validated
-// RouteTable. Used by NewProducer so the single-Kafka-target convenience
-// constructor builds a route table the multi-target runtime can consume.
+// autoGenerateKafkaRoutes synthesizes the single required Kafka route the
+// convenience constructor needs, applies any caller-supplied overrides via
+// contract.MergeRouteOverrides, and builds the validated RouteTable.
 //
-// The synthesized route key replaces any underscore in the definition key
-// with a hyphen to satisfy the canonical lower-case dot-and-hyphen route
-// key pattern enforced by NewRouteDefinition. Definition keys themselves
-// are NOT subject to that pattern (they may carry underscores), so the
-// translation is one-way and lossless for routing purposes.
+// ONE route, not one per catalog definition. Under the v3 topic collapse
+// every definition publishes to the same destination — the application's
+// topic — so a per-definition route table would be N identical rows. The
+// synthesized route is a CATCH-ALL (empty DefinitionKey) that serves every
+// definition, and a caller-supplied override naming a specific definition
+// still takes precedence for that definition alone.
 //
-// source is the producer's configured CloudEvents ce-source; it becomes the
-// service namespace segment of each derived topic (see Event.Topic), so the
-// synthesized route destinations match the topics runtime Emit publishes to.
-func autoGenerateKafkaRoutes(catalog Catalog, source string, overrides []contract.RouteDefinition) (contract.RouteTable, error) {
-	routes := kafkaRoutesForCatalog(catalog, source)
-	merged := contract.MergeRouteOverrides(routes, overrides)
+// source is the producer's configured CloudEvents ce-source; it is the sole
+// input to the derived topic, so the route destination is by construction
+// the topic runtime Emit publishes to.
+func autoGenerateKafkaRoutes(source string, overrides []contract.RouteDefinition) (contract.RouteTable, error) {
+	merged := contract.MergeRouteOverrides(appTopicRoutes(source), overrides)
 
 	return contract.NewRouteTable(merged...)
 }
 
-// kafkaRoutesForCatalog synthesizes one required Kafka route per catalog
-// definition, all pointing at the conventional "primary" target. It is the
-// pre-merge, pre-validation route slice consumed by autoGenerateKafkaRoutes.
-func kafkaRoutesForCatalog(catalog Catalog, source string) []contract.RouteDefinition {
-	defs := catalog.Definitions()
-	routes := make([]contract.RouteDefinition, 0, len(defs))
-
-	for _, def := range defs {
-		routes = append(routes, contract.RouteDefinition{
-			Key:           canonicalRouteKey(def.Key) + ".kafka.primary",
-			DefinitionKey: def.Key,
-			Target:        "primary",
-			Destination: contract.Destination{
-				Kind: contract.TransportKafkaLike,
-				Name: def.Topic(source),
-			},
-			Requirement: contract.RouteRequired,
-		})
-	}
-
-	return routes
-}
-
-// canonicalRouteKey replaces underscores in a definition key with hyphens
-// so it can be safely embedded in a synthesized route key. The definition
-// key remains unchanged on the route's DefinitionKey field — only the
-// composite route key is sanitized to satisfy the canonical pattern.
-func canonicalRouteKey(definitionKey string) string {
-	out := make([]byte, len(definitionKey))
-
-	for i := range definitionKey {
-		c := definitionKey[i]
-		if c == '_' {
-			out[i] = '-'
-
-			continue
-		}
-
-		out[i] = c
-	}
-
-	return string(out)
+// appTopicRoutes returns the one catch-all Kafka route pointing the whole
+// catalog at the application's topic on the conventional "primary" target.
+func appTopicRoutes(source string) []contract.RouteDefinition {
+	return []contract.RouteDefinition{{
+		Key:    "primary.kafka",
+		Target: "primary",
+		Destination: contract.Destination{
+			Kind: contract.TransportKafkaLike,
+			Name: contract.AppTopic(source),
+		},
+		Requirement: contract.RouteRequired,
+	}}
 }
 
 // resolveEmitterOptions runs the functional-option closures, fills the

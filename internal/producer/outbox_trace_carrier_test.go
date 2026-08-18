@@ -16,8 +16,8 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/LerianStudio/lib-observability/v2/log"
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport/fake"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport/fake"
 )
 
 func TestProducer_EmitBatch_CapturesBoundedTraceCarrierAndRelayContinuesOriginTrace(t *testing.T) {
@@ -70,7 +70,7 @@ func TestProducer_EmitBatch_CapturesBoundedTraceCarrierAndRelayContinuesOriginTr
 
 	p, err := NewProducerMulti(
 		context.Background(),
-		MultiProducerConfig{Source: "svc://trace-batch"},
+		MultiProducerConfig{Source: "svc-trace-batch"},
 		nil,
 		[]TargetSpec{{Name: "primary", Kind: TransportKafkaLike, Adapter: adapter}},
 		routes,

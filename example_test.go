@@ -6,8 +6,8 @@ import (
 	"context"
 	"fmt"
 
-	streaming "github.com/LerianStudio/lib-streaming/v2"
-	"github.com/LerianStudio/lib-streaming/v2/streamingtest"
+	streaming "github.com/LerianStudio/lib-streaming/v3"
+	"github.com/LerianStudio/lib-streaming/v3/streamingtest"
 )
 
 // Example_basicUsage shows the minimal Emit path exercised against a

@@ -10,9 +10,9 @@ import (
 	"github.com/LerianStudio/lib-commons/v6/commons/outbox"
 	"github.com/LerianStudio/lib-observability/v2/log"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport/fake"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport/fake"
 )
 
 func TestNewProducerMulti_AllRequiredSucceedReturnsNil(t *testing.T) {
@@ -30,7 +30,7 @@ func TestNewProducerMulti_AllRequiredSucceedReturnsNil(t *testing.T) {
 
 	p, err := NewProducerMulti(
 		ctx,
-		MultiProducerConfig{Source: "svc://multi-test"},
+		MultiProducerConfig{Source: "svc-multi-test"},
 		nil,
 		[]TargetSpec{
 			{Name: "primary", Kind: TransportKafkaLike, Adapter: primary},
@@ -78,7 +78,7 @@ func TestNewProducerMulti_RouteDestinationAttributesReachAdapter(t *testing.T) {
 
 	p, err := NewProducerMulti(
 		ctx,
-		MultiProducerConfig{Source: "svc://multi-test"},
+		MultiProducerConfig{Source: "svc-multi-test"},
 		nil,
 		[]TargetSpec{{Name: "primary", Kind: TransportKafkaLike, Adapter: primary}},
 		routes,
@@ -119,7 +119,7 @@ func TestNewProducerMulti_AdapterMutationDoesNotLeakAcrossRoutes(t *testing.T) {
 
 	p, err := NewProducerMulti(
 		ctx,
-		MultiProducerConfig{Source: "svc://multi-test"},
+		MultiProducerConfig{Source: "svc-multi-test"},
 		nil,
 		[]TargetSpec{
 			{Name: "primary", Kind: TransportKafkaLike, Adapter: primary},
@@ -166,7 +166,7 @@ func TestNewProducerMulti_OneRequiredFailsAggregatesMultiEmitError(t *testing.T)
 
 	p, err := NewProducerMulti(
 		ctx,
-		MultiProducerConfig{Source: "svc://multi-test"},
+		MultiProducerConfig{Source: "svc-multi-test"},
 		nil,
 		[]TargetSpec{
 			{Name: "primary", Kind: TransportKafkaLike, Adapter: primary},
@@ -223,7 +223,7 @@ func TestNewProducerMulti_OptionalFailureDoesNotPropagate(t *testing.T) {
 
 	p, err := NewProducerMulti(
 		ctx,
-		MultiProducerConfig{Source: "svc://multi-test"},
+		MultiProducerConfig{Source: "svc-multi-test"},
 		nil,
 		[]TargetSpec{
 			{Name: "primary", Kind: TransportKafkaLike, Adapter: primary},
@@ -266,7 +266,7 @@ func TestNewProducerMulti_PerTargetCircuitBreakerIsolation(t *testing.T) {
 
 	p, err := NewProducerMulti(
 		ctx,
-		MultiProducerConfig{Source: "svc://multi-test"},
+		MultiProducerConfig{Source: "svc-multi-test"},
 		nil,
 		[]TargetSpec{
 			{Name: "primary", Kind: TransportKafkaLike, Adapter: primary},
@@ -331,7 +331,7 @@ func TestNewProducerMulti_OutboxFallbackOnCircuitOpenWritesV2Envelope(t *testing
 
 	p, err := NewProducerMulti(
 		ctx,
-		MultiProducerConfig{Source: "svc://multi-test"},
+		MultiProducerConfig{Source: "svc-multi-test"},
 		nil,
 		[]TargetSpec{
 			{Name: "primary", Kind: TransportKafkaLike, Adapter: primary},
@@ -410,7 +410,7 @@ func TestNewProducerMulti_RejectsRouteForUnregisteredTarget(t *testing.T) {
 
 	_, err := NewProducerMulti(
 		context.Background(),
-		MultiProducerConfig{Source: "svc://multi-test"},
+		MultiProducerConfig{Source: "svc-multi-test"},
 		nil,
 		[]TargetSpec{{Name: "primary", Kind: TransportKafkaLike, Adapter: primary}},
 		routes,
@@ -457,7 +457,7 @@ func TestNewProducerMulti_PostCloseEmitReturnsErrEmitterClosed(t *testing.T) {
 
 	p, err := NewProducerMulti(
 		ctx,
-		MultiProducerConfig{Source: "svc://multi-test"},
+		MultiProducerConfig{Source: "svc-multi-test"},
 		nil,
 		[]TargetSpec{
 			{Name: "primary", Kind: TransportKafkaLike, Adapter: primary},
@@ -506,7 +506,7 @@ func TestNewProducerMulti_RejectsCatalogDefinitionWithNoRoute(t *testing.T) {
 
 	_, err = NewProducerMulti(
 		context.Background(),
-		MultiProducerConfig{Source: "svc://multi-test"},
+		MultiProducerConfig{Source: "svc-multi-test"},
 		nil,
 		[]TargetSpec{{Name: "primary", Kind: TransportKafkaLike, Adapter: primary}},
 		routes,
@@ -582,7 +582,7 @@ func TestNewProducerMulti_AllOptionalFail_ReturnsNilButRecordsOptional(t *testin
 
 	p, err := NewProducerMulti(
 		ctx,
-		MultiProducerConfig{Source: "svc://multi-all-optional"},
+		MultiProducerConfig{Source: "svc-multi-all-optional"},
 		nil,
 		[]TargetSpec{
 			{Name: "opt-a", Kind: TransportKafkaLike, Adapter: optA},
@@ -674,7 +674,7 @@ func TestNewProducerMulti_EmptyCatalogReturnsError(t *testing.T) {
 
 	_, err = NewProducerMulti(
 		context.Background(),
-		MultiProducerConfig{Source: "svc://multi-empty-cat"},
+		MultiProducerConfig{Source: "svc-multi-empty-cat"},
 		nil,
 		[]TargetSpec{{Name: "primary", Kind: TransportKafkaLike, Adapter: primary}},
 		routes,
@@ -729,7 +729,7 @@ func TestNewProducerMulti_OptionalFailureRecordsMetricObservations(t *testing.T)
 
 	p, err := NewProducerMulti(
 		ctx,
-		MultiProducerConfig{Source: "svc://multi-opt-metric"},
+		MultiProducerConfig{Source: "svc-multi-opt-metric"},
 		nil,
 		[]TargetSpec{
 			{Name: "primary", Kind: TransportKafkaLike, Adapter: primary},

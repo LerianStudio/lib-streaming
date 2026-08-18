@@ -8,7 +8,7 @@ import (
 	libTracing "github.com/LerianStudio/lib-observability/v2/tracing"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
 )
 
 const emitBatchSpanName = "producer.outbox.emit_batch"

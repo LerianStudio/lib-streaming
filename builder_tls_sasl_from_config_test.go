@@ -7,7 +7,7 @@ import (
 	"errors"
 	"testing"
 
-	streaming "github.com/LerianStudio/lib-streaming/v2"
+	streaming "github.com/LerianStudio/lib-streaming/v3"
 	"github.com/twmb/franz-go/pkg/sasl/plain"
 )
 
@@ -155,7 +155,7 @@ func minimalValidBuilder(t *testing.T) *streaming.Builder {
 	}
 
 	return streaming.NewBuilder().
-		Source("//lerian.test/svc").
+		Source("lerian-test-svc").
 		Catalog(catalog).
 		Routes(route).
 		Target(streaming.TargetConfig{

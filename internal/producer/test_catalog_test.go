@@ -78,7 +78,7 @@ func testOutboxEnvelope(event Event, _topic, definitionKey string, policy Delive
 
 	return OutboxEnvelope{
 		Version:       outboxEnvelopeVersion,
-		RouteKey:      canonicalRouteKey(definitionKey) + ".kafka.primary",
+		RouteKey:      "primary.kafka",
 		DefinitionKey: definitionKey,
 		Target:        "primary",
 		Transport:     TransportKafkaLike,

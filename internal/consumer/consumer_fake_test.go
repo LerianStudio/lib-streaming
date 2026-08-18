@@ -11,7 +11,7 @@ import (
 	"github.com/LerianStudio/lib-observability/v2/log"
 	"github.com/twmb/franz-go/pkg/kgo"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
 )
 
 // spyLogger records log message strings so a test can assert observability
@@ -294,7 +294,7 @@ func ceHeaders(tenant string, system bool) []kgo.RecordHeader {
 	h := []kgo.RecordHeader{
 		{Key: "ce-specversion", Value: []byte("1.0")},
 		{Key: "ce-id", Value: []byte("evt-1")},
-		{Key: "ce-source", Value: []byte("//test/source")},
+		{Key: "ce-source", Value: []byte("test-source")},
 		{Key: "ce-type", Value: []byte("studio.lerian.loan.created")},
 		{Key: "ce-time", Value: []byte(time.Now().UTC().Format(time.RFC3339Nano))},
 		{Key: "ce-resourcetype", Value: []byte("loan")},

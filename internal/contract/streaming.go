@@ -124,10 +124,16 @@ var (
 	// ce-type header.
 	ErrInvalidEventType = errors.New("streaming: Event.EventType contains control chars or exceeds 128 bytes")
 
-	// ErrInvalidSource is returned when Event.Source contains control
-	// characters or exceeds 2048 bytes. Distinct from ErrMissingSource
-	// (empty): this sentinel fires on a populated but malformed value.
-	ErrInvalidSource = errors.New("streaming: Event.Source contains control chars or exceeds 2048 bytes")
+	// ErrInvalidSource is returned when Event.Source is populated but is
+	// not a legal v3 ce-source: it must be a single dot-free lowercase
+	// segment matching ^[a-z0-9][a-z0-9_-]*$, short enough that
+	// "lerian.streaming.<source>.dlq" fits Kafka's 249-byte topic-name
+	// limit. Distinct from ErrMissingSource (empty).
+	//
+	// v3 REJECTS rather than rewrites. v2 folded a malformed source through
+	// a lossy sanitizer, so two distinct services could silently collapse
+	// onto one topic namespace and one Kafka ACL scope.
+	ErrInvalidSource = errors.New("streaming: Event.Source must be a single dot-free lowercase segment [a-z0-9][a-z0-9_-]* that fits the derived topic name")
 
 	// ErrInvalidSubject is returned when Event.Subject contains control
 	// characters or exceeds 1024 bytes. Subject is an optional CloudEvents

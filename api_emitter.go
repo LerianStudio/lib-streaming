@@ -6,9 +6,9 @@ import (
 	"github.com/LerianStudio/lib-commons/v6/commons"
 	"github.com/LerianStudio/lib-commons/v6/commons/outbox"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/emitter"
-	"github.com/LerianStudio/lib-streaming/v2/internal/producer"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/emitter"
+	"github.com/LerianStudio/lib-streaming/v3/internal/producer"
 )
 
 // Emitter publishes cataloged domain events and exposes lifecycle/health hooks.

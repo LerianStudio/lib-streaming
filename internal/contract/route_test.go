@@ -77,13 +77,6 @@ func TestRouteDefinition_New_RejectsInvalidShape(t *testing.T) {
 			want: ErrInvalidRouteDefinition,
 		},
 		{
-			name: "missing definition key",
-			mutate: func(route *RouteDefinition) {
-				route.DefinitionKey = ""
-			},
-			want: ErrInvalidRouteDefinition,
-		},
-		{
 			name: "missing target",
 			mutate: func(route *RouteDefinition) {
 				route.Target = ""

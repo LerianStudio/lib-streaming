@@ -295,7 +295,7 @@ func TestEmit_Span_DebugLevelEmitsMessageKey(t *testing.T) {
 // route key, target, state, and error class.)
 func TestEmit_SpanError_RecordedOnFailure(t *testing.T) {
 	cfg, cluster := kfakeDLQConfig(t)
-	injectProduceError(cluster, "test.transaction.created",
+	injectProduceError(cluster, "lerian.streaming.test",
 		kerr.MessageTooLarge.Code)
 
 	tracer, getSpans := newSpanRecorder(t)

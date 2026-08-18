@@ -14,7 +14,7 @@ import (
 
 	"github.com/LerianStudio/lib-observability/v2/log"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
 )
 
 // This file is the docs/design/consumer.md §9 mandated kfake-backed smoke test.
@@ -203,7 +203,7 @@ func ceHeadersForKfake(tenant string) []kgo.RecordHeader {
 	return []kgo.RecordHeader{
 		{Key: "ce-specversion", Value: []byte("1.0")},
 		{Key: "ce-id", Value: []byte("evt-kfake-1")},
-		{Key: "ce-source", Value: []byte("//test/source")},
+		{Key: "ce-source", Value: []byte("test-source")},
 		{Key: "ce-type", Value: []byte("studio.lerian.loan.created")},
 		{Key: "ce-time", Value: []byte(time.Now().UTC().Format(time.RFC3339Nano))},
 		{Key: "ce-resourcetype", Value: []byte("loan")},

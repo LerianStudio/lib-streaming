@@ -72,7 +72,7 @@ func TestLoadConfig_EnabledWithoutBrokers(t *testing.T) {
 	t.Setenv("STREAMING_ENABLED", "true")
 	// A comma with only whitespace collapses to an empty slice in splitCSV.
 	t.Setenv("STREAMING_BROKERS", " , , ")
-	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.midaz/tx-service")
+	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "midaz-tx-service")
 
 	_, _, err := LoadConfig()
 	if !errors.Is(err, ErrMissingBrokers) {
@@ -100,7 +100,7 @@ func TestLoadConfig_InvalidCompression(t *testing.T) {
 	clearStreamingEnv(t)
 	t.Setenv("STREAMING_ENABLED", "true")
 	t.Setenv("STREAMING_BROKERS", "broker:9092")
-	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.midaz/tx-service")
+	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "midaz-tx-service")
 	t.Setenv("STREAMING_COMPRESSION", "brotli")
 
 	_, _, err := LoadConfig()
@@ -114,7 +114,7 @@ func TestLoadConfig_InvalidAcks(t *testing.T) {
 	clearStreamingEnv(t)
 	t.Setenv("STREAMING_ENABLED", "true")
 	t.Setenv("STREAMING_BROKERS", "broker:9092")
-	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.midaz/tx-service")
+	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "midaz-tx-service")
 	t.Setenv("STREAMING_REQUIRED_ACKS", "maybe")
 
 	_, _, err := LoadConfig()
@@ -147,7 +147,7 @@ func TestLoadConfig_ValidCSVBrokers(t *testing.T) {
 	clearStreamingEnv(t)
 	t.Setenv("STREAMING_ENABLED", "true")
 	t.Setenv("STREAMING_BROKERS", "broker1:9092, broker2:9092 ,broker3:9092")
-	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.midaz/tx-service")
+	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "midaz-tx-service")
 
 	cfg, _, err := LoadConfig()
 	if err != nil {
@@ -171,7 +171,7 @@ func TestLoadConfig_AllValidCompressionCodecs(t *testing.T) {
 			clearStreamingEnv(t)
 			t.Setenv("STREAMING_ENABLED", "true")
 			t.Setenv("STREAMING_BROKERS", "broker:9092")
-			t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.midaz/tx-service")
+			t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "midaz-tx-service")
 			t.Setenv("STREAMING_COMPRESSION", codec)
 
 			cfg, _, err := LoadConfig()
@@ -192,7 +192,7 @@ func TestLoadConfig_AllValidAcks(t *testing.T) {
 			clearStreamingEnv(t)
 			t.Setenv("STREAMING_ENABLED", "true")
 			t.Setenv("STREAMING_BROKERS", "broker:9092")
-			t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.midaz/tx-service")
+			t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "midaz-tx-service")
 			t.Setenv("STREAMING_REQUIRED_ACKS", acks)
 
 			cfg, _, err := LoadConfig()
@@ -212,7 +212,7 @@ func TestLoadConfig_CBFailureRatioOverride(t *testing.T) {
 	clearStreamingEnv(t)
 	t.Setenv("STREAMING_ENABLED", "true")
 	t.Setenv("STREAMING_BROKERS", "broker:9092")
-	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.midaz/tx-service")
+	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "midaz-tx-service")
 	t.Setenv("STREAMING_CB_FAILURE_RATIO", "0.25")
 
 	cfg, _, err := LoadConfig()
@@ -230,7 +230,7 @@ func TestLoadConfig_CBFailureRatioBadValueFailsWhenEnabled(t *testing.T) {
 	clearStreamingEnv(t)
 	t.Setenv("STREAMING_ENABLED", "true")
 	t.Setenv("STREAMING_BROKERS", "broker:9092")
-	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.midaz/tx-service")
+	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "midaz-tx-service")
 	t.Setenv("STREAMING_CB_FAILURE_RATIO", "not-a-float")
 
 	_, _, err := LoadConfig()
@@ -254,7 +254,7 @@ func TestLoadConfig_MalformedNumericEnvFailsWhenEnabled(t *testing.T) {
 			clearStreamingEnv(t)
 			t.Setenv("STREAMING_ENABLED", "true")
 			t.Setenv("STREAMING_BROKERS", "broker:9092")
-			t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.midaz/tx-service")
+			t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "midaz-tx-service")
 			t.Setenv(key, "not-an-int")
 
 			_, _, err := LoadConfig()
@@ -284,7 +284,7 @@ func TestLoadConfig_EventPolicies(t *testing.T) {
 	clearStreamingEnv(t)
 	t.Setenv("STREAMING_ENABLED", "true")
 	t.Setenv("STREAMING_BROKERS", "broker:9092")
-	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.midaz/tx-service")
+	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "midaz-tx-service")
 	t.Setenv(
 		"STREAMING_EVENT_POLICIES",
 		"transaction.created.enabled=false,transaction.created.outbox=always;transaction.created.dlq=never\naccount.updated.direct=skip,account.updated.outbox=always",
@@ -319,7 +319,7 @@ func TestLoadConfig_EventPoliciesInvalidMode(t *testing.T) {
 	clearStreamingEnv(t)
 	t.Setenv("STREAMING_ENABLED", "true")
 	t.Setenv("STREAMING_BROKERS", "broker:9092")
-	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.midaz/tx-service")
+	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "midaz-tx-service")
 	t.Setenv("STREAMING_EVENT_POLICIES", "transaction.created.outbox=sometimes")
 
 	_, _, err := LoadConfig()
@@ -332,7 +332,7 @@ func TestLoadConfig_EventPoliciesMalformedEntry(t *testing.T) {
 	clearStreamingEnv(t)
 	t.Setenv("STREAMING_ENABLED", "true")
 	t.Setenv("STREAMING_BROKERS", "broker:9092")
-	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "//lerian.midaz/tx-service")
+	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "midaz-tx-service")
 	t.Setenv("STREAMING_EVENT_POLICIES", "transaction.created.enabled")
 
 	_, _, err := LoadConfig()

@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/LerianStudio/lib-observability/v2/log"
-	streaming "github.com/LerianStudio/lib-streaming/v2"
-	"github.com/LerianStudio/lib-streaming/v2/internal/producer"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
+	streaming "github.com/LerianStudio/lib-streaming/v3"
+	"github.com/LerianStudio/lib-streaming/v3/internal/producer"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
 	"github.com/twmb/franz-go/pkg/kfake"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/twmb/franz-go/pkg/sasl/plain"
@@ -24,7 +24,7 @@ func TestBuilder_OptionsThreadPartitionKeyToProducer(t *testing.T) {
 	fixedKey := "fixed-builder-key"
 
 	emitter, err := streaming.NewBuilder().
-		Source("//builder-test").
+		Source("builder-test").
 		Catalog(builderCatalog(t)).
 		Routes(builderRoute("lerian.streaming.transaction.created")).
 		Target(cfg).
@@ -86,7 +86,7 @@ func TestBuilder_DedicatedOptionMethodsBuildWithoutValidationFailure(t *testing.
 	t.Parallel()
 
 	emitter, err := streaming.NewBuilder().
-		Source("svc://ledger").
+		Source("svc-ledger").
 		Catalog(builderCatalog(t)).
 		Routes(builderRoute("lerian.streaming.transaction.created")).
 		Target(builderKafkaTarget()).
@@ -163,7 +163,7 @@ func TestBuilder_CloseTimeoutPreservesFluentCallOrder(t *testing.T) {
 	makeBuilder := func() *streaming.Builder {
 		catalog := builderCatalog(t)
 		return streaming.NewBuilder().
-			Source("svc://close-timeout-test").
+			Source("svc-close-timeout-test").
 			Catalog(catalog).
 			Routes(streaming.RouteDefinition{
 				Key:           "transaction.created.custom.primary",
@@ -253,7 +253,7 @@ func TestBuilder_SASLWithoutTLSRejectsPlaintext(t *testing.T) {
 	t.Parallel()
 
 	_, err := streaming.NewBuilder().
-		Source("svc://ledger").
+		Source("svc-ledger").
 		Catalog(builderCatalog(t)).
 		Routes(builderRoute("lerian.streaming.transaction.created")).
 		Target(builderKafkaTarget()).
@@ -268,7 +268,7 @@ func TestBuilder_SASLWithAllowPlaintextSASLSucceeds(t *testing.T) {
 	t.Parallel()
 
 	emitter, err := streaming.NewBuilder().
-		Source("svc://ledger").
+		Source("svc-ledger").
 		Catalog(builderCatalog(t)).
 		Routes(builderRoute("lerian.streaming.transaction.created")).
 		Target(builderKafkaTarget()).
@@ -290,7 +290,7 @@ func TestBuilder_TLSConfigWithInsecureSkipVerifyRejectsConfig(t *testing.T) {
 	t.Parallel()
 
 	_, err := streaming.NewBuilder().
-		Source("svc://ledger").
+		Source("svc-ledger").
 		Catalog(builderCatalog(t)).
 		Routes(builderRoute("lerian.streaming.transaction.created")).
 		Target(builderKafkaTarget()).
@@ -315,7 +315,7 @@ func TestBuilder_TargetNameWithControlCharRejected(t *testing.T) {
 	target.Name = "primary\nattacker-injected" // newline = control char
 
 	_, err := streaming.NewBuilder().
-		Source("svc://ledger").
+		Source("svc-ledger").
 		Catalog(builderCatalog(t)).
 		Routes(builderRoute("lerian.streaming.transaction.created")).
 		Target(target).
@@ -336,7 +336,7 @@ func TestBuilder_TargetNameTooLongRejected(t *testing.T) {
 	target.Name = strings.Repeat("a", 257) // > MaxEventIDBytes (256)
 
 	_, err := streaming.NewBuilder().
-		Source("svc://ledger").
+		Source("svc-ledger").
 		Catalog(builderCatalog(t)).
 		Routes(builderRoute("lerian.streaming.transaction.created")).
 		Target(target).

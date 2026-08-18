@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
 )
 
 // TestSASLRequiresTLS is the core gate the producer (and later the consumer)

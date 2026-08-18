@@ -6,9 +6,9 @@ import (
 	"time"
 
 	"github.com/LerianStudio/lib-observability/v2/log"
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/dlqheader"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/dlqheader"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
 )
 
 // publishRouteDLQ writes the original payload to the route's DLQ destination

@@ -12,8 +12,8 @@ import (
 	"github.com/LerianStudio/lib-commons/v6/commons/circuitbreaker"
 	"github.com/LerianStudio/lib-observability/v2/log"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
 )
 
 type prevalidatingAdapter struct {
@@ -77,7 +77,7 @@ func TestProducer_TransportValidationMutationDoesNotLeakToPublish(t *testing.T) 
 
 	p, err := NewProducerMulti(
 		context.Background(),
-		MultiProducerConfig{Source: "svc://test", CBTimeout: time.Second},
+		MultiProducerConfig{Source: "svc-test", CBTimeout: time.Second},
 		nil,
 		[]TargetSpec{{Name: "primary", Kind: contract.TransportCustom, Adapter: adapter}},
 		routes,
@@ -128,7 +128,7 @@ func TestProducer_TransportValidationBypassesCircuitBreaker(t *testing.T) {
 
 	p, err := NewProducerMulti(
 		context.Background(),
-		MultiProducerConfig{Source: "svc://test", CBTimeout: time.Second},
+		MultiProducerConfig{Source: "svc-test", CBTimeout: time.Second},
 		nil,
 		[]TargetSpec{{Name: "primary", Kind: contract.TransportCustom, Adapter: adapter}},
 		routes,

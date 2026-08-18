@@ -419,7 +419,7 @@ func TestMetrics_Emit_UnknownDefinitionUsesBoundedMetricTopic(t *testing.T) {
 func TestMetrics_DLQ_RecordsDlqCounter(t *testing.T) {
 	cfg, cluster := kfakeDLQConfig(t)
 
-	sourceTopic := "test.transaction.created"
+	sourceTopic := "lerian.streaming.test"
 	injectProduceError(cluster, sourceTopic, kerr.MessageTooLarge.Code)
 
 	factory, snapshot := newManualMeterSetup(t)
@@ -492,7 +492,7 @@ func TestMetrics_DLQ_RecordsDlqCounter(t *testing.T) {
 func TestMetrics_DLQFailed_RecordsCounter(t *testing.T) {
 	cfg, cluster := kfakeDLQConfig(t)
 
-	sourceTopic := "test.transaction.created"
+	sourceTopic := "lerian.streaming.test"
 	dlqT := sourceTopic + ".dlq"
 
 	// Fail BOTH the source and the DLQ topics.

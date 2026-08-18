@@ -61,7 +61,7 @@ const chaosToxiproxyImage = "ghcr.io/shopify/toxiproxy:2.12.0"
 // chaosSource is the CloudEvents source used in the chaos scenario. Matches
 // the integration-test style so logs/spans collected during a chaos run can
 // be visually correlated.
-const chaosSource = "//lerian.test/streaming-chaos"
+const chaosSource = "lerian-test-streaming-chaos"
 
 // chaosSkipIfDisabled implements the dual-gate CHAOS=1 + !testing.Short()
 // requirement. Returns true when the test should be skipped.
@@ -405,7 +405,7 @@ func TestChaos_BrokerLatency_CircuitOpensAndOutboxCatches(t *testing.T) {
 	// Pre-create topic to avoid UNKNOWN_TOPIC_OR_PARTITION on the first
 	// produce. Goes through the proxy (no toxic injected yet) — same path
 	// the producer will use.
-	chaosTopic := sourceTopicPrefix(chaosSource) + "chaos.event"
+	chaosTopic := sourceTopic(chaosSource)
 	chaosEnsureTopic(t, proxiedBroker, chaosTopic)
 	chaosEnsureTopic(t, proxiedBroker, dlqTopic(chaosTopic))
 

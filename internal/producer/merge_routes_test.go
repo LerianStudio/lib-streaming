@@ -5,7 +5,7 @@ package producer
 import (
 	"testing"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
 )
 
 // The canonical merge-semantics table test lives in
@@ -16,10 +16,10 @@ import (
 
 func billingOverrideRoute() contract.RouteDefinition {
 	return contract.RouteDefinition{
-		Key:           "billing-recorded.kafka.primary",
+		Key:           "billing_recorded.kafka.replica",
 		DefinitionKey: "billing_recorded",
-		Target:        "primary",
-		Destination:   contract.Destination{Kind: contract.TransportKafkaLike, Name: "lerian.streaming.billing.recorded"},
+		Target:        "replica",
+		Destination:   contract.Destination{Kind: contract.TransportKafkaLike, Name: "lerian.streaming.billing-svc"},
 		Requirement:   contract.RouteRequired,
 	}
 }
@@ -44,42 +44,66 @@ func TestWithRouteOverrides_SetsOptionDefensively(t *testing.T) {
 	// Defensive copy: mutating the caller slice must not affect the option.
 	input[0] = contract.RouteDefinition{Key: "mutated"}
 
-	if o.routeOverrides[0].Key != "billing-recorded.kafka.primary" {
+	if o.routeOverrides[0].Key != "billing_recorded.kafka.replica" {
 		t.Errorf("routeOverrides[0].Key = %q after caller mutation; want defensive copy", o.routeOverrides[0].Key)
 	}
 }
 
+// TestAutoGenerateKafkaRoutes_SingleCatchAllRoute pins the v3 route collapse:
+// the convenience constructor synthesizes ONE catch-all route to the
+// application's topic, not one route per catalog definition. Every definition
+// resolves through it.
+func TestAutoGenerateKafkaRoutes_SingleCatchAllRoute(t *testing.T) {
+	t.Parallel()
+
+	table, err := autoGenerateKafkaRoutes("billing-svc", nil)
+	if err != nil {
+		t.Fatalf("autoGenerateKafkaRoutes() error = %v", err)
+	}
+
+	if got := table.Len(); got != 1 {
+		t.Fatalf("route table len = %d; want exactly 1 catch-all route", got)
+	}
+
+	for _, definitionKey := range []string{"transaction.created", "billing_recorded", "anything"} {
+		routes := table.Routes(definitionKey)
+		if len(routes) != 1 {
+			t.Fatalf("Routes(%q) = %d routes; want 1", definitionKey, len(routes))
+		}
+
+		if routes[0].Destination.Name != "lerian.streaming.billing-svc" {
+			t.Errorf("Routes(%q) destination = %q; want the app topic", definitionKey, routes[0].Destination.Name)
+		}
+	}
+}
+
 // TestAutoGenerateKafkaRoutes_AppliesOverride proves the single-target path
-// merges overrides via the shared helper: an override sharing a catalog
-// definition's DefinitionKey REPLACES the auto-generated route (no
-// double-publish), while other definitions keep their auto route.
+// merges overrides via the shared helper: a definition-scoped override wins
+// for its own definition (no double-publish alongside the catch-all), while
+// every other definition still resolves through the catch-all route.
 func TestAutoGenerateKafkaRoutes_AppliesOverride(t *testing.T) {
 	t.Parallel()
 
-	catalog, err := contract.NewCatalog(
-		contract.EventDefinition{Key: "transaction.created", ResourceType: "transaction", EventType: "created"},
-		contract.EventDefinition{Key: "billing_recorded", ResourceType: "billing", EventType: "recorded"},
-	)
-	if err != nil {
-		t.Fatalf("NewCatalog() error = %v", err)
-	}
-
-	table, err := autoGenerateKafkaRoutes(catalog, "//svc", []contract.RouteDefinition{billingOverrideRoute()})
+	table, err := autoGenerateKafkaRoutes("billing-svc", []contract.RouteDefinition{billingOverrideRoute()})
 	if err != nil {
 		t.Fatalf("autoGenerateKafkaRoutes() error = %v", err)
 	}
 
 	billingRoutes := table.Routes("billing_recorded")
 	if len(billingRoutes) != 1 {
-		t.Fatalf("billing routes = %d, want exactly 1 (override replaces auto)", len(billingRoutes))
+		t.Fatalf("billing routes = %d, want exactly 1 (scoped override beats catch-all)", len(billingRoutes))
 	}
 
-	if billingRoutes[0].Destination.Name != "lerian.streaming.billing.recorded" {
-		t.Errorf("billing route destination = %q, want the override topic %q",
-			billingRoutes[0].Destination.Name, "lerian.streaming.billing.recorded")
+	if billingRoutes[0].Target != "replica" {
+		t.Errorf("billing route target = %q, want the override target %q", billingRoutes[0].Target, "replica")
 	}
 
-	if got := len(table.Routes("transaction.created")); got != 1 {
-		t.Fatalf("transaction routes = %d, want 1 (auto-generated, unaffected)", got)
+	transactionRoutes := table.Routes("transaction.created")
+	if len(transactionRoutes) != 1 {
+		t.Fatalf("transaction routes = %d, want 1 (catch-all, unaffected)", len(transactionRoutes))
+	}
+
+	if transactionRoutes[0].Target != "primary" {
+		t.Errorf("transaction route target = %q, want the catch-all target %q", transactionRoutes[0].Target, "primary")
 	}
 }

@@ -6,8 +6,8 @@ import (
 	"context"
 	"testing"
 
-	streaming "github.com/LerianStudio/lib-streaming/v2"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport/fake"
+	streaming "github.com/LerianStudio/lib-streaming/v3"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport/fake"
 )
 
 // fakeSQSClient is a test double for streaming.SQSPublisherClient that
@@ -103,7 +103,7 @@ func TestBuilder_AllFourTransports_Build_Emit_AllTargetsReceiveMessage(t *testin
 	ebClient := &fakeEventBridgeClient{}
 
 	emitter, err := streaming.NewBuilder().
-		Source("svc://all-transports").
+		Source("svc-all-transports").
 		Catalog(catalog).
 		Routes(routes...).
 		Target(streaming.TargetConfig{Name: "kafka-primary", Kind: streaming.TransportKafkaLike, Brokers: []string{"127.0.0.1:9092"}}).

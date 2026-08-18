@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
 )
 
 type fakeClient struct {
@@ -48,7 +48,7 @@ func sampleMessage(queueURL string, payload []byte) transport.TransportMessage {
 		Payload:     payload,
 		Headers: []transport.Header{
 			{Key: "ce-id", Value: []byte("evt-1")},
-			{Key: "ce-source", Value: []byte("svc://test")},
+			{Key: "ce-source", Value: []byte("svc-test")},
 		},
 		Attributes: map[string]string{"x-trace": "trc-1"},
 	}
@@ -116,7 +116,7 @@ func TestSQS_Publish_ForwardsBodyAndAttributes(t *testing.T) {
 
 	wantKeys := map[string]string{
 		"ce-id":     "evt-1",
-		"ce-source": "svc://test",
+		"ce-source": "svc-test",
 		"x-trace":   "trc-1",
 	}
 	got := map[string]string{}

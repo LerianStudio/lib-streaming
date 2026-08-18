@@ -3,10 +3,10 @@ package streaming
 import (
 	"github.com/twmb/franz-go/pkg/sr"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/config"
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/kafkasec"
-	"github.com/LerianStudio/lib-streaming/v2/internal/manifest"
+	"github.com/LerianStudio/lib-streaming/v3/internal/config"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/kafkasec"
+	"github.com/LerianStudio/lib-streaming/v3/internal/manifest"
 )
 
 type (

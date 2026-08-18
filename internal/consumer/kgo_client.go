@@ -6,9 +6,9 @@ import (
 
 	"github.com/twmb/franz-go/pkg/kgo"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/kafkasec"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/kafkasec"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
 )
 
 // kgoGroupClient is the production GroupClient backed by a franz-go group

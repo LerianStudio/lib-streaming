@@ -40,7 +40,7 @@ func TestBuildTransportHeadersInjectsTraceContext(t *testing.T) {
 		EventID:         "evt-1",
 		SchemaVersion:   "1.0.0",
 		Timestamp:       time.Date(2026, 5, 4, 12, 0, 0, 0, time.UTC),
-		Source:          "svc://test",
+		Source:          "svc-test",
 		DataContentType: "application/json",
 	})
 

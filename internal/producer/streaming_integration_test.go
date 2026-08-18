@@ -42,8 +42,8 @@ import (
 	outboxpg "github.com/LerianStudio/lib-commons/v6/commons/outbox/postgres"
 	libPostgres "github.com/LerianStudio/lib-commons/v6/commons/postgres"
 	"github.com/LerianStudio/lib-observability/v2/log"
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/dlqheader"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/dlqheader"
 )
 
 // redpandaImage pins the Redpanda container image. Pinning the tag (not
@@ -60,7 +60,7 @@ const postgresImage = "postgres:16-alpine"
 // integrationSource is the CloudEvents ce-source used across the integration
 // suite. Matches the structure of real Lerian services (reverse-DNS authority
 // path) so round-trip tests exercise non-trivial inputs.
-const integrationSource = "//lerian.test/streaming-integration"
+const integrationSource = "lerian-test-streaming-integration"
 
 // skipIfNoDocker converts a testcontainers startup error into t.Skip when
 // the root cause is "Docker is unavailable in this environment". Anything
@@ -538,8 +538,8 @@ func TestIntegration_DLQRouting(t *testing.T) {
 	eventType := "overflow"
 	// Derive the source topic from the producer's ce-source so it matches
 	// the service-namespaced Event.Topic() the producer publishes to.
-	sourceTopic := (&Event{Source: integrationSource, ResourceType: resourceType, EventType: eventType}).Topic()
-	dlqName := dlqTopic(sourceTopic) // ...overflow.dlq
+	appTopic := (&Event{Source: integrationSource, ResourceType: resourceType, EventType: eventType}).Topic()
+	dlqName := dlqTopic(appTopic) // <app topic>.dlq
 
 	// Pre-create source with a tiny max.message.bytes. franz-go's
 	// ProduceSync returns kerr.MessageTooLarge (or wraps kerr.RecordListTooLarge
@@ -549,7 +549,7 @@ func TestIntegration_DLQRouting(t *testing.T) {
 	ctxCreate, cancelCreate := context.WithTimeout(context.Background(), 15*time.Second)
 	_, err = admin.CreateTopic(ctxCreate, 1, 1,
 		map[string]*string{"max.message.bytes": &tinyMax},
-		sourceTopic,
+		appTopic,
 	)
 	cancelCreate()
 	require.NoError(t, err, "CreateTopic source")
@@ -619,7 +619,7 @@ func TestIntegration_DLQRouting(t *testing.T) {
 		"expected exactly one required-route failure, got %d", len(multiErr.Required))
 
 	routeFail := multiErr.Required[0]
-	require.Equal(t, sourceTopic, routeFail.Destination,
+	require.Equal(t, appTopic, routeFail.Destination,
 		"RouteError.Destination should equal source topic for kafka transport")
 	// franz-go's behavior under a broker-side reject may map to
 	// ClassSerialization (the normal expected class for MessageTooLarge)
@@ -637,7 +637,7 @@ func TestIntegration_DLQRouting(t *testing.T) {
 
 	// Six x-lerian-dlq-* headers all present. Tenant identity is in
 	// ce-tenantid (CloudEvents), not in a DLQ-specific header.
-	assert.Equal(t, sourceTopic, hdrs[dlqheader.SourceTopic], "dlq source-topic")
+	assert.Equal(t, appTopic, hdrs[dlqheader.SourceTopic], "dlq source-topic")
 	assert.NotEmpty(t, hdrs[dlqheader.ErrorClass], "dlq error-class")
 	assert.Truef(t, isDLQRoutable(ErrorClass(hdrs[dlqheader.ErrorClass])),
 		"dlq error-class %q should be DLQ-routable", hdrs[dlqheader.ErrorClass])
@@ -809,7 +809,7 @@ CREATE TABLE IF NOT EXISTS outbox_events (
 
 	// Pre-create the source + DLQ topics so the baseline emits don't race
 	// Redpanda's controller and produce a false-positive outbox write.
-	baselineTopic := sourceTopicPrefix(integrationSource) + "payment.authorized"
+	baselineTopic := sourceTopic(integrationSource)
 	ensureTopics(t, brokers[0], 1, baselineTopic, dlqTopic(baselineTopic))
 
 	tenantCtx := outbox.ContextWithTenantID(ctx, "tenant-outbox-it")
@@ -1021,8 +1021,8 @@ func TestIntegration_CircuitBreaker_TripsOrganically(t *testing.T) {
 	brokers := []string{seed}
 
 	// Pre-create source + DLQ so the baseline emits don't race on metadata.
-	sourceTopic := sourceTopicPrefix(integrationSource) + "transaction.cb_organic"
-	ensureTopics(t, brokers[0], 1, sourceTopic, dlqTopic(sourceTopic))
+	appTopic := sourceTopic(integrationSource)
+	ensureTopics(t, brokers[0], 1, appTopic, dlqTopic(appTopic))
 
 	// CB tuned to trip with minimal friction: low min-requests, low
 	// failure ratio, short record-delivery timeout so a stopped broker

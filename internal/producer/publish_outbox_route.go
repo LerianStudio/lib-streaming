@@ -12,7 +12,7 @@ import (
 	"github.com/LerianStudio/lib-commons/v6/commons"
 	"github.com/LerianStudio/lib-commons/v6/commons/outbox"
 	"github.com/LerianStudio/lib-observability/v2/tracing"
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
 )
 
 // txContextKey is the context key that holds an ambient *sql.Tx for the

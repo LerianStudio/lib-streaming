@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
@@ -34,9 +34,24 @@ const (
 const cloudEventsSpecVersion = "1.0"
 
 // cloudEventsTypePrefix is the reverse-DNS namespace prepended to every
-// ce-type header value. Composed as "studio.lerian.<resource>.<event>".
-// Matches TRD §6.1 verbatim.
+// ce-type header value. Composed as
+// "studio.lerian.<source>.<resource>.<event>" (TRD §6.1).
+//
+// The <source> segment is the v3 addition. v2's "studio.lerian.<resource>.
+// <event>" was source-blind, so two services publishing the same resource
+// and event names produced byte-identical ce-type values — a homonym
+// collision that a consumer reading only ce-type could not detect, and which
+// the topic collapse makes reachable in practice (one app stream carries
+// every event that app emits, and cross-app consumers subscribe to several).
+// Including the producing application makes ce-type globally unambiguous.
 const cloudEventsTypePrefix = "studio.lerian."
+
+// TypeOf composes the ce-type header value for one event. Exported so
+// consumers can build the same string when matching by ce-type rather than
+// by the ce-resourcetype / ce-eventtype extension pair.
+func TypeOf(source, resourceType, eventType string) string {
+	return cloudEventsTypePrefix + source + "." + resourceType + "." + eventType
+}
 
 // BuildTransportHeaders assembles a transport-native []transport.Header
 // slice carrying the CloudEvents binary-mode envelope per TRD §6.1.
@@ -70,7 +85,7 @@ func BuildTransportHeaders(event Event) []transport.Header {
 		transport.Header{Key: headerCESource, Value: []byte(event.Source)},
 		transport.Header{
 			Key:   headerCEType,
-			Value: []byte(cloudEventsTypePrefix + event.ResourceType + "." + event.EventType),
+			Value: []byte(TypeOf(event.Source, event.ResourceType, event.EventType)),
 		},
 		transport.Header{Key: headerCETime, Value: []byte(event.Timestamp.Format(time.RFC3339Nano))},
 		transport.Header{Key: headerCESchemaVersion, Value: []byte(event.SchemaVersion)},

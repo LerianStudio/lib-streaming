@@ -4,10 +4,10 @@ This file provides repository-specific guidance for coding agents working on `li
 
 ## Project snapshot
 
-- Module: `github.com/LerianStudio/lib-streaming/v2`
+- Module: `github.com/LerianStudio/lib-streaming/v3`
 - Language: Go
 - Go version: `1.26.3` (see `go.mod`)
-- Current API version: 2.x (module path carries the `/v2` suffix — the first true breaking release cut it when adopting `lib-commons/v6`, whose types leak through the public `Run`/`RunContext` lifecycle surface. Import paths are `github.com/LerianStudio/lib-streaming/v2/...`. See `CHANGELOG.md` for tagged history.)
+- Current API version: 2.x (module path carries the `/v2` suffix — the first true breaking release cut it when adopting `lib-commons/v6`, whose types leak through the public `Run`/`RunContext` lifecycle surface. Import paths are `github.com/LerianStudio/lib-streaming/v3/...`. See `CHANGELOG.md` for tagged history.)
 - Layout: public root facade at the repository root (`package streaming`) with implementation in internal packages (`internal/contract`, `internal/config`, `internal/manifest`, `internal/cloudevents`, `internal/emitter`, `internal/producer`, `internal/transport`). Public test helpers live in `streamingtest`. Scaffolding (`docs/`, `.github/`, `scripts/`) stays in subdirectories.
 
 ## Primary objective for changes

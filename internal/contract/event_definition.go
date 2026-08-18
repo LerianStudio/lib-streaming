@@ -66,12 +66,11 @@ func NewEventDefinition(definition EventDefinition) (EventDefinition, error) {
 	}
 
 	// SchemaVersion semver gate. Runs at construction time so unparseable
-	// semver fails fast at NewEventDefinition / NewCatalog rather than
-	// silently producing the base topic at runtime ("two-point-oh" lands
-	// on lerian.streaming.<r>.<e> instead of the .v2 topic the consumer
-	// subscribed to). Topic() is now a zero-allocation hot-path helper
-	// that does NOT re-validate; the catalog is the single source of
-	// truth for SchemaVersion shape.
+	// semver fails fast at NewEventDefinition / NewCatalog. The version no
+	// longer influences any topic (it left the topic entirely in v3), but
+	// ce-schemaversion is now the ONLY version carrier on the wire, so a
+	// garbage value would be undetectable downstream — the catalog stays
+	// the single source of truth for SchemaVersion shape.
 	//
 	// Asserter trident fires under operation="event_definition.schema_version"
 	// with violation="schema_parse_failed" so dashboards distinguish this
@@ -102,20 +101,17 @@ func NewEventDefinition(definition EventDefinition) (EventDefinition, error) {
 	return definition, nil
 }
 
-// Topic returns the Kafka topic derived from the definition for the given
-// producing service source (CloudEvents ce-source). The source is NOT stored
-// on the definition — the catalog is source-agnostic — so callers pass it
-// explicitly: the runtime uses the producer's configured source and manifest
-// generation uses PublisherDescriptor.SourceBase. See Event.Topic for the
-// derivation and sanitizeSourceSegment for how the source becomes the
-// namespace segment.
-func (d EventDefinition) Topic(source string) string {
-	return (&Event{
-		Source:        source,
-		ResourceType:  d.ResourceType,
-		EventType:     d.EventType,
-		SchemaVersion: d.SchemaVersion,
-	}).Topic()
+// EventKey is the "<resourceType>.<eventType>" dispatch key a consumer
+// registers a handler under. It is the routing unit that replaced the
+// per-definition topic: under one-topic-per-app, a consumer receives the
+// producer's whole stream on one subscription and selects by this key,
+// which it reads from the ce-resourcetype / ce-eventtype headers.
+//
+// There is deliberately no EventDefinition.Topic in v3. A definition has no
+// topic of its own — the producing APPLICATION has exactly one (AppTopic),
+// and it is a property of the producer's ce-source, not of any catalog entry.
+func (d EventDefinition) EventKey() string {
+	return d.ResourceType + "." + d.EventType
 }
 
 func validateEventDefinitionHeaderFields(definition EventDefinition) error {

@@ -7,9 +7,12 @@ import (
 	"encoding/json"
 	"math/rand"
 	"reflect"
+	"strings"
 	"testing"
 	"testing/quick"
 	"time"
+
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
 )
 
 // --- GROUP B: streaming property tests. ---
@@ -34,8 +37,9 @@ import (
 //   - EventID: UUID-shaped string.
 //   - Timestamp: a non-zero time, rounded to nanoseconds so RFC3339Nano
 //     round-trips exactly.
-//   - SchemaVersion: constrained to "1.0.0" or "v2.0.0" or "3.1.4" so
-//     parseMajorVersion produces a deterministic outcome.
+//   - SchemaVersion: constrained to a handful of valid semvers. It no longer
+//     influences the topic (schema version left the topic in v3), so it only
+//     has to survive the header round-trip.
 //   - DataContentType: fixed "application/json" (ApplyDefaults fills it).
 //   - Payload: valid JSON.
 //   - SystemEvent: false (we test non-system Event round-trips below;
@@ -68,7 +72,7 @@ func propertyEventGenerator(rng *rand.Rand, _ int) reflect.Value {
 		EventID:         pick(36), // UUID-like length
 		SchemaVersion:   schemaVersions[rng.Intn(len(schemaVersions))],
 		Timestamp:       time.Unix(1_700_000_000+int64(rng.Intn(1_000_000)), int64(rng.Intn(1_000_000_000))).UTC(),
-		Source:          "//" + pick(2+rng.Intn(50)),
+		Source:          pick(2 + rng.Intn(50)),
 		Subject:         pick(rng.Intn(40)),
 		DataContentType: "application/json",
 		Payload:         json.RawMessage(`{"k":"v"}`),
@@ -188,9 +192,12 @@ func TestProperty_ApplyDefaults_Idempotent(t *testing.T) {
 	}
 }
 
-// TestProperty_Topic_Deterministic asserts:
+// TestProperty_Topic_Deterministic asserts the v3 topic invariants over
+// randomly generated events:
 //   - e.Topic() is deterministic (two calls return the same string)
-//   - the ".v<major>" suffix appears iff the parsed major version is >= 2
+//   - the topic is EXACTLY the app topic: nothing from ResourceType,
+//     EventType, or SchemaVersion may leak into the name
+//   - the DLQ topic is the app topic plus ".dlq"
 func TestProperty_Topic_Deterministic(t *testing.T) {
 	t.Parallel()
 
@@ -202,23 +209,18 @@ func TestProperty_Topic_Deterministic(t *testing.T) {
 			return false
 		}
 
-		major := parseMajorVersion(event.SchemaVersion)
-
-		// Base form: "{sanitize(Source)}.<resource>.<event>" — the producing
-		// service (ce-source) is the topic namespace, replacing the former
-		// fixed "lerian.streaming." prefix.
-		base := sanitizeSourceSegment(event.Source) + "." + event.ResourceType + "." + event.EventType
-
-		if major >= 2 {
-			expectedSuffix := ".v" + itoa(major)
-			if t1 != base+expectedSuffix {
-				return false
-			}
-		} else if t1 != base {
+		if t1 != contract.AppTopic(event.Source) {
 			return false
 		}
 
-		return true
+		if contract.AppDLQTopic(event.Source) != t1+contract.DLQTopicSuffix {
+			return false
+		}
+
+		// Neither per-event component may appear as a topic suffix.
+		return !strings.HasSuffix(t1, event.ResourceType) &&
+			!strings.HasSuffix(t1, event.EventType) &&
+			!strings.Contains(t1, event.SchemaVersion)
 	}
 
 	if err := quick.Check(property, propertyConfig()); err != nil {
@@ -271,7 +273,7 @@ func TestProperty_DeriveAggregateID_Deterministic(t *testing.T) {
 	sysEvent := Event{
 		ResourceType: "x",
 		EventType:    "y",
-		Source:       "//system",
+		Source:       "system",
 		SystemEvent:  true,
 	}
 

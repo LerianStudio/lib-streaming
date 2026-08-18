@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport/fake"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport/fake"
 )
 
 // TestEmitMulti_PayloadCap_FiresAssertion pins T3 site (a): the per-route
@@ -58,7 +58,7 @@ func TestEmitMulti_PayloadCap_FiresAssertion(t *testing.T) {
 
 	p, err := NewProducerMulti(
 		ctx,
-		MultiProducerConfig{Source: "svc://payload-cap-assert"},
+		MultiProducerConfig{Source: "svc-payload-cap-assert"},
 		nil,
 		[]TargetSpec{{Name: "primary", Kind: contract.TransportSQS, Adapter: primary}},
 		routes,
@@ -101,7 +101,7 @@ func TestPreFlight_PayloadCap_FiresAssertion(t *testing.T) {
 		TenantID:     "tenant-1",
 		ResourceType: "transaction",
 		EventType:    "created",
-		Source:       "svc://test",
+		Source:       "svc-test",
 		// Payload exceeds the 1 MiB single-target cap.
 		Payload: []byte(strings.Repeat("a", maxPayloadBytes+1)),
 	}

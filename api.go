@@ -14,10 +14,10 @@ import (
 	"github.com/twmb/franz-go/pkg/sasl"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/kafkasec"
-	"github.com/LerianStudio/lib-streaming/v2/internal/producer"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/kafkasec"
+	"github.com/LerianStudio/lib-streaming/v3/internal/producer"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
 )
 
 // builderAsserterComponent is the component label every Builder asserter
@@ -549,8 +549,11 @@ func (b *Builder) buildMulti(ctx context.Context, routeTable RouteTable) (Emitte
 		return nil, fmt.Errorf("%w: catalog is empty", ErrInvalidEventDefinition)
 	}
 
-	if b.source == "" {
-		return nil, ErrMissingSource
+	// Strict ce-source validation, same gate as LoadConfig and preflight:
+	// the source IS this application's topic, so a malformed one fails
+	// Build rather than being rewritten into a topic nobody expects.
+	if err := contract.ValidateSource(b.source); err != nil {
+		return nil, err
 	}
 
 	if len(b.targets) == 0 {

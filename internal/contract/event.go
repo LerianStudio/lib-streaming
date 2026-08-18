@@ -20,13 +20,18 @@ import (
 //     non-system events; when SystemEvent is true, TenantID is optional.
 //     The library does NOT derive TenantID from ambient context — callers
 //     must populate it explicitly (see the struct field doc below).
-//   - ResourceType / EventType: composed into ce-type as
-//     "studio.lerian.<ResourceType>.<EventType>".
+//   - ResourceType / EventType: composed into ce-type together with Source as
+//     "studio.lerian.<Source>.<ResourceType>.<EventType>". The application
+//     segment is what keeps two services' homonymous events distinguishable
+//     on a shared consumer.
 //   - EventID: maps to ce-id. Auto-populated by ApplyDefaults using uuid.NewV7.
 //   - SchemaVersion: maps to ce-schemaversion (extension). Default "1.0.0".
-//     When the parsed major version is >= 2, Topic() appends ".v<major>".
+//     ce-schemaversion is the ONLY version carrier — the topic never encodes
+//     a schema version.
 //   - Timestamp: maps to ce-time. Auto-populated to time.Now().UTC() when zero.
-//   - Source: maps to ce-source. Required, e.g. "//lerian.midaz/transaction-service".
+//   - Source: maps to ce-source. Required. It is the producing application's
+//     name as a single dot-free lowercase segment, e.g. "lender",
+//     "midaz-ledger", "br_consignado_gw". See ValidateSource.
 //
 // Optional CloudEvents fields:
 //
@@ -91,45 +96,26 @@ const defaultSchemaVersion = "1.0.0"
 // leaves Event.DataContentType empty. Matches the CloudEvents spec default.
 const defaultDataContentType = "application/json"
 
-// Topic returns the derived Kafka topic name for this event.
+// Topic returns the ONE topic this event's producing application publishes
+// to: "lerian.streaming." + Source.
 //
-// Base form: "{sanitize(Source)}.<ResourceType>.<EventType>". The producing
-// service (the CloudEvents ce-source) IS the topic namespace, so downstream
-// Kafka ACLs can scope a producer to its own topics ("{service}.*"). This
-// replaces the former fixed "lerian.streaming." prefix, whose job was
-// namespacing/discovery — the service prefix now does that. See
-// sanitizeSourceSegment for the exact Source-to-segment transformation.
+// The topic carries NO resource type, NO event type, and NO schema version.
+// Every event a service emits — business facts and service-to-service
+// commands alike — rides the same app topic; consumers subscribe to the app
+// stream and dispatch per event using the ce-resourcetype / ce-eventtype
+// headers. Kafka ACLs scope a producer to its single topic (plus its
+// ".dlq"), which is a tighter grant than the per-event topic space it
+// replaces.
 //
-// When the parsed major version of SchemaVersion is >= 2, Topic appends
-// ".v<major>" — e.g. Source="midaz-ledger", SchemaVersion="2.3.1" yields
-// "midaz-ledger.<resource>.<event>.v2". Invalid or empty semver falls
-// through to the base form.
-//
-// Semver parsing is delegated to golang.org/x/mod/semver.Major, which is the
-// canonical Go ecosystem library for semver classification. Input is accepted
-// both with and without a leading "v" — we normalize to the "v"-prefixed form
-// before delegating (golang.org/x/mod/semver requires the "v" prefix).
-//
-// Topic() is a zero-allocation hot-path helper and does NOT fire the
-// asserter trident on malformed SchemaVersion. The construction-time
-// gate in NewEventDefinition is responsible for rejecting unparseable
-// SchemaVersion values before they ever reach a runtime emit; reaching
-// Topic() with malformed semver means the caller built an Event struct
-// directly (bypassing the catalog), which is a different failure surface
-// covered by the producer's preflight chain.
+// Source is expected to be pre-validated (ValidateSource) at config,
+// Builder, and preflight time, so Topic() stays a zero-allocation hot-path
+// helper with no validation branch of its own.
 func (e *Event) Topic() string {
 	if e == nil {
 		return ""
 	}
 
-	base := sanitizeSourceSegment(e.Source) + "." + e.ResourceType + "." + e.EventType
-
-	major := parseMajorVersion(e.SchemaVersion)
-	if major < 2 {
-		return base
-	}
-
-	return base + ".v" + strconv.Itoa(major)
+	return AppTopic(e.Source)
 }
 
 // PartitionKey returns the Kafka partition key for this event.
@@ -196,37 +182,16 @@ func (e *Event) ApplyDefaults() {
 	}
 }
 
-// ParseMajorVersion extracts the major version from a semver string. Returns
-// 0 on any parse failure so callers can guard with "< 2" to fall through to
-// the base topic form.
+// parseMajorVersionStrict reports whether v is a parseable semver, returning
+// (major, true) when it is (or when it is empty — treated as the documented
+// default) and (0, false) when it is non-empty but unparseable.
 //
-// Accepts input with or without a leading "v" (e.g. "v2.3.1" or "2.3.1").
-// Delegates to golang.org/x/mod/semver.Major, which is the canonical semver
-// classifier in the Go ecosystem. We normalize the input to the "v"-prefixed
-// form because semver.Major requires it; a missing "v" would be reported as
-// an invalid semver otherwise.
-//
-// Exported so the producer package's property tests can exercise the SAME
-// implementation that Topic() uses at runtime — previously the producer kept
-// a duplicate test-only copy that could (and did) drift from this canonical
-// version.
-func ParseMajorVersion(v string) int {
-	major, _ := parseMajorVersionStrict(v)
-	return major
-}
-
-// parseMajorVersion is the lowercase intra-package alias; production code in
-// this package and the contract-pkg fuzz test reference it directly.
-func parseMajorVersion(v string) int {
-	return ParseMajorVersion(v)
-}
-
-// parseMajorVersionStrict is the parse-aware variant. Returns (major, true)
-// when v is a valid semver (or empty — treated as the documented default),
-// and (0, false) when v is non-empty but unparseable. The construction-time
-// SchemaVersion gate in NewEventDefinition uses the boolean to distinguish
-// "valid major=0" (or empty default) from "parse failed" — a distinction
-// the bare ParseMajorVersion intentionally collapses for hot-path callers.
+// Its ONLY caller is the construction-time SchemaVersion gate in
+// NewEventDefinition. In v3 the major version no longer influences the topic
+// (schema version left the topic entirely and lives solely in the
+// ce-schemaversion header), so there is no hot-path major-version parse and
+// no exported ParseMajorVersion — the v2 exports existed to keep the runtime
+// topic derivation and its tests on one implementation.
 func parseMajorVersionStrict(v string) (int, bool) {
 	if v == "" {
 		// Empty is the documented default; ApplyDefaults / NewEventDefinition

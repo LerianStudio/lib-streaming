@@ -11,7 +11,7 @@ import (
 	"github.com/LerianStudio/lib-observability/v2/metrics"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/consumer"
+	"github.com/LerianStudio/lib-streaming/v3/internal/consumer"
 )
 
 // Handler is the only interface a consuming service implements. The library

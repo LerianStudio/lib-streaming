@@ -32,13 +32,13 @@ import (
 	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kgo"
 
-	streaming "github.com/LerianStudio/lib-streaming/v2"
-	"github.com/LerianStudio/lib-streaming/v2/internal/config"
+	streaming "github.com/LerianStudio/lib-streaming/v3"
+	"github.com/LerianStudio/lib-streaming/v3/internal/config"
 )
 
 const (
 	tlsRedpandaImage = "docker.redpanda.com/redpandadata/redpanda:v24.2.18"
-	tlsIntegSource   = "//lerian.test/streaming-tls-integration"
+	tlsIntegSource   = "lerian-test-streaming-tls-integration"
 	tlsIntegTopic    = "streaming.tls.transaction.created"
 )
 

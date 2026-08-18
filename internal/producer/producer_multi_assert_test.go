@@ -7,8 +7,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport/fake"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport/fake"
 )
 
 // TestNewProducerMulti_AdapterKindMismatch_FiresAssertion pins T2: when a
@@ -41,7 +41,7 @@ func TestNewProducerMulti_AdapterKindMismatch_FiresAssertion(t *testing.T) {
 
 	_, err := NewProducerMulti(
 		context.Background(),
-		MultiProducerConfig{Source: "svc://multi-test"},
+		MultiProducerConfig{Source: "svc-multi-test"},
 		nil,
 		[]TargetSpec{{Name: "primary", Kind: TransportKafkaLike, Adapter: mismatchedAdapter}},
 		routes,

@@ -17,8 +17,8 @@ import (
 	"github.com/LerianStudio/lib-commons/v6/commons/circuitbreaker"
 	"github.com/LerianStudio/lib-commons/v6/commons/outbox"
 	"github.com/LerianStudio/lib-observability/v2/log"
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport/fake"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport/fake"
 )
 
 // newTestUUIDv7 returns a time-ordered UUID via commons.GenerateUUIDv7. Used
@@ -159,7 +159,7 @@ func TestProducer_HandleOutboxRow_DestinationAttributesReachAdapter(t *testing.T
 	)
 	p, err := NewProducerMulti(
 		ctx,
-		MultiProducerConfig{Source: "svc://outbox-attrs"},
+		MultiProducerConfig{Source: "svc-outbox-attrs"},
 		nil,
 		[]TargetSpec{{Name: "primary", Kind: TransportKafkaLike, Adapter: adapter}},
 		routes,
