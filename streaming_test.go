@@ -44,6 +44,12 @@ func TestIsCallerError(t *testing.T) {
 		{"ErrInvalidDestination", streaming.ErrInvalidDestination},
 		{"ErrDuplicateRouteDefinition", streaming.ErrDuplicateRouteDefinition},
 		{"ErrNoRoutesConfigured", streaming.ErrNoRoutesConfigured},
+		// ErrNoRequiredRoute sits in callerErrorSentinels and was unpinned. It
+		// fires when a definition resolves only to optional routes — every copy
+		// can be lost while Emit returns nil — which is exactly a caller
+		// misconfiguration and must classify as one, so an outbox relay moves
+		// the row to INVALID instead of retrying it forever.
+		{"ErrNoRequiredRoute", streaming.ErrNoRequiredRoute},
 		{"ErrMissingTarget", streaming.ErrMissingTarget},
 		{"ErrMultiTransportRuntimeNotConfigured", streaming.ErrMultiTransportRuntimeNotConfigured},
 		{"ErrInvalidTLSConfig", streaming.ErrInvalidTLSConfig},

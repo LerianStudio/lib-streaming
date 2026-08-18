@@ -313,26 +313,8 @@ func (c ConsumerConfig) Validate() error {
 		return ErrMissingGroup
 	}
 
-	// The consumer's own identity gates Build unconditionally: every enabled
-	// consumer has a DLQ path, and the DLQ topic is derived from it.
-	if c.Source == "" {
-		return ErrMissingConsumerSource
-	}
-
-	if err := contract.ValidateSource(c.Source); err != nil {
-		return fmt.Errorf("%w: source %q: %w", ErrInvalidConfigField, c.Source, err)
-	}
-
-	for _, app := range c.Apps {
-		if err := contract.ValidateSource(app); err != nil {
-			return fmt.Errorf("%w: app %q: %w", ErrInvalidConfigField, app, err)
-		}
-	}
-
-	for _, source := range c.ExpectSources {
-		if err := contract.ValidateSource(source); err != nil {
-			return fmt.Errorf("%w: expect source %q: %w", ErrInvalidConfigField, source, err)
-		}
+	if err := c.validateSources(); err != nil {
+		return err
 	}
 
 	if len(c.ResolvedTopics()) == 0 {
@@ -384,6 +366,40 @@ func (c ConsumerConfig) Validate() error {
 	hasSASL := !transport.IsNilInterface(c.saslMechanism)
 
 	return kafkasec.SASLRequiresTLS(hasSASL, c.tlsConfig != nil, c.allowPlaintextSASL)
+}
+
+// validateSources checks every ce-source-shaped field against the SAME strict
+// contract the producer enforces: this consumer's own identity, the apps it
+// subscribes to, and the explicit allowlist.
+//
+// One rule for all three, deliberately. A hyphen/underscore typo in any of them
+// is silent in a different way — a bad Source derives a DLQ topic nothing
+// grants, a bad app subscribes to a topic that stays empty forever, and a bad
+// allowlist entry quarantines 100% of a stream — and all three report healthy
+// while doing it.
+func (c ConsumerConfig) validateSources() error {
+	// The consumer's own identity gates Build unconditionally: every enabled
+	// consumer has a DLQ path, and the DLQ topic is derived from it.
+	if c.Source == "" {
+		return ErrMissingConsumerSource
+	}
+
+	for _, field := range []struct {
+		label  string
+		values []string
+	}{
+		{"source", []string{c.Source}},
+		{"app", c.Apps},
+		{"expect source", c.ExpectSources},
+	} {
+		for _, value := range field.values {
+			if err := contract.ValidateSource(value); err != nil {
+				return fmt.Errorf("%w: %s %q: %w", ErrInvalidConfigField, field.label, value, err)
+			}
+		}
+	}
+
+	return nil
 }
 
 // getenvMsOrDefault reads a millisecond-valued env var, falling back to def on

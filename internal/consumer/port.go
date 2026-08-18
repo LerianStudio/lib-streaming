@@ -191,11 +191,13 @@ func (p *transportDLQPublisher) PublishDLQ(ctx context.Context, rec *kgo.Record,
 	// is fail-closed, and fail-closed on a record that can NEVER be quarantined
 	// is a partition wedged forever — under one topic per app, the producing
 	// application's whole catalog stuck behind one record.
-	message.Payload = nil
-	message.Headers = append(slices.Clone(headers),
+	slim := append(slices.Clone(headers),
 		transport.Header{Key: dlqheader.PayloadOmitted, Value: []byte("true")},
 		transport.Header{Key: dlqheader.PayloadBytes, Value: []byte(strconv.Itoa(len(rec.Value)))},
 	)
+
+	message.Payload = nil
+	message.Headers = slim
 
 	if slimErr := p.adapter.Publish(ctx, transport.CloneMessage(message)); slimErr != nil {
 		return fmt.Errorf("dlq record too large and the payload-omitted retry also failed: %w", slimErr)

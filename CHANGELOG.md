@@ -130,25 +130,118 @@ from the broker into the consumer. Three additions cover it:
   resolving to each app's one topic. Raw `Topics(...)` survives as the escape
   hatch for streams this library did not derive, and the two compose.
   `STREAMING_CONSUMER_APPS` is the env equivalent.
-- `On("<resourceType>.<eventType>", handler)` registers one handler per event.
+- `OnFrom(app, "<resourceType>.<eventType>", handler)` registers one handler per
+  event **per producing application**, and `On(key, handler)` is the single-app
+  shorthand that binds to the sole app in scope. Dispatch is scoped by
+  `(app, event key)` because two services publish byte-identical event names —
+  `ce-type` carries the app for exactly that reason, and a source-blind dispatch
+  key threw it away: whichever registration was written last swallowed both, and
+  the wrong handler parsed the wrong payload with no error anywhere. A bare `On`
+  under SEVERAL apps fails the build (`ErrBareOnWithMultipleApps`), and `OnFrom`
+  naming an app the consumer does not subscribe to fails
+  (`ErrUnknownDispatchApp`) rather than registering a handler nothing can reach.
   Unmatched events are IGNORED (skipped and committed) by default;
   `UnmatchedPolicy(streaming.UnmatchedError)` quarantines them via
   `ErrUnhandledEvent`. Ignore is the default because a consumer of an app stream
   receives every event that producer emits and cares about a handful — erroring
   would fail-closed the sibling stream into the DLQ.
-- Source verification is built in: an event whose `ce-source` is not an expected
-  producer is quarantined with `ErrUnexpectedSource` before any handler runs.
-  `Apps(...)` populates the allowlist automatically; `ExpectSources(...)` — or
-  `STREAMING_CONSUMER_EXPECT_SOURCES` — overrides it for the raw-topics path and
-  is the only way out of the `Apps`+`Topics` ambiguity refusal. Consumers can
-  delete their hand-rolled `ce-source` checks.
+- Source verification is built in and runs in the **runtime**, ahead of either
+  handler mode: a record whose `ce-source` is not an expected producer is
+  quarantined with `ErrUnexpectedSource` before any handler runs. `Apps(...)`
+  populates the allowlist automatically; `ExpectSources(...)` — or
+  `STREAMING_CONSUMER_EXPECT_SOURCES` — replaces it and is the only way out of
+  the `Apps`+`Topics` ambiguity refusal. Consumers can delete their hand-rolled
+  `ce-source` checks.
+- `Source(...)` / `STREAMING_CLOUDEVENTS_SOURCE` is **required** for an enabled
+  consumer (`ErrConsumerMissingSource`) — see the DLQ-ownership entry below.
+- `Healthy(ctx)` fails with `ErrConsumerPartitionHalted` once a partition has
+  been head-of-line blocked across three consecutive poll cycles, naming the
+  topic, the partition, and the cause. Readiness was `!closed && lastPollOK`,
+  and both stay true through a wedge: a poison record whose DLQ publish keeps
+  failing polls perfectly cleanly forever while processing nothing.
 
 `Handler(...)` still takes the whole stream for consumers that select
-themselves. It rejects EVERY dispatch-only knob rather than ignoring any of
-them: `On` → `ErrHandlerAndDispatchBothSet`, `UnmatchedPolicy` →
-`ErrHandlerAndUnmatchedPolicyBothSet`, `ExpectSources` →
-`ErrHandlerAndExpectSourcesBothSet`. A silently inert one is an operator
+themselves, and rejects the genuinely dispatch-only knobs: `On`/`OnFrom` →
+`ErrHandlerAndDispatchBothSet`, `UnmatchedPolicy` →
+`ErrHandlerAndUnmatchedPolicyBothSet`. A silently inert knob is an operator
 believing a check runs that does not.
+
+`ErrHandlerAndExpectSourcesBothSet` is **deleted**: source verification moved to
+the runtime, so `ExpectSources` is valid and functional under a whole-stream
+`Handler(...)` too — the mode that needs it most, since it sees every record on
+a topic whose write ACL it does not own. Previously a fleet-wide
+`STREAMING_CONSUMER_EXPECT_SOURCES` CrashLooped every Handler-mode service with
+no in-API opt-out.
+
+`ErrUnhandledEvent` and `ErrUnexpectedSource` are synthesized BY the library and
+now quarantine outright — they are never offered to the service `Classifier`.
+The common classifier shape ("retry anything that is not my own business rule")
+turned a structural, never-satisfiable verdict into a transient: retried to
+exhaustion, seeked back, halted, redelivered, forever.
+
+### BREAKING: a consumer quarantines into its OWN DLQ
+
+Poison used to be republished to `<record topic>.dlq` — the PRODUCER's
+dead-letter topic. Every consumer therefore needed a write grant on every
+producer's DLQ, and a filling DLQ named the team whose events happened to be
+poison rather than the team that owns the fix.
+
+Quarantine now lands on `lerian.streaming.<consumer-app>.dlq`.
+
+**The ACL rule, stated once:** every application WRITES exactly two names — its
+topic and its `.dlq` — whether it produces, consumes, or both; and it READS the
+topics of the applications it consumes. Consuming never widens the write grant.
+
+**Migration:** set `STREAMING_CLOUDEVENTS_SOURCE` (or `ConsumerBuilder.Source(...)`)
+on every consuming service — the same identity its producer side already uses —
+and provision + grant `lerian.streaming.<app>.dlq` for consumer-only services
+that did not have one. An enabled consumer without it fails Build with
+`ErrConsumerMissingSource`.
+
+Because the DLQ topic no longer implies the source topic, the origin
+coordinates are load-bearing rather than merely forensic:
+`x-lerian-dlq-source-topic`, `-source-partition`, and `-source-offset` are on
+every consumer quarantine and are what a replay follows back.
+
+### BREAKING: DLQ records are bounded, and survive being oversized
+
+A DLQ record is strictly LARGER than the record it quarantines — same payload,
+same headers, plus the forensic set — and one forensic value
+(`x-lerian-dlq-error-message`) was unbounded. A near-cap record that failed
+could therefore never fit in the DLQ. On the consume side that is fail-closed:
+the partition is held back and the record redelivers forever, which under one
+topic per app stalls the producing application's entire catalog behind it.
+
+Both DLQ writers now obey two rules:
+
+1. `x-lerian-dlq-error-message` is capped at 4 KiB with an explicit truncation
+   marker carrying the original byte count.
+2. A size-driven publish failure is retried ONCE with the payload omitted,
+   marked by the two new frozen headers **`x-lerian-dlq-payload-omitted`**
+   (`"true"`) and **`x-lerian-dlq-payload-bytes`** (the dropped size). On a
+   consumer quarantine the payload stays recoverable from the source topic via
+   the origin coordinates; on the producer path it is genuinely gone.
+
+**Operator requirement:** provision every `.dlq` topic with `max.message.bytes`
+at or above its source topic's. Headroom is the real fix; the library only
+narrows the gap.
+
+### Clarified: partition keys guarantee affinity, order only on direct emit
+
+`Event.PartitionKey` promised per-tenant FIFO. That holds for a DIRECT emit. It
+does NOT hold for an OUTBOX-RELAYED one: the lib-commons relay drains rows with
+per-event retry and no per-aggregate serialization, so a failed row republishes
+AFTER a later row of the same tenant — same partition, wrong order. Services
+that emit exclusively through the outbox get per-tenant partition AFFINITY and
+nothing more, and a consumer needing strict per-aggregate order must reconcile
+on its own sequence/version field. Documentation only; no behaviour changed.
+
+### Fixed: unmatched event keys stay named past the metric label cap
+
+The per-key WARN lived inside the below-cap branch, so once 64 distinct event
+keys had been seen every new one metered as `other` and was named nowhere at
+all. Above the cap each newly-seen key is now still LOGGED BY NAME, globally
+rate-limited to one line per 30s window. The metric label cap is unchanged.
 
 ### BREAKING: `OutboxEnvelopeVersion` is 2
 

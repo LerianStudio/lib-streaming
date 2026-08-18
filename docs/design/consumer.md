@@ -34,6 +34,7 @@ Construction (functional-options + Builder, matching the producer):
 c, err := streaming.NewConsumer().
     Brokers(cfg.Brokers...).
     Group("my-service").
+    Source(cfg.CloudEventsSource).        // REQUIRED: this app's own identity
     Apps("lender").                       // -> lerian.streaming.lender
     On("loan.disbursed", onDisbursed).    // "<resourceType>.<eventType>"
     TLS(tlsCfg).
@@ -321,8 +322,10 @@ producer lacks). Prefix `STREAMING_CONSUMER_`.
 | Enabled               | STREAMING_CONSUMER_ENABLED                   | false   | kill switch (false → no-op consumer) |
 | Brokers               | STREAMING_CONSUMER_BROKERS (csv)             | —       | bootstrap list (required) |
 | Group                 | STREAMING_CONSUMER_GROUP                     | —       | group id (required) |
+| Source                | STREAMING_CLOUDEVENTS_SOURCE                 | —       | **required**: this application's own `ce-source` — the SAME variable the producer side reads, because one service has one identity. It names the DLQ this consumer quarantines INTO (`lerian.streaming.<source>.dlq`). Missing → `ErrConsumerMissingSource`; malformed → the producer's strict source rule |
 | Apps                  | STREAMING_CONSUMER_APPS (csv)                | —       | PRODUCING APPLICATIONS to subscribe to, by `ce-source`. Each resolves to that app's one topic (`lerian.streaming.<app>`) AND arms source verification. Either `Apps` or `Topics` is required; they compose |
 | Topics                | STREAMING_CONSUMER_TOPICS (csv)              | —       | RAW subscription list — the escape hatch for topics this library did not derive (legacy streams, third-party producers). Either `Apps` or `Topics` is required |
+| ExpectSources         | STREAMING_CONSUMER_EXPECT_SOURCES (csv)      | ""      | explicit `ce-source` allowlist. REPLACES the `Apps`-derived one, must COVER every entry in `Apps`, and every entry is validated against the strict source contract. It is the ONLY way to resolve the `Apps`+`Topics` refusal from the environment; a fluent `ExpectSources(...)` overrides it, and failures name whichever origin the list came from. Applies in BOTH handler modes |
 | ClientID              | STREAMING_CONSUMER_CLIENT_ID                 | ""      | client.id |
 | RetryBudget           | STREAMING_CONSUMER_RETRY_BUDGET              | 3       | **in-loop** transient-retry attempts per record (NOT "before DLQ"; transients never DLQ) |
 | RetryBackoffInitial   | STREAMING_CONSUMER_RETRY_BACKOFF_INITIAL_MS  | 100ms   | first in-loop retry backoff |
@@ -343,11 +346,23 @@ the result. Without `FromConfig`, none of these variables is read by anything:
 
 ```go
 cfg, warnings, err := streaming.LoadConsumerConfig()
-c, err := streaming.NewConsumer().FromConfig(cfg).On("loan.disbursed", h).Build(ctx)
+c, err := streaming.NewConsumer().FromConfig(cfg).
+    OnFrom("lender", "loan.disbursed", h).Build(ctx)
 ```
 
+**Source verification runs in the RUNTIME, in both handler modes.** The check
+sits ahead of the handler invocation, not inside the `Dispatcher`. It used to be
+dispatch-only by accident of implementation, which left a whole-stream
+`Handler(...)` — the mode that sees EVERY record on a topic whose write ACL it
+does not control, and therefore the mode a foreign write reaches first — with no
+verification at all, and made `ExpectSources` a hard build error there
+(`ErrHandlerAndExpectSourcesBothSet`, now DELETED). A fleet-wide
+`STREAMING_CONSUMER_EXPECT_SOURCES` consequently CrashLooped every Handler-mode
+service with no in-API opt-out. A mismatch quarantines with
+`x-lerian-dlq-cause-kind: source_mismatch` in both modes.
+
 **Source verification and the Apps/Topics combination.** With `Apps` alone, the
-app list becomes the dispatcher's `ce-source` allowlist for free. With raw
+app list becomes the `ce-source` allowlist for free. With raw
 `Topics` alone, verification is off and any `ce-source` dispatches. With BOTH and
 no explicit `ExpectSources(...)`, `Build` FAILS: defaulting to `Apps` would
 quarantine 100% of the raw-topic stream, and skipping the check would drop the
@@ -382,8 +397,25 @@ mirroring the producer; validated at `Build`.
 
 ## 6. DLQ topic + envelope + metadata
 
-- **Topic:** `<source-topic>.dlq` (e.g. `lerian.streaming.lender.dlq`).
+- **Topic: the CONSUMER's own DLQ** — `lerian.streaming.<consumer-source>.dlq`,
+  derived from `ConsumerConfig.Source`, never from the record's topic.
   Cross-tenant, like the source. Not configurable — see §5.
+
+  Quarantining is the consuming application's own act, so it lands on the
+  consuming application's topic. The earlier shape (`rec.Topic + ".dlq"`, the
+  PRODUCER's DLQ) meant every consumer needed a write grant on every producer's
+  dead-letter topic, and a filling DLQ named the team whose events happened to
+  be poison rather than the team that owns the fix.
+
+  **ACL rule, stated once:** every application WRITES exactly two names — its
+  topic and its `.dlq` — whether it produces, consumes, or both; and it READS
+  the topics of the applications it consumes. Consuming never widens the write
+  grant.
+
+  Because the DLQ topic no longer implies where a record came from, the origin
+  coordinates carry the whole story: `x-lerian-dlq-source-topic`,
+  `-source-partition`, `-source-offset` are on every consumer quarantine and are
+  what a replay follows back to the original record.
 - **Cause kind:** every quarantined record carries `x-lerian-dlq-cause-kind`,
   one of `codec` / `handler` / `source_mismatch` / `unhandled_key`, alongside
   the sanitized underlying error in `x-lerian-dlq-error-message`. The same value
@@ -392,8 +424,11 @@ mirroring the producer; validated at `Build`.
   means a foreign write or a stale allowlist, an unhandled key means this
   consumer's `On(...)` registrations fell behind the producer's catalog, and
   `handler` is a genuine business rejection.
-- **Shared with the producer DLQ.** A producer's own DLQ copies land on the same
-  `.dlq` topic. Consumer quarantines are the ones carrying
+- **Distinct from the producer DLQ.** A producer's own DLQ copies land on the
+  PRODUCER's `.dlq` topic; a consumer's quarantines land on the CONSUMER's. Both
+  kinds can still appear together on one topic for a service that both produces
+  and consumes, and there the headers separate them: consumer quarantines are
+  the ones carrying
   `x-lerian-dlq-source-partition` / `-source-offset` / `-cause-kind`; producer
   copies carry none of the three. **Replay rule:** a producer-written entry
   replays through the producer (its original publish never landed); a
@@ -449,15 +484,70 @@ mirroring the producer; validated at `Build`.
   > retention window. **Handlers MUST NOT embed PII in returned errors**; carry
   > an opaque identifier and look the record up out of band.
 
+- **Size, and the payload-omitted retry.** A DLQ record is strictly LARGER than
+  the record it quarantines: same payload, same headers, plus the forensic set.
+  A near-cap record therefore could not fit — and on the consume side a failed
+  quarantine is fail-closed, so the partition is held back and the record
+  redelivers forever. Under one topic per app that stalls the producing
+  application's entire catalog behind one record, with `Healthy()` green (the
+  readiness half of that hole is closed separately — see `ErrPartitionHalted`).
+
+  **Operator requirement:** provision every `.dlq` topic with
+  `max.message.bytes` at or above its source topic's. Headroom is the actual
+  fix; the library only narrows the gap.
+
+  Library-side, both DLQ writers (consumer and producer) obey two rules:
+  1. `x-lerian-dlq-error-message` — the one unbounded value — is capped at
+     `dlqheader.MaxErrorMessageBytes` (4 KiB) with an explicit truncation marker
+     carrying the original length.
+  2. A size-driven publish failure (`dlqheader.IsSizeError`:
+     `kerr.MessageTooLarge`, which franz-go returns for both the broker verdict
+     and its own client-side preflight, or `contract.ErrPayloadTooLarge` from
+     the SQS/EventBridge adapters) is retried ONCE with the payload omitted and
+     marked: `x-lerian-dlq-payload-omitted: "true"` plus
+     `x-lerian-dlq-payload-bytes` carrying what was dropped. If the slim retry
+     also fails, the existing fail-closed halt path applies unchanged.
+
+  On a consumer quarantine the omitted payload stays recoverable from the source
+  topic at the partition and offset the origin headers name. On the producer
+  path it is genuinely gone — the original publish never landed anywhere — and
+  the metadata is the evidence that survives.
+
   The earlier draft invented a divergent set (`cause-class`/`cause`/`time`) that
   collided semantically with the producer's `error-class`/`error-message`/
   `first-failure-at`. Those are **dropped**. These nine constants live in the
   shared `internal/dlqheader` package so producer and consumer reference one
-  definition; their string values are a frozen wire contract.
-- **Alerting:** `streaming_consumer_dlq_total` on route, and a
-  `streaming_consumer_dlq_publish_failed_total` for the case where the DLQ
-  publish itself fails (in which case the source offset is **not** committed and
-  the record is re-attempted — fail-closed).
+  definition; their string values are a frozen wire contract. The two
+  size-fallback markers (`x-lerian-dlq-payload-omitted`,
+  `x-lerian-dlq-payload-bytes`) live there too and are equally frozen — replay
+  tooling branches on the first to know it must re-read the value from the
+  source topic rather than replaying the DLQ record verbatim.
+- **Alerting:** three consumer signals are worth a page.
+
+  ```promql
+  # A partition is head-of-line blocked. reason="dlq_publish_failed" means a
+  # record cannot be quarantined at all and NOTHING behind it will ever commit;
+  # reason="sustained_transient" means a downstream is down. Healthy() also
+  # fails after three consecutive cycles (ErrPartitionHalted), so this should
+  # coincide with the pod leaving the load balancer.
+  increase(streaming_consumer_partition_halted_total[5m]) > 0
+  ```
+
+  ```promql
+  # The quarantine write itself failed: the source offset is NOT committed and
+  # the record is re-attempted (fail-closed). A wedge in progress.
+  increase(streaming_consumer_dlq_publish_failed_total[5m]) > 0
+  ```
+
+  ```promql
+  # Records arriving with no handler registered — committed and processed by
+  # nobody. event_key="other" means the 64-label cap was reached; the key names
+  # are in the logs ("unmatched event key seen past the metric label cap").
+  sum by (event_key) (increase(streaming_consumer_unmatched_total[15m])) > 0
+  ```
+
+  `streaming_consumer_dlq_total{cause_kind=...}` routes the DLQ page to the
+  right owner.
 
 ---
 

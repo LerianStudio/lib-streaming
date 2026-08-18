@@ -42,10 +42,6 @@
 //	    EventType:    "created",
 //	})
 //	if err != nil { return err }
-//	// ONE topic per producing application. Every event this service emits
-//	// rides it; consumers select by ce-resourcetype / ce-eventtype.
-//	appTopic, err := streaming.AppTopic(cfg.CloudEventsSource) // lerian.streaming.<source>
-//	if err != nil { return err }
 //	// Consuming services wire panic + assertion metrics once at bootstrap
 //	// after telemetry is initialized. lib-streaming uses lib-observability/assert
 //	// internally for post-construction invariant checks; without this call
@@ -57,13 +53,20 @@
 //	assert.InitAssertionMetrics(metricsFactory)
 //	runtime.SetProductionMode(appCfg.Env == "production")
 //
-//	// Disabled-feature-flag fallback. Use NoopEmitter only for an explicit
-//	// STREAMING_ENABLED=false path. If streaming is enabled but brokers are
-//	// empty, fail startup instead of silently dropping events.
+//	// Disabled-feature-flag fallback FIRST. Use NoopEmitter only for an
+//	// explicit STREAMING_ENABLED=false path. It comes before AppTopic
+//	// deliberately: LoadConfig skips validation when disabled, so a disabled
+//	// deployment legitimately carries an empty source, and deriving a topic
+//	// from it would fail the one path that is supposed to be inert.
 //	if !cfg.Enabled {
 //	    return inject(streaming.NewNoopEmitter())
 //	}
 //	if len(cfg.Brokers) == 0 { return errors.New("streaming enabled but brokers are empty") }
+//
+//	// ONE topic per producing application. Every event this service emits
+//	// rides it; consumers select by ce-resourcetype / ce-eventtype.
+//	appTopic, err := streaming.AppTopic(cfg.CloudEventsSource) // lerian.streaming.<source>
+//	if err != nil { return err }
 //
 //	emitter, err := streaming.NewBuilder().
 //	    Source(cfg.CloudEventsSource).
@@ -235,7 +238,7 @@
 //	STREAMING_CB_MIN_REQUESTS            | int      | 10              | Minimum observations before the CB evaluates the ratio
 //	STREAMING_CB_TIMEOUT_S               | int(s)   | 30              | Open to half-open probe delay in seconds
 //	STREAMING_CLOSE_TIMEOUT_S            | int(s)   | 30              | Max drain+flush window on Close in seconds
-//	STREAMING_CLOUDEVENTS_SOURCE         | string   | ""              | Default ce-source (required when Enabled=true)
+//	STREAMING_CLOUDEVENTS_SOURCE         | string   | ""              | The application's ce-source. Required by BOTH sides when enabled: the producer publishes under it, and the consumer derives its own DLQ topic from it (one service, one identity)
 //	STREAMING_EVENT_POLICIES             | string   | ""              | "event.key.enabled=true,event.key.outbox=always,..." policy overrides
 //	STREAMING_TLS_ENABLED                | bool     | false           | Enable TLS broker dial
 //	STREAMING_TLS_CA_CERT                | string   | ""              | Base64 PEM CA added to RootCAs; empty uses system pool
@@ -282,8 +285,10 @@
 //
 //   - Consumer config and wiring validation (ConsumerBuilder.Build):
 //     ErrConsumerMissingBrokers, ErrConsumerMissingGroup,
-//     ErrConsumerMissingTopics, ErrConsumerInvalidConfigField, ErrNilHandler,
-//     ErrHandlerAndDispatchBothSet, ErrHandlerAndExpectSourcesBothSet,
+//     ErrConsumerMissingTopics, ErrConsumerMissingSource,
+//     ErrConsumerInvalidConfigField, ErrNilHandler,
+//     ErrHandlerAndDispatchBothSet, ErrHandlerAndUnmatchedPolicyBothSet,
+//     ErrBareOnWithMultipleApps, ErrUnknownDispatchApp,
 //     ErrAmbiguousSourceVerification, ErrExpectSourcesMissingApp,
 //     ErrInvalidExpectSource.
 //
@@ -291,6 +296,19 @@
 //     same class of mistake, so each is named for its own side. A single bare
 //     ErrMissingBrokers could only ever have matched one of them, and the one
 //     the root used to export was the producer's.
+//
+//   - Consumer runtime (per record, or from Consumer.Healthy):
+//     ErrUnexpectedSource (ce-source outside the expected-producer allowlist —
+//     quarantined before any handler runs, in BOTH handler modes),
+//     ErrUnhandledEvent (no handler for the (app, event key) pair, under the
+//     opt-in UnmatchedError policy), ErrConsumerPartitionHalted (a partition
+//     head-of-line blocked across consecutive poll cycles — returned by
+//     Healthy, not per record).
+//
+//     The library synthesizes ErrUnexpectedSource and ErrUnhandledEvent, so
+//     both quarantine outright and are never offered to the service
+//     Classifier: they are structural and can never become satisfiable by
+//     waiting, exactly like a codec fault.
 //
 //   - Lifecycle / wiring (NOT caller errors — IsCallerError returns false):
 //     ErrEmitterClosed, ErrNilProducer, ErrCircuitOpen,
@@ -368,15 +386,38 @@
 // Topics are SHARED across tenants AND across every event a producer emits.
 // The topic name is "lerian.streaming." + ce-source and carries nothing else —
 // no resource type, no event type, no schema version, and NEVER a tenant.
-// Kafka ACLs scope a producer to exactly two names, its topic and its ".dlq".
-// Partition keys give per-tenant FIFO ordering within a topic but do NOT
-// isolate tenants at the topic level.
+// Partition keys group a tenant's events onto one partition but do NOT isolate
+// tenants at the topic level, and they are an ORDER guarantee only on the
+// direct-emit path (see Event.PartitionKey for the outbox caveat).
+//
+// # Kafka ACLs: every application writes exactly two names
+//
+// An application WRITES its own topic and its own DLQ — "lerian.streaming.<app>"
+// and "lerian.streaming.<app>.dlq" — and nothing else. That holds whether it
+// produces, consumes, or both: a consumer quarantines poison into ITS OWN DLQ,
+// never the producer's, so consuming does not widen an application's write
+// grant by one name.
+//
+// An application READS the topics of the applications it consumes. A consuming
+// service's grant is therefore: write two names, read N.
 //
 // Because one subscription delivers a producer's whole stream, a consumer
 // selects per event by the ce-resourcetype / ce-eventtype headers. Use the
-// consumer's built-in dispatch — NewConsumer().Apps(...).On("<resourceType>.
-// <eventType>", handler) — which also verifies each event's ce-source against
-// the producers you named.
+// consumer's built-in dispatch:
+//
+//	// One producer: the bare key binds to it.
+//	NewConsumer().Apps("lender").On("loan.disbursed", handler)
+//
+//	// Several producers: name the one you mean. "loan.disbursed" from lender
+//	// and from matcher are different facts with different payloads, and the
+//	// bare form is refused at Build rather than binding to whichever arrives.
+//	NewConsumer().Apps("lender", "matcher").
+//	    OnFrom("lender", "loan.disbursed", onLender).
+//	    OnFrom("matcher", "loan.disbursed", onMatcher)
+//
+// The runtime also verifies each record's ce-source against the producers you
+// named, ahead of the handler, in dispatch mode AND under a whole-stream
+// Handler(...).
 //
 // Every consumer MUST filter events by ce-tenantid (or Event.TenantID after
 // parsing) before dispatching to tenant-scoped business logic. A consumer
@@ -447,9 +488,27 @@
 // Choose github.com/LerianStudio/lib-commons/v6/commons/dlq for operational
 // work queues; streaming's DLQ is automatic and scoped to publish failures.
 //
-// Note: x-lerian-dlq-retry-count is currently 0 because franz-go does not
-// expose a public retry-count accessor. Do not build tooling that relies
-// on non-zero values.
+// Note: x-lerian-dlq-retry-count is currently 0 on the PRODUCER path because
+// franz-go does not expose a public retry-count accessor. Do not build tooling
+// that relies on non-zero values there. A consumer quarantine stamps a real
+// in-loop attempt count.
+//
+// # DLQ record size
+//
+// A DLQ record is strictly LARGER than the record it quarantines: same payload,
+// same headers, plus the forensic set. Provision every ".dlq" topic with
+// max.message.bytes at or above its source topic's — otherwise a near-cap
+// record has nowhere to go, and on the consume side that is fail-closed and
+// wedges the partition.
+//
+// The library defends the gap from its side too. The one unbounded forensic
+// value (x-lerian-dlq-error-message) is capped at 4 KiB with an explicit
+// truncation marker, and a size-driven publish failure is retried ONCE with the
+// payload omitted, marked by x-lerian-dlq-payload-omitted:"true" plus
+// x-lerian-dlq-payload-bytes carrying what was dropped. On a consumer
+// quarantine the payload stays recoverable from the source topic at the
+// partition and offset the source-* headers name; on the producer path it is
+// genuinely gone, and the metadata is the evidence that survives.
 //
 // # Tuning for throughput
 //

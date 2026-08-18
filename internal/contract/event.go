@@ -124,12 +124,29 @@ func (e *Event) Topic() string {
 //
 //  1. SystemEvent: "system:" + EventType. Gives platform-level, tenant-less
 //     events a deterministic key of their own.
-//  2. TenantID, when set — preserves per-tenant FIFO ordering under a
-//     sticky-key partitioner.
-//  3. Subject, when set — the aggregate id. Preserves PER-AGGREGATE ordering
-//     for a single-tenant service, which is the ordering guarantee that
-//     actually matters once there is no tenant to order by.
-//  4. EventID — no ordering guarantee at all, but it spreads.
+//  2. TenantID, when set — routes every event of a tenant to one partition
+//     under a sticky-key partitioner.
+//  3. Subject, when set — the aggregate id. Routes every event of one
+//     aggregate to one partition for a single-tenant service, which is the
+//     grouping that matters once there is no tenant to group by.
+//  4. EventID — no grouping at all, but it spreads.
+//
+// WHAT THE KEY ACTUALLY GUARANTEES — read this before promising FIFO to
+// anyone. The key controls PARTITION AFFINITY. Whether affinity becomes
+// ORDERING depends on how the event reached the broker:
+//
+//   - DIRECT emit: per-tenant FIFO holds. Records are produced in call order
+//     to one partition, and a partition is ordered.
+//   - OUTBOX-RELAYED emit: per-tenant partition AFFINITY holds, strict order
+//     does NOT. The lib-commons outbox relay drains rows with per-event retry
+//     and no per-aggregate serialization, so a row that fails and is retried
+//     republishes AFTER a later row of the same tenant. Same partition, wrong
+//     order.
+//
+// This is not a corner case: services that emit exclusively through the
+// outbox get affinity and nothing more. A consumer that needs strict
+// per-aggregate order must reconcile on its own sequence/version field rather
+// than trusting arrival order.
 //
 // Steps 3 and 4 exist because of the topic collapse. franz-go's sticky-key
 // partitioner branches on record.Key != nil, and []byte("") is NOT nil: an
@@ -138,10 +155,11 @@ func (e *Event) Topic() string {
 // per-event topics, so the empty key was harmless; in v3 it is one topic per
 // application, so it would pin the entire application stream to one partition.
 //
-// Ordering consequence, stated plainly: multi-tenant services keep per-tenant
-// order; single-tenant services keep per-aggregate order via Subject; events
-// with neither a tenant nor a subject have NO ordering guarantee and are
-// spread by EventID.
+// Grouping consequence, stated plainly: multi-tenant services group by tenant;
+// single-tenant services group by aggregate via Subject; events with neither a
+// tenant nor a subject have no grouping at all and are spread by EventID. Each
+// of those becomes an ORDER guarantee only on the direct-emit path — see the
+// outbox caveat above.
 //
 // Operators may override this per-Emitter via WithPartitionKey. This method
 // returns the struct-level default only.
