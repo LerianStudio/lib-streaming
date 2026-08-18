@@ -18,6 +18,7 @@ func kgoOptsTestConfig() ConsumerConfig {
 		Enabled:             true,
 		Brokers:             []string{"localhost:9092", "localhost:9093"},
 		Group:               "opts-test-group",
+		Source:              "opts-test-consumer",
 		Topics:              []string{"t1", "t2"},
 		ClientID:            "opts-test-client",
 		RetryBudget:         1,

@@ -249,6 +249,29 @@ func (b *ConsumerBuilder) Group(group string) *ConsumerBuilder {
 	return b
 }
 
+// Source sets THIS application's ce-source — the same identity its producer
+// side publishes under, and the same STREAMING_CLOUDEVENTS_SOURCE value, because
+// one service has one identity.
+//
+// It is REQUIRED for an enabled consumer, and it does one job: it names the
+// consumer's OWN dead-letter topic, "lerian.streaming.<source>.dlq". A consumer
+// quarantines into its own DLQ, never the producer's — so a Kafka ACL grants
+// every application exactly two writes (its topic and its .dlq) whether it
+// produces, consumes, or both, and a filling DLQ names the team that owns the
+// fix rather than the team whose events happened to be poison.
+//
+// Held to the same strict source rule the producer enforces: one dot-free
+// lowercase segment. Config-driven callers get it for free through FromConfig.
+func (b *ConsumerBuilder) Source(source string) *ConsumerBuilder {
+	if b == nil {
+		return b
+	}
+
+	b.cfg.Source = source
+
+	return b
+}
+
 // Topics sets the RAW subscription list — the escape hatch for topics this
 // library did not derive (legacy streams, third-party producers). It composes
 // with Apps; use Apps for lib-streaming producers.

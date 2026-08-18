@@ -39,6 +39,7 @@ func TestConsumerBuilder_SettersMapToConfig(t *testing.T) {
 		Enabled(false).
 		Brokers("b1:9092", "b2:9092").
 		Group("svc-group").
+		Source("test-consumer").
 		Topics("topic.a", "topic.b").
 		Handler(noopHandler{}).
 		RetryBudget(7).
@@ -141,6 +142,7 @@ func TestConsumerBuilder_TLSSetterEnablesSASL(t *testing.T) {
 		return NewConsumer().
 			Brokers("localhost:9092").
 			Group("g").
+			Source("test-consumer").
 			Topics("t").
 			Handler(noopHandler{})
 	}
@@ -210,6 +212,7 @@ func TestConsumerOptionPassthroughs(t *testing.T) {
 	c, err := NewConsumer().
 		Brokers("localhost:9092").
 		Group("g").
+		Source("test-consumer").
 		Topics("t").
 		Handler(noopHandler{}).
 		Options(opts...).

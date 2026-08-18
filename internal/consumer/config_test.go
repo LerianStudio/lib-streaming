@@ -18,6 +18,7 @@ func validBaseConfig() ConsumerConfig {
 		Enabled:             true,
 		Brokers:             []string{"localhost:9092"},
 		Group:               "g",
+		Source:              "test-consumer",
 		Topics:              []string{"t"},
 		RetryBudget:         3,
 		RetryBackoffInitial: 100 * time.Millisecond,
@@ -112,6 +113,7 @@ func TestValidate_SASLRequiresTLS(t *testing.T) {
 func TestLoadConsumerConfig_Defaults(t *testing.T) {
 	// Not parallel: mutates process env.
 	t.Setenv("STREAMING_CONSUMER_ENABLED", "true")
+	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "test-consumer")
 	t.Setenv("STREAMING_CONSUMER_BROKERS", "b1:9092, b2:9092")
 	t.Setenv("STREAMING_CONSUMER_GROUP", "svc")
 	t.Setenv("STREAMING_CONSUMER_TOPICS", "topic.a,topic.b")
@@ -150,6 +152,7 @@ func TestLoadConsumerConfig_Defaults(t *testing.T) {
 // the suffix was duplicated in two packages to boot.
 func TestLoadConsumerConfig_IgnoresRetiredDLQSuffixVar(t *testing.T) {
 	t.Setenv("STREAMING_CONSUMER_ENABLED", "true")
+	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "test-consumer")
 	t.Setenv("STREAMING_CONSUMER_BROKERS", "b1:9092")
 	t.Setenv("STREAMING_CONSUMER_GROUP", "svc")
 	t.Setenv("STREAMING_CONSUMER_TOPICS", "topic.a")
@@ -179,6 +182,7 @@ func TestLoadConsumerConfig_DisabledSkipsValidation(t *testing.T) {
 
 func TestLoadConsumerConfig_EnabledMissingBrokers(t *testing.T) {
 	t.Setenv("STREAMING_CONSUMER_ENABLED", "true")
+	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "test-consumer")
 	t.Setenv("STREAMING_CONSUMER_GROUP", "svc")
 	t.Setenv("STREAMING_CONSUMER_TOPICS", "t")
 
@@ -197,6 +201,7 @@ func TestLoadConsumerConfig_EnabledMissingBrokers(t *testing.T) {
 // stated in code. An operator wiring both from env had no env-only way out.
 func TestLoadConsumerConfig_ReadsExpectSources(t *testing.T) {
 	t.Setenv("STREAMING_CONSUMER_ENABLED", "true")
+	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "test-consumer")
 	t.Setenv("STREAMING_CONSUMER_BROKERS", "b1:9092")
 	t.Setenv("STREAMING_CONSUMER_GROUP", "svc")
 	t.Setenv("STREAMING_CONSUMER_APPS", "lender")
@@ -219,6 +224,7 @@ func TestLoadConsumerConfig_ReadsExpectSources(t *testing.T) {
 // consumer reports healthy — that must fail at load, not at 3am.
 func TestLoadConsumerConfig_RejectsMalformedExpectSources(t *testing.T) {
 	t.Setenv("STREAMING_CONSUMER_ENABLED", "true")
+	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "test-consumer")
 	t.Setenv("STREAMING_CONSUMER_BROKERS", "b1:9092")
 	t.Setenv("STREAMING_CONSUMER_GROUP", "svc")
 	t.Setenv("STREAMING_CONSUMER_TOPICS", "legacy.topic")

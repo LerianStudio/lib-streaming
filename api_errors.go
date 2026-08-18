@@ -97,6 +97,10 @@ var (
 	// ErrConsumerMissingTopics is returned by ConsumerBuilder.Build when
 	// neither Apps(...) nor Topics(...) resolves to a subscription.
 	ErrConsumerMissingTopics = consumer.ErrMissingTopics
+	// ErrConsumerMissingSource is returned by ConsumerBuilder.Build when an
+	// enabled consumer has no ce-source identity of its own. It names the
+	// consumer's own DLQ topic, so every enabled consumer needs one.
+	ErrConsumerMissingSource = consumer.ErrMissingConsumerSource
 	// ErrConsumerInvalidConfigField is returned by ConsumerBuilder.Build for an
 	// out-of-range numeric/duration field or a malformed entry in Apps.
 	ErrConsumerInvalidConfigField = consumer.ErrInvalidConfigField

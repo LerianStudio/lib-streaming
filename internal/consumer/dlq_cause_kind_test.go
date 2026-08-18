@@ -106,7 +106,7 @@ func TestPublishDLQ_StampsCauseKindHeader(t *testing.T) {
 	t.Parallel()
 
 	adapter := fake.NewAdapter(contract.TransportKafkaLike)
-	pub := &transportDLQPublisher{adapter: adapter, suffix: contract.DLQTopicSuffix, groupID: "g"}
+	pub := newTestDLQPublisher(adapter, "matcher")
 
 	source := &kgo.Record{Topic: "lerian.streaming.lender", Partition: 3, Offset: 42, Value: []byte(`{}`)}
 

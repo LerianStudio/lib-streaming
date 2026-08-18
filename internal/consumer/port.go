@@ -2,6 +2,8 @@ package consumer
 
 import (
 	"context"
+	"fmt"
+	"slices"
 	"strconv"
 	"time"
 
@@ -98,12 +100,13 @@ func defaultCodec(headers []kgo.RecordHeader) (contract.Event, error) {
 }
 
 // dlqPublisher is the seam the runtime uses to republish a poison/terminal
-// record to <topic><DLQTopicSuffix>. Production wires transportDLQPublisher
-// (the internal transport.TransportAdapter seam — NOT the public Emitter, whose
-// catalog/payload/header gates would reject the very poison we must
-// quarantine; see docs/design/consumer.md §1). Tests inject a recording fake.
+// record to THIS consumer application's own DLQ topic. Production wires
+// transportDLQPublisher (the internal transport.TransportAdapter seam — NOT the
+// public Emitter, whose catalog/payload/header gates would reject the very
+// poison we must quarantine; see docs/design/consumer.md §1). Tests inject a
+// recording fake.
 type dlqPublisher interface {
-	// PublishDLQ republishes rec to its derived DLQ topic with forensic
+	// PublishDLQ republishes rec to the consumer's own DLQ topic with forensic
 	// metadata headers. It must be synchronous and return only after the DLQ
 	// record is acknowledged, so the source offset is committed strictly
 	// after the quarantine copy is durable.
@@ -122,16 +125,32 @@ type dlqPublisher interface {
 // from the SAME Brokers/TLS/SASL config the consumer reads with.
 type transportDLQPublisher struct {
 	adapter transport.TransportAdapter
-	suffix  string // DLQ topic suffix, e.g. ".dlq"
-	groupID string // written as the quarantining identity (x-lerian-dlq-producer-id)
+	// dlqTopic is THIS consumer application's own dead-letter topic,
+	// "lerian.streaming.<consumer-source>.dlq" — never the producer's.
+	// Quarantining is the consuming application's act, so it lands on the
+	// consuming application's topic: every app writes exactly two names, its
+	// topic and its .dlq, and a filling DLQ names the team that owns the fix.
+	dlqTopic string
+	groupID  string // written as the quarantining identity (x-lerian-dlq-producer-id)
 }
 
-// PublishDLQ builds a payload-verbatim transport.TransportMessage targeting
-// <rec.Topic><suffix>, attaches the forensic headers (the original CloudEvents
-// headers preserved verbatim, plus the six shared dlqheader keys and the two
-// consumer-specific ones), and publishes via the transport adapter. Synchronous:
-// it returns only after the adapter acknowledges, so the source offset is
-// committed strictly after the quarantine copy is durable.
+// PublishDLQ builds a payload-verbatim transport.TransportMessage targeting this
+// CONSUMER's own DLQ topic, attaches the forensic headers (the original
+// CloudEvents headers preserved verbatim, plus the six shared dlqheader keys and
+// the three consumer-specific ones), and publishes via the transport adapter.
+// Synchronous: it returns only after the adapter acknowledges, so the source
+// offset is committed strictly after the quarantine copy is durable.
+//
+// Because the DLQ topic no longer implies the source topic, the origin
+// coordinates are the only route back to the poison record — x-lerian-dlq-
+// source-topic / -source-partition / -source-offset carry them on every entry.
+//
+// SIZE: a quarantine copy is strictly LARGER than the record it quarantines
+// (same payload, same headers, plus the forensic set), so a near-cap record can
+// fail to fit. When the transport refuses it on size, PublishDLQ retries ONCE
+// with the payload omitted and says so in the headers; the payload stays
+// recoverable from the source topic via the origin coordinates. Anything else
+// fails on the first attempt and the runtime halts the partition fail-closed.
 //
 // firstFailureAt is stamped time.Now() at publish — the QUARANTINE-verdict time,
 // not necessarily the first-ever failure. For a record that fails terminally on
@@ -150,6 +169,45 @@ func (p *transportDLQPublisher) PublishDLQ(ctx context.Context, rec *kgo.Record,
 		return contract.ErrNilProducer
 	}
 
+	headers := p.forensicHeaders(rec, cause, causeKind, retryCount)
+
+	message := transport.TransportMessage{
+		Destination: contract.Destination{
+			Kind: contract.TransportKafkaLike,
+			Name: p.dlqTopic,
+		},
+		Key:     string(rec.Key), // preserve the original key: verbatim republish + stable DLQ partitioning for replay
+		Payload: rec.Value,       // payload-verbatim
+		Headers: headers,
+	}
+
+	err := p.adapter.Publish(ctx, transport.CloneMessage(message))
+	if err == nil || !dlqheader.IsSizeError(err) {
+		return err
+	}
+
+	// The record cannot fit in the DLQ with its payload. Quarantining a marked
+	// copy WITHOUT the payload beats failing the quarantine: a failed quarantine
+	// is fail-closed, and fail-closed on a record that can NEVER be quarantined
+	// is a partition wedged forever — under one topic per app, the producing
+	// application's whole catalog stuck behind one record.
+	message.Payload = nil
+	message.Headers = append(slices.Clone(headers),
+		transport.Header{Key: dlqheader.PayloadOmitted, Value: []byte("true")},
+		transport.Header{Key: dlqheader.PayloadBytes, Value: []byte(strconv.Itoa(len(rec.Value)))},
+	)
+
+	if slimErr := p.adapter.Publish(ctx, transport.CloneMessage(message)); slimErr != nil {
+		return fmt.Errorf("dlq record too large and the payload-omitted retry also failed: %w", slimErr)
+	}
+
+	return nil
+}
+
+// forensicHeaders returns the original record headers verbatim followed by the
+// nine forensic keys. The ce-* headers carry ce-tenantid, so tenant identity
+// travels with the quarantined record without a duplicate dlqheader key.
+func (p *transportDLQPublisher) forensicHeaders(rec *kgo.Record, cause error, causeKind string, retryCount int) []transport.Header {
 	// The error class is the transport adapter's classification of the cause.
 	// For codec/handler poison this is typically ClassValidation/broker_unavailable;
 	// it is forensic metadata only, never a routing decision (routing is decided
@@ -158,18 +216,17 @@ func (p *transportDLQPublisher) PublishDLQ(ctx context.Context, rec *kgo.Record,
 
 	causeMessage := ""
 	if cause != nil {
-		causeMessage = contract.SanitizeBrokerURL(cause.Error())
+		// Bounded: this is the one unbounded value on the record, and the copy
+		// has to fit where the original did. See dlqheader.MaxErrorMessageBytes.
+		causeMessage = dlqheader.TruncateErrorMessage(contract.SanitizeBrokerURL(cause.Error()))
 	}
 
-	// Preserve the original CloudEvents headers verbatim, then append the nine
-	// forensic headers. The ce-* headers carry ce-tenantid, so tenant identity
-	// travels with the quarantined record without a duplicate dlqheader key.
 	headers := make([]transport.Header, 0, len(rec.Headers)+9)
 	for _, h := range rec.Headers {
 		headers = append(headers, transport.Header{Key: h.Key, Value: h.Value})
 	}
 
-	headers = append(headers,
+	return append(headers,
 		transport.Header{Key: dlqheader.SourceTopic, Value: []byte(rec.Topic)},
 		transport.Header{Key: dlqheader.ErrorClass, Value: []byte(cls)},
 		transport.Header{Key: dlqheader.ErrorMessage, Value: []byte(causeMessage)},
@@ -180,18 +237,6 @@ func (p *transportDLQPublisher) PublishDLQ(ctx context.Context, rec *kgo.Record,
 		transport.Header{Key: dlqheader.SourceOffset, Value: []byte(strconv.FormatInt(rec.Offset, 10))},
 		transport.Header{Key: dlqheader.CauseKind, Value: []byte(causeKind)},
 	)
-
-	message := transport.TransportMessage{
-		Destination: contract.Destination{
-			Kind: contract.TransportKafkaLike,
-			Name: rec.Topic + p.suffix,
-		},
-		Key:     string(rec.Key), // preserve the original key: verbatim republish + stable DLQ partitioning for replay
-		Payload: rec.Value,       // payload-verbatim
-		Headers: headers,
-	}
-
-	return p.adapter.Publish(ctx, transport.CloneMessage(message))
 }
 
 // Close flushes and shuts the DLQ adapter's produce-side client. Idempotent and

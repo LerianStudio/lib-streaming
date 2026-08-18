@@ -32,6 +32,12 @@ var (
 	ErrInvalidConfigField = errors.New("streaming consumer: invalid config field")
 	// ErrNilHandler is returned when Enabled=true but no handler was wired.
 	ErrNilHandler = errors.New("streaming consumer: handler is required")
+	// ErrMissingConsumerSource is returned when Enabled=true but the consuming
+	// application has no ce-source identity. It is REQUIRED, not optional: it
+	// names the consumer's own DLQ topic, and every enabled consumer has a DLQ
+	// path. Without it a terminal record has nowhere to quarantine.
+	ErrMissingConsumerSource = errors.New(
+		"streaming consumer: ce-source identity is required — set STREAMING_CLOUDEVENTS_SOURCE or call ConsumerBuilder.Source(...); it names this application's own DLQ topic (lerian.streaming.<source>.dlq)")
 )
 
 // Builder-shape sentinels. Every one of these is a wiring mistake the builder
@@ -107,6 +113,20 @@ type ConsumerConfig struct {
 	// Group is the consumer group id. Required when Enabled=true.
 	// STREAMING_CONSUMER_GROUP.
 	Group string
+	// Source is THIS application's ce-source — the same identity its producer
+	// side publishes under, read from the same STREAMING_CLOUDEVENTS_SOURCE
+	// variable, because one service has one identity.
+	//
+	// It is REQUIRED when Enabled=true, and it does one job: it names the
+	// consumer's OWN dead-letter topic, "lerian.streaming.<Source>.dlq". A
+	// consumer quarantines into its own DLQ, never the producer's — so a Kafka
+	// ACL grants every application exactly two writes (its topic and its .dlq)
+	// whether it produces, consumes, or both, and a filling DLQ names the team
+	// that owns the fix.
+	//
+	// Held to the same strict source contract the producer enforces
+	// (contract.ValidateSource): one dot-free lowercase segment.
+	Source string
 	// Topics is the RAW subscription list — an escape hatch for topics this
 	// library did not derive (legacy streams, third-party producers).
 	// STREAMING_CONSUMER_TOPICS (csv).
@@ -238,6 +258,7 @@ func LoadConsumerConfig() (ConsumerConfig, []string, error) {
 		Enabled:             enabled,
 		Brokers:             splitCSV(commons.GetenvOrDefault("STREAMING_CONSUMER_BROKERS", "")),
 		Group:               commons.GetenvOrDefault("STREAMING_CONSUMER_GROUP", ""),
+		Source:              commons.GetenvOrDefault("STREAMING_CLOUDEVENTS_SOURCE", ""),
 		Topics:              splitCSV(commons.GetenvOrDefault("STREAMING_CONSUMER_TOPICS", "")),
 		Apps:                splitCSV(commons.GetenvOrDefault("STREAMING_CONSUMER_APPS", "")),
 		ExpectSources:       splitCSV(commons.GetenvOrDefault("STREAMING_CONSUMER_EXPECT_SOURCES", "")),
@@ -276,6 +297,16 @@ func (c ConsumerConfig) Validate() error {
 
 	if c.Group == "" {
 		return ErrMissingGroup
+	}
+
+	// The consumer's own identity gates Build unconditionally: every enabled
+	// consumer has a DLQ path, and the DLQ topic is derived from it.
+	if c.Source == "" {
+		return ErrMissingConsumerSource
+	}
+
+	if err := contract.ValidateSource(c.Source); err != nil {
+		return fmt.Errorf("%w: source %q: %w", ErrInvalidConfigField, c.Source, err)
 	}
 
 	for _, app := range c.Apps {

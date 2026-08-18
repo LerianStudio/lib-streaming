@@ -357,10 +357,15 @@ func Build(ctx context.Context, cfg ConsumerConfig, handler Handler, opts ...Opt
 		return nil, fmt.Errorf("streaming consumer: DLQ adapter init: %s", contract.SanitizeBrokerURL(err.Error()))
 	}
 
+	// The quarantine target is THIS consumer's own DLQ, derived from its own
+	// ce-source (cfg.Validate proved it legal above). It is deliberately NOT
+	// derived per-record from the producer's topic: a consumer writing into a
+	// producer's DLQ needs a write grant on every producer it reads, and lands
+	// its failures on someone else's operational surface.
 	dlq := &transportDLQPublisher{
-		adapter: dlqAdapter,
-		suffix:  contract.DLQTopicSuffix,
-		groupID: cfg.Group,
+		adapter:  dlqAdapter,
+		dlqTopic: contract.AppDLQTopic(cfg.Source),
+		groupID:  cfg.Group,
 	}
 
 	// The internal DLQ seam is authoritative: it is applied LAST so Build's

@@ -14,6 +14,7 @@ func appsConfig(mutate func(*ConsumerConfig)) ConsumerConfig {
 	cfg := DefaultBuilderConfig()
 	cfg.Brokers = []string{"localhost:9092"}
 	cfg.Group = "test-group"
+	cfg.Source = "test-consumer"
 
 	mutate(&cfg)
 
@@ -126,6 +127,7 @@ func TestConsumerConfig_RejectsMalformedApp(t *testing.T) {
 // TestLoadConsumerConfig_ReadsApps pins the env surface for subscribe-by-app.
 func TestLoadConsumerConfig_ReadsApps(t *testing.T) {
 	t.Setenv("STREAMING_CONSUMER_ENABLED", "true")
+	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "test-consumer")
 	t.Setenv("STREAMING_CONSUMER_BROKERS", "localhost:9092")
 	t.Setenv("STREAMING_CONSUMER_GROUP", "g")
 	t.Setenv("STREAMING_CONSUMER_APPS", "lender, matcher")

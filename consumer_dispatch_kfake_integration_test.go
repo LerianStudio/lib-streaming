@@ -166,6 +166,7 @@ func TestIntegration_ConsumerDispatchKfakeRoundTrip(t *testing.T) {
 	consumer, err := streaming.NewConsumer().
 		Brokers(cluster.ListenAddrs()...).
 		Group(dispatchGroup).
+		Source("test-consumer").
 		Apps(dispatchApp).
 		On(dispatchEventKey, func(_ context.Context, ev streaming.Event, body []byte) error {
 			mu.Lock()

@@ -36,7 +36,7 @@ func (rawStreamHandler) Handle(context.Context, Event, []byte) error { return ni
 func TestConsumerBuilder_AppsResolveSubscription(t *testing.T) {
 	t.Parallel()
 
-	b := NewConsumer().Brokers("localhost:9092").Group("g").Apps("lender", "matcher")
+	b := NewConsumer().Brokers("localhost:9092").Group("g").Source("test-consumer").Apps("lender", "matcher")
 
 	got := b.cfg.ResolvedTopics()
 	if len(got) != 2 || got[0] != "lerian.streaming.lender" || got[1] != "lerian.streaming.matcher" {
@@ -56,6 +56,7 @@ func TestConsumerBuilder_AppsArmSourceVerification(t *testing.T) {
 	b := NewConsumer().
 		Brokers("localhost:9092").
 		Group("g").
+		Source("test-consumer").
 		Apps("lender").
 		On("loan.disbursed", handlerFn)
 
@@ -94,6 +95,7 @@ func TestConsumerBuilder_ExplicitExpectSourcesReplacesAppsDefault(t *testing.T) 
 	b := NewConsumer().
 		Brokers("localhost:9092").
 		Group("g").
+		Source("test-consumer").
 		Apps("lender").
 		ExpectSources("lender", "matcher").
 		On("loan.disbursed", handlerFn)
@@ -137,6 +139,7 @@ func TestConsumerBuilder_ExpectSourcesMustCoverApps(t *testing.T) {
 	_, err := NewConsumer().
 		Brokers("localhost:9092").
 		Group("g").
+		Source("test-consumer").
 		Apps("lender").
 		ExpectSources("matcher").
 		On("loan.disbursed", handlerFn).
@@ -159,6 +162,7 @@ func TestConsumerBuilder_RejectsMalformedExpectSource(t *testing.T) {
 	_, err := NewConsumer().
 		Brokers("localhost:9092").
 		Group("g").
+		Source("test-consumer").
 		Topics("some.legacy.topic").
 		ExpectSources("Lender").
 		On("loan.disbursed", handlerFn).
@@ -188,6 +192,7 @@ func TestConsumerBuilder_AppsAndTopicsRequireExplicitExpectSources(t *testing.T)
 	b := NewConsumer().
 		Brokers("localhost:9092").
 		Group("g").
+		Source("test-consumer").
 		Apps("lender").
 		Topics("some.legacy.topic").
 		On("loan.disbursed", handlerFn)
@@ -201,6 +206,7 @@ func TestConsumerBuilder_AppsAndTopicsRequireExplicitExpectSources(t *testing.T)
 	handler, err := NewConsumer().
 		Brokers("localhost:9092").
 		Group("g").
+		Source("test-consumer").
 		Apps("lender").
 		Topics("some.legacy.topic").
 		ExpectSources("lender", "legacy-writer").
@@ -229,7 +235,7 @@ func TestConsumerBuilder_UnmatchedDefaultIgnores(t *testing.T) {
 	handlerFn, ran := trackingHandler()
 
 	handler, err := NewConsumer().
-		Brokers("localhost:9092").Group("g").Apps("lender").
+		Brokers("localhost:9092").Group("g").Source("test-consumer").Apps("lender").
 		On("loan.disbursed", handlerFn).
 		resolveHandler()
 	if err != nil {
@@ -253,7 +259,7 @@ func TestConsumerBuilder_UnmatchedErrorPolicyOptIn(t *testing.T) {
 	handlerFn, ran := trackingHandler()
 
 	handler, err := NewConsumer().
-		Brokers("localhost:9092").Group("g").Apps("lender").
+		Brokers("localhost:9092").Group("g").Source("test-consumer").Apps("lender").
 		UnmatchedPolicy(UnmatchedError).
 		On("loan.disbursed", handlerFn).
 		resolveHandler()
@@ -279,7 +285,7 @@ func TestConsumerBuilder_HandlerAndOnAreExclusive(t *testing.T) {
 	handlerFn, _ := trackingHandler()
 
 	_, err := NewConsumer().
-		Brokers("localhost:9092").Group("g").Apps("lender").
+		Brokers("localhost:9092").Group("g").Source("test-consumer").Apps("lender").
 		Handler(rawStreamHandler{}).
 		On("loan.disbursed", handlerFn).
 		resolveHandler()
@@ -300,7 +306,7 @@ func TestConsumerBuilder_HandlerWithExpectSourcesFailsPrecisely(t *testing.T) {
 	t.Parallel()
 
 	_, err := NewConsumer().
-		Brokers("localhost:9092").Group("g").Apps("lender").
+		Brokers("localhost:9092").Group("g").Source("test-consumer").Apps("lender").
 		Handler(rawStreamHandler{}).
 		ExpectSources("lender").
 		resolveHandler()
@@ -329,7 +335,7 @@ func TestConsumerBuilder_HandlerWithUnmatchedPolicyFailsPrecisely(t *testing.T) 
 	t.Parallel()
 
 	_, err := NewConsumer().
-		Brokers("localhost:9092").Group("g").Apps("lender").
+		Brokers("localhost:9092").Group("g").Source("test-consumer").Apps("lender").
 		UnmatchedPolicy(UnmatchedError).
 		Handler(rawStreamHandler{}).
 		resolveHandler()
@@ -376,7 +382,7 @@ func TestConsumerBuilder_HandlerRejectsEveryDispatchOnlyKnob(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			b := tt.apply(NewConsumer().Brokers("localhost:9092").Group("g").Apps("lender")).
+			b := tt.apply(NewConsumer().Brokers("localhost:9092").Group("g").Source("test-consumer").Apps("lender")).
 				Handler(rawStreamHandler{})
 
 			handler, err := b.resolveHandler()
@@ -482,6 +488,7 @@ func TestConsumerBuilder_RawTopicsEscapeHatch(t *testing.T) {
 
 	handler, err := NewConsumer().
 		Brokers("localhost:9092").Group("g").
+		Source("test-consumer").
 		Topics("some.legacy.topic").
 		On("loan.disbursed", handlerFn).
 		resolveHandler()
@@ -506,7 +513,7 @@ func TestConsumerBuilder_DispatchWithoutHandlersFails(t *testing.T) {
 	t.Parallel()
 
 	_, err := NewConsumer().
-		Brokers("localhost:9092").Group("g").Apps("lender").
+		Brokers("localhost:9092").Group("g").Source("test-consumer").Apps("lender").
 		UnmatchedPolicy(UnmatchedIgnore).
 		resolveHandler()
 
@@ -524,6 +531,7 @@ func TestConsumerBuilder_RejectsMalformedApp(t *testing.T) {
 
 	_, err := NewConsumer().
 		Brokers("localhost:9092").Group("g").
+		Source("test-consumer").
 		Apps("//lerian.midaz/tx").
 		On("loan.disbursed", handlerFn).
 		Build(context.Background())
@@ -547,6 +555,7 @@ func TestConsumerBuilder_FromConfigWiresTheEnvSurface(t *testing.T) {
 	t.Setenv("STREAMING_CONSUMER_ENABLED", "true")
 	t.Setenv("STREAMING_CONSUMER_BROKERS", "localhost:9092")
 	t.Setenv("STREAMING_CONSUMER_GROUP", "loan-projector")
+	t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "loan-projector")
 	t.Setenv("STREAMING_CONSUMER_APPS", "lender,matcher")
 
 	cfg, warnings, err := LoadConsumerConfig()

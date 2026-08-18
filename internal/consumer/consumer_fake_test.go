@@ -396,6 +396,7 @@ func newTestRuntime(t testingTB, client GroupClient, handler Handler, dlq dlqPub
 		Enabled:             true,
 		Brokers:             []string{"localhost:9092"},
 		Group:               "test-group",
+		Source:              "test-consumer",
 		Topics:              []string{"t"},
 		RetryBudget:         2,
 		RetryBackoffInitial: time.Millisecond,
