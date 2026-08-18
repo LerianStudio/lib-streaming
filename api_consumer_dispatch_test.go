@@ -693,3 +693,49 @@ func TestConsumerBuilder_FromConfigWiresTheEnvSurface(t *testing.T) {
 		t.Fatal("handler did not run for an app named via STREAMING_CONSUMER_APPS")
 	}
 }
+
+// TestConsumerBuilder_DuplicateAllowlistEntriesAreNotAmbiguity pins that a
+// repeated app name is still ONE producer.
+//
+// Ambiguity is decided on the length of the ce-source allowlist, and the
+// allowlist was cloned verbatim from whatever the caller supplied. So
+// STREAMING_CONSUMER_APPS="lender,lender" — an ordinary CSV paste — and two
+// ExpectSources("lender") calls both produced a two-entry allowlist naming the
+// same app twice, and a bare On(...) failed the build as "ambiguous between
+// lender and lender". The ExpectSources contract already promises the UNION of
+// every call, and a union has no duplicates.
+func TestConsumerBuilder_DuplicateAllowlistEntriesAreNotAmbiguity(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name  string
+		build func(*ConsumerBuilder) *ConsumerBuilder
+	}{
+		{
+			name:  "repeated Apps entry",
+			build: func(b *ConsumerBuilder) *ConsumerBuilder { return b.Apps("lender", "lender") },
+		},
+		{
+			name: "repeated ExpectSources calls",
+			build: func(b *ConsumerBuilder) *ConsumerBuilder {
+				return b.Apps("lender").ExpectSources("lender").ExpectSources("lender")
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			handlerFn, _ := trackingHandler()
+
+			b := tc.build(newDispatchBuilder()).On("loan.disbursed", handlerFn)
+
+			if _, err := b.resolveHandler(); err != nil {
+				t.Fatalf("resolveHandler() = %v; want nil — one app named twice is still one app", err)
+			}
+
+			if got := b.cfg.ExpectSources; len(got) != 1 || got[0] != "lender" {
+				t.Errorf("ExpectSources = %v; want exactly [lender]", got)
+			}
+		})
+	}
+}

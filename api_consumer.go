@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"slices"
 	"time"
 
 	"github.com/twmb/franz-go/pkg/sasl"
@@ -685,7 +684,7 @@ func (b *ConsumerBuilder) resolveExpectedSources() error {
 				consumer.ErrAmbiguousSourceVerification, b.cfg.Apps, b.cfg.Topics)
 		}
 
-		b.cfg.ExpectSources = slices.Clone(b.cfg.Apps)
+		b.cfg.ExpectSources = dedupSources(b.cfg.Apps)
 
 		return nil
 	}
@@ -707,7 +706,32 @@ func (b *ConsumerBuilder) resolveExpectedSources() error {
 		}
 	}
 
-	b.cfg.ExpectSources = slices.Clone(explicit)
+	b.cfg.ExpectSources = dedupSources(explicit)
 
 	return nil
+}
+
+// dedupSources returns a copy of sources with repeats removed, first-seen order
+// preserved.
+//
+// The ce-source allowlist is a SET: ExpectSources documents the UNION of every
+// call, and Apps names producing applications rather than occurrences. Cloning
+// it verbatim let a repeat survive into Dispatcher.Bind, which decides bare-On
+// ambiguity on the list length — so a single-producer consumer whose app was
+// named twice (STREAMING_CONSUMER_APPS="lender,lender" is an ordinary CSV
+// paste) failed the build as ambiguous between lender and lender.
+func dedupSources(sources []string) []string {
+	out := make([]string, 0, len(sources))
+	seen := make(map[string]struct{}, len(sources))
+
+	for _, source := range sources {
+		if _, dup := seen[source]; dup {
+			continue
+		}
+
+		seen[source] = struct{}{}
+		out = append(out, source)
+	}
+
+	return out
 }
