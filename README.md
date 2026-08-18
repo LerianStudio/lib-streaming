@@ -9,9 +9,9 @@
 
 # lib-streaming
 
-**lib-streaming** is Lerian Studio's producer-only event publication library for CloudEvents-framed domain events. It gives Go services a catalog-driven `Emitter` API with multi-transport routing across Kafka, SQS, RabbitMQ, and EventBridge, per-target tenant-aware circuit breakers, route-aware outbox fallback, per-route DLQ, and observability contracts designed for financial infrastructure.
+**lib-streaming** is Lerian Studio's event publication AND consumption library for CloudEvents-framed domain events. It gives Go services a catalog-driven `Emitter` API with multi-transport routing across Kafka, SQS, RabbitMQ, and EventBridge, per-target tenant-aware circuit breakers, route-aware outbox fallback, per-route DLQ, and observability contracts designed for financial infrastructure — plus a hardened at-least-once group `Consumer` that subscribes by producing application, dispatches by event key, verifies `ce-source`, and owns commit, retry, seek-back, DLQ, tenant propagation, and rebalance safety.
 
-Producer-only means this library publishes business facts. It does not consume Kafka streams, and it does not replace `github.com/LerianStudio/lib-commons/v5/commons/rabbitmq`, which remains the internal command-queue primitive.
+It does not replace `github.com/LerianStudio/lib-commons/v6/commons/rabbitmq`, which remains the internal command-queue primitive. The two are orthogonal: lib-streaming carries past-tense business facts, lib-commons carries internal commands.
 
 | | |
 |---|---|
@@ -335,7 +335,7 @@ The SQS and EventBridge adapters reject provider wire messages larger than 256 K
 
 ### RabbitMQ is events-only
 
-The lib-streaming RabbitMQ adapter is for **business events** aimed at third-party / SaaS subscribers. Internal command queues remain on `github.com/LerianStudio/lib-commons/v5/commons/rabbitmq`. The two are orthogonal — neither replaces the other.
+The lib-streaming RabbitMQ adapter is for **business events** aimed at third-party / SaaS subscribers. Internal command queues remain on `github.com/LerianStudio/lib-commons/v6/commons/rabbitmq`. The two are orthogonal — neither replaces the other.
 
 ### Custom transports
 

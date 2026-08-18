@@ -61,8 +61,13 @@ type ManifestEvent struct {
 // (definition key first, then route key) so the JSON document is
 // byte-stable across builds.
 type ManifestRoute struct {
-	Key           string        `json:"key"`
-	DefinitionKey string        `json:"definitionKey"`
+	Key string `json:"key"`
+	// DefinitionKey is OMITTED for a catch-all route (the shape the default
+	// app-topic path uses), because a catch-all serves every definition and
+	// naming none of them is the accurate answer. Emitting `"definitionKey":
+	// ""` instead read as "scoped to the definition whose key is the empty
+	// string", which is not a thing.
+	DefinitionKey string        `json:"definitionKey,omitempty"`
 	Target        string        `json:"target"`
 	Transport     TransportKind `json:"transport"`
 	Destination   string        `json:"destination"`

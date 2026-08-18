@@ -148,8 +148,8 @@ var (
 
 	// ErrInvalidSchemaVersion is returned when Event.SchemaVersion exceeds
 	// MaxSchemaVersionBytes or contains control characters. SchemaVersion
-	// travels as ce-schemaversion and is used by major-version topic
-	// suffixing in Topic().
+	// travels as ce-schemaversion, which is its ONLY carrier — v2's
+	// major-version topic suffix is gone, and Topic() no longer reads it.
 	ErrInvalidSchemaVersion = errors.New("streaming: Event.SchemaVersion contains control chars or exceeds 64 bytes")
 
 	// ErrInvalidDataContentType is returned when Event.DataContentType

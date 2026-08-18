@@ -34,11 +34,10 @@ Construction (functional-options + Builder, matching the producer):
 c, err := streaming.NewConsumer().
     Brokers(cfg.Brokers...).
     Group("my-service").
-    Topics("lerian.streaming.transaction.created").
+    Apps("lender").                       // -> lerian.streaming.lender
+    On("loan.disbursed", onDisbursed).    // "<resourceType>.<eventType>"
     TLS(tlsCfg).
     SASL(mech).
-    Handler(myHandler{}).
-    DLQTopicSuffix(".dlq").   // optional; default ".dlq"
     RetryBudget(3).
     Classifier(isTransient).  // optional
     Build(ctx)
@@ -76,8 +75,8 @@ value) + arbitrary `Destination contract.Destination`. The Kafka adapter
 catalog/JSON/header gating. The DLQ is a first-class, default-on terminal sink —
 never a silent drop.
 
-The only public DLQ knob is therefore the topic suffix:
-`.DLQTopicSuffix(string)` (default `".dlq"`).
+There is therefore **no public DLQ knob at all**. The DLQ topic is always
+`<topic>.dlq`, from `contract.DLQTopicSuffix`.
 
 Optional knobs via `ConsumerOption`: `WithConsumerLogger`,
 `WithConsumerMetricsFactory`, `WithConsumerTracer`, plus internal
@@ -179,7 +178,7 @@ DLQ is **classification-driven only**. A record reaches the DLQ **iff** it is
 classified terminal/poison — bad payload, unknown/drifted topic, nil uuid,
 illegal transition, not-found. Empty `ce-tenantid` is NOT a DLQ reason — it is a
 valid single-tenant scope, dispatched (§7b, mirrors producer v1.6.2). It is
-republished to `<topic><DLQTopicSuffix>` (default `.dlq`) via the internal
+republished to `<topic>.dlq` via the internal
 `transport.TransportAdapter` seam (`dlqPublisher`, constructed by `Build` over
 the same Brokers/TLS/SASL config) — NOT via the public `Emitter`, whose
 catalog/payload/header gates would reject the very poison we must quarantine
@@ -322,7 +321,8 @@ producer lacks). Prefix `STREAMING_CONSUMER_`.
 | Enabled               | STREAMING_CONSUMER_ENABLED                   | false   | kill switch (false → no-op consumer) |
 | Brokers               | STREAMING_CONSUMER_BROKERS (csv)             | —       | bootstrap list (required) |
 | Group                 | STREAMING_CONSUMER_GROUP                     | —       | group id (required) |
-| Topics                | STREAMING_CONSUMER_TOPICS (csv)              | —       | subscription (required) |
+| Apps                  | STREAMING_CONSUMER_APPS (csv)                | —       | PRODUCING APPLICATIONS to subscribe to, by `ce-source`. Each resolves to that app's one topic (`lerian.streaming.<app>`) AND arms source verification. Either `Apps` or `Topics` is required; they compose |
+| Topics                | STREAMING_CONSUMER_TOPICS (csv)              | —       | RAW subscription list — the escape hatch for topics this library did not derive (legacy streams, third-party producers). Either `Apps` or `Topics` is required |
 | ClientID              | STREAMING_CONSUMER_CLIENT_ID                 | ""      | client.id |
 | RetryBudget           | STREAMING_CONSUMER_RETRY_BUDGET              | 3       | **in-loop** transient-retry attempts per record (NOT "before DLQ"; transients never DLQ) |
 | RetryBackoffInitial   | STREAMING_CONSUMER_RETRY_BACKOFF_INITIAL_MS  | 100ms   | first in-loop retry backoff |
@@ -331,7 +331,41 @@ producer lacks). Prefix `STREAMING_CONSUMER_`.
 | HaltBackoff           | STREAMING_CONSUMER_HALT_BACKOFF_MS           | 250ms   | **cross-poll** backoff before re-polling when any partition is halted (sustained transient); group is unblocked during this wait. Tune up (seconds→minutes) for slow downstreams |
 | PollTimeout           | STREAMING_CONSUMER_POLL_TIMEOUT_MS           | 0       | per-poll cap (0 = block) |
 | CloseTimeout          | STREAMING_CONSUMER_CLOSE_TIMEOUT_S           | 30s     | graceful drain bound |
-| DLQTopicSuffix        | STREAMING_CONSUMER_DLQ_SUFFIX                | ".dlq"  | DLQ topic suffix |
+
+There is deliberately **no DLQ-suffix knob**. The DLQ topic is always
+`<topic>.dlq`, owned by `contract.DLQTopicSuffix`. The whole point of the topic
+collapse is that a Kafka ACL covers exactly two names — `lerian.streaming.<app>`
+and its `.dlq` — and a free-text suffix could rename the second half out from
+under that grant. `STREAMING_CONSUMER_DLQ_SUFFIX` is retired.
+
+`LoadConsumerConfig` reads this table; `ConsumerBuilder.FromConfig(cfg)` adopts
+the result. Without `FromConfig`, none of these variables is read by anything:
+
+```go
+cfg, warnings, err := streaming.LoadConsumerConfig()
+c, err := streaming.NewConsumer().FromConfig(cfg).On("loan.disbursed", h).Build(ctx)
+```
+
+**Source verification and the Apps/Topics combination.** With `Apps` alone, the
+app list becomes the dispatcher's `ce-source` allowlist for free. With raw
+`Topics` alone, verification is off and any `ce-source` dispatches. With BOTH and
+no explicit `ExpectSources(...)`, `Build` FAILS: defaulting to `Apps` would
+quarantine 100% of the raw-topic stream, and skipping the check would drop the
+verification the `Apps` subscription paid for — neither is a defensible guess.
+An explicit `ExpectSources` list REPLACES the `Apps`-derived one, is validated
+entry-by-entry against the strict source contract, and must COVER every app in
+`Apps` (subscribing to an app's topic while refusing its source quarantines that
+whole stream).
+
+**Known limitation — the source check is a UNION, not per-topic.** The allowlist
+is checked against the event's `ce-source` regardless of which subscribed topic
+the record arrived on. A consumer subscribed to both `lender` and `matcher`
+therefore accepts a record carrying `ce-source: matcher` that was written to
+`lerian.streaming.lender`. That is a cross-app write WITHIN the subscribed set —
+it still catches every foreign producer, which is the threat the check exists
+for, but it does not prove topic/source agreement. Kafka ACLs are the control
+that does: a producer scoped to its own two topic names cannot write to another
+app's topic in the first place.
 
 **Rebalance-timeout budget constraint (Gap 4).** `RetryInLoopMaxDwell` bounds how
 long a record may dwell in-loop while the member holds `BlockRebalanceOnPoll`.
@@ -348,8 +382,24 @@ mirroring the producer; validated at `Build`.
 
 ## 6. DLQ topic + envelope + metadata
 
-- **Topic:** `<source-topic><DLQTopicSuffix>` (e.g.
-  `lerian.streaming.transaction.created.dlq`). Cross-tenant, like the source.
+- **Topic:** `<source-topic>.dlq` (e.g. `lerian.streaming.lender.dlq`).
+  Cross-tenant, like the source. Not configurable — see §5.
+- **Cause kind:** every quarantined record carries `x-lerian-dlq-cause-kind`,
+  one of `codec` / `handler` / `source_mismatch` / `unhandled_key`, alongside
+  the sanitized underlying error in `x-lerian-dlq-error-message`. The same value
+  labels `streaming_consumer_dlq_total`. Those four have four different owners:
+  a codec fault means the producer's wire format drifted, a source mismatch
+  means a foreign write or a stale allowlist, an unhandled key means this
+  consumer's `On(...)` registrations fell behind the producer's catalog, and
+  `handler` is a genuine business rejection.
+- **Shared with the producer DLQ.** A producer's own DLQ copies land on the same
+  `.dlq` topic. Consumer quarantines are the ones carrying
+  `x-lerian-dlq-source-partition` / `-source-offset` / `-cause-kind`; producer
+  copies carry none of the three. **Replay rule:** a producer-written entry
+  replays through the producer (its original publish never landed); a
+  consumer-written entry replays by re-delivering to the CONSUMER (the record is
+  still on the source topic at the named partition/offset, and republishing it
+  would duplicate the event).
 - **Publish path:** the internal `transport.TransportAdapter` seam
   (`dlqPublisher`), constructed by `Build` over the same Brokers/TLS/SASL config
   the consumer reads with — **never** the public `Emitter` (its catalog/payload/
@@ -574,8 +624,8 @@ doc.go edit states the reversal, points here, and keeps the
   memory: "UW has NO inbound consumer (build it)"). The Phase-3 servicing
   consumer is the first adopter: implement `Handler`, wire
   `streaming.NewConsumer()` in bootstrap alongside the existing producer,
-  optionally set `.DLQTopicSuffix(...)` (the DLQ publisher is constructed
-  internally over the same broker/TLS/SASL config — no emitter to pass), filter
+  (the DLQ publisher is constructed internally over the same broker/TLS/SASL
+  config — no emitter to pass, no suffix to set), filter
   on `event.TenantID` for tenant-scoped Midaz/matcher dispatch. No franz-go group
   code in UW.
 - **Gateway (GW):** GW is sink-agnostic (emits events + per-tenant output
