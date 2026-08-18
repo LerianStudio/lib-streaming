@@ -131,6 +131,8 @@ func TestRecordUnmatched_CapsTheEventKeyLabelCardinality(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			if got := labels[tt.label]; got != tt.want {
 				t.Errorf("event_key=%q count = %d; want %d", tt.label, got, tt.want)
 			}
@@ -207,5 +209,80 @@ func TestRecordUnmatched_LogsOncePerKeyWhileMeteringPerRecord(t *testing.T) {
 
 	if got := unmatchedEventKeyLabels(t, snapshot())["loan.disbursed"]; got != 2 {
 		t.Errorf("streaming_consumer_unmatched_total{event_key=loan.disbursed} = %d; want 2 (once per record)", got)
+	}
+}
+
+// TestRecordUnmatched_NamesKeysPastTheLabelCap closes the blind spot the cap
+// created.
+//
+// The per-key WARN lived INSIDE the below-cap branch, so once 64 distinct keys
+// had been seen every new one was metered as "other" and named nowhere at all.
+// The real fleet has 143 event keys across the four launch producers; any
+// two-app consumer burns 64 in minutes, and a key that first appears on day 30
+// — a producer shipping a new event this consumer was supposed to handle — was
+// then invisible in both signals.
+//
+// The two signals are decoupled instead: the metric label stays capped (the
+// backend's cardinality budget is the thing being protected), and the log keeps
+// naming keys, globally rate-limited so it cannot flood in exactly the
+// high-volume case that made the cap necessary.
+func TestRecordUnmatched_NamesKeysPastTheLabelCap(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	factory, snapshot := newUnmatchedMeterSetup(t)
+	spy := newSpyLogger()
+
+	r := newTestRuntime(t, newFakeGroupClient(), &fakeHandler{}, &fakeDLQ{},
+		WithMetricsFactory(factory), WithLogger(spy))
+
+	for i := range maxUnmatchedEventKeyLabels {
+		r.recordUnmatched(ctx, "resource.evt_"+strconv.Itoa(i))
+	}
+
+	if got := len(spy.fieldValues(unmatchedOverflowKeyMessage, "event_key")); got != 0 {
+		t.Fatalf("overflow key lines = %d before the cap was exceeded; want 0", got)
+	}
+
+	// Past the cap: the key must still be named somewhere.
+	r.recordUnmatched(ctx, "resource.day_thirty_drift")
+
+	named := spy.fieldValues(unmatchedOverflowKeyMessage, "event_key")
+	if len(named) != 1 {
+		t.Fatalf("overflow key lines = %d; want exactly 1", len(named))
+	}
+
+	if named[0] != "resource.day_thirty_drift" {
+		t.Errorf("named key = %v; want the key itself, not %q", named[0], unmatchedEventKeyOverflow)
+	}
+
+	// The metric label stays capped regardless — the log is what names keys.
+	if got := unmatchedEventKeyLabels(t, snapshot())["resource.day_thirty_drift"]; got != 0 {
+		t.Errorf("event_key=resource.day_thirty_drift count = %d; want 0 (the label cap is unchanged)", got)
+	}
+}
+
+// TestRecordUnmatched_RateLimitsTheOverflowKeyLog pins the bound on the new log
+// line. Naming every overflow key per record would flood the log in exactly the
+// live-stream case the cap exists for; the limiter keeps it to one line per
+// window, with no unbounded key set retained to decide "newly seen".
+func TestRecordUnmatched_RateLimitsTheOverflowKeyLog(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	spy := newSpyLogger()
+
+	r := newTestRuntime(t, newFakeGroupClient(), &fakeHandler{}, &fakeDLQ{}, WithLogger(spy))
+
+	for i := range maxUnmatchedEventKeyLabels {
+		r.recordUnmatched(ctx, "resource.evt_"+strconv.Itoa(i))
+	}
+
+	for i := range 500 {
+		r.recordUnmatched(ctx, "resource.flood_"+strconv.Itoa(i))
+	}
+
+	if got := len(spy.fieldValues(unmatchedOverflowKeyMessage, "event_key")); got != 1 {
+		t.Errorf("overflow key lines = %d for 500 distinct keys in one window; want 1", got)
 	}
 }

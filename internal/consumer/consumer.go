@@ -118,7 +118,25 @@ const (
 	// silently swallows every later drift and the metric looks like it just
 	// went quiet.
 	unmatchedLabelOverflowMessage = `streaming consumer: unmatched event-key label overflow; further keys metered as "other"`
+	// unmatchedOverflowKeyMessage names an unmatched key seen PAST the label
+	// cap, rate-limited by unmatchedOverflowLogInterval.
+	//
+	// It exists because the per-key warning used to live inside the below-cap
+	// branch: once 64 distinct keys had been seen, every new one metered as
+	// "other" and was named NOWHERE. The real fleet carries 143 event keys
+	// across the four launch producers, so any two-app consumer burns the cap in
+	// minutes — and a producer shipping a new event on day 30 was then invisible
+	// in both signals at once.
+	unmatchedOverflowKeyMessage = "streaming consumer: unmatched event key seen past the metric label cap (named here because the metric can no longer name it)"
 )
+
+// unmatchedOverflowLogInterval bounds unmatchedOverflowKeyMessage globally.
+//
+// The cap protects the metrics backend's cardinality budget; this protects the
+// log from the same pressure. One line per window is enough to notice drift and
+// far too few to flood — and rate-limiting on a timestamp means no unbounded
+// set of seen keys has to be retained just to decide what is "new".
+const unmatchedOverflowLogInterval = 30 * time.Second
 
 // tenantContextKey is the unexported context key under which the validated
 // tenant id is seeded onto the handler ctx. A tenant-aware downstream repo reads
@@ -205,6 +223,11 @@ type consumerRuntime struct {
 	// unmatchedOverflowOnce guards the single boundary warning fired when the
 	// event_key label cap is first exceeded.
 	unmatchedOverflowOnce sync.Once
+	// unmatchedOverflowLogAt is the UnixNano of the last past-the-cap key line,
+	// which rate-limits that line globally. A timestamp rather than a seen-set:
+	// retaining every overflow key to decide "new" would reintroduce, in memory,
+	// exactly the unbounded growth the label cap exists to prevent.
+	unmatchedOverflowLogAt atomic.Int64
 
 	// dispatcher is the handler when it is a *Dispatcher, resolved once at
 	// construction. New binds this runtime's unmatched recorder onto it —
@@ -292,6 +315,12 @@ func (c *consumerRuntime) recordUnmatched(ctx context.Context, eventKey string) 
 					log.Int("distinct_event_keys", maxUnmatchedEventKeyLabels),
 				)
 			})
+
+			// The metric can no longer name this key, so the log must. The two
+			// signals are decoupled deliberately: the cap protects the metrics
+			// backend's cardinality budget, and going blind on key NAMES was
+			// never part of that bargain.
+			c.logOverflowKey(ctx, eventKey)
 		} else if _, loaded := c.unmatchedSeen.LoadOrStore(eventKey, struct{}{}); !loaded {
 			c.unmatchedCount.Add(1)
 
@@ -316,6 +345,30 @@ func (c *consumerRuntime) sourceAccepted(source string) bool {
 	}
 
 	return slices.Contains(c.cfg.ExpectSources, source)
+}
+
+// logOverflowKey names one unmatched key seen past the label cap, at most once
+// per unmatchedOverflowLogInterval across the whole consumer.
+//
+// The CAS makes the window a real global bound under concurrent partitions: a
+// loser of the race skips its line rather than queueing behind it.
+func (c *consumerRuntime) logOverflowKey(ctx context.Context, eventKey string) {
+	now := time.Now().UnixNano()
+
+	last := c.unmatchedOverflowLogAt.Load()
+	if last != 0 && now-last < int64(unmatchedOverflowLogInterval) {
+		return
+	}
+
+	if !c.unmatchedOverflowLogAt.CompareAndSwap(last, now) {
+		return
+	}
+
+	c.logger.Log(ctx, log.LevelWarn, unmatchedOverflowKeyMessage,
+		log.String("event_key", eventKey),
+		log.String("policy", string(c.unmatchedPolicy())),
+		log.Int("distinct_event_keys_capped_at", maxUnmatchedEventKeyLabels),
+	)
 }
 
 // unmatchedPolicy reports the dispatcher's unmatched policy for logging, or

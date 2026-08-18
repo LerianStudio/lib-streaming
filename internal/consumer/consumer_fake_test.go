@@ -20,17 +20,42 @@ import (
 type spyLogger struct {
 	log.Logger // embedded nop; only Log is overridden
 
-	mu  sync.Mutex
-	msg []string
+	mu     sync.Mutex
+	msg    []string
+	fields [][]log.Field
 }
 
 func newSpyLogger() *spyLogger { return &spyLogger{Logger: log.NewNop()} }
 
-func (s *spyLogger) Log(_ context.Context, _ log.Level, msg string, _ ...log.Field) {
+func (s *spyLogger) Log(_ context.Context, _ log.Level, msg string, fields ...log.Field) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.msg = append(s.msg, msg)
+	s.fields = append(s.fields, append([]log.Field(nil), fields...))
+}
+
+// fieldValues returns the values recorded under key on every line whose message
+// equals msg — how a test asserts that a log line NAMED the thing it is about.
+func (s *spyLogger) fieldValues(msg, key string) []any {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var out []any
+
+	for i, line := range s.msg {
+		if line != msg {
+			continue
+		}
+
+		for _, f := range s.fields[i] {
+			if f.Key == key {
+				out = append(out, f.Value)
+			}
+		}
+	}
+
+	return out
 }
 
 func (s *spyLogger) contains(substr string) bool {
