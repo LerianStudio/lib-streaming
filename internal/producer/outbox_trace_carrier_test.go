@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/baggage"
 	"go.opentelemetry.io/otel/propagation"
@@ -165,10 +166,16 @@ func TestProducer_DeriveOutboxAggregateIDHonorsCustomPartitionAndSystemEvents(t 
 	event := Event{TenantID: "tenant-1", Subject: "subject-1"}
 
 	got := p.deriveOutboxAggregateID(event)
-	want := deriveAggregateID(Event{Subject: "custom-partition"})
-	if got == want {
-		t.Fatal("custom partition function was ignored")
+
+	want := uuid.NewSHA1(uuid.NameSpaceDNS, []byte("custom-partition"))
+	if got != want {
+		t.Fatalf("aggregate id = %s; want the SHA1 of the custom partition key %s", got, want)
 	}
+
+	if got == deriveAggregateID(event) {
+		t.Fatal("custom partition function was ignored — aggregate id matched the default derivation")
+	}
+
 	if got != p.deriveOutboxAggregateID(event) {
 		t.Fatal("custom partition aggregate ID is not deterministic")
 	}

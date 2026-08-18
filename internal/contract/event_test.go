@@ -109,8 +109,15 @@ func TestEvent_Topic_NilReceiver(t *testing.T) {
 	}
 }
 
-// TestEvent_PartitionKey covers the TRD §C1 rules: TenantID by default,
-// "system:" + EventType when SystemEvent is true (DX-A05/A06 adjacent).
+// TestEvent_PartitionKey covers the partition-key fallback chain: TenantID,
+// then Subject, then EventID; "system:" + EventType when SystemEvent is true.
+//
+// The chain exists because of the topic collapse. A single-tenant service
+// leaves TenantID empty, and franz-go's sticky-key partitioner branches on
+// key != nil — []byte("") is NOT nil, so an empty key hashes to one constant
+// partition. In v2 that traffic was spread over per-event topics; in v3 it is
+// one topic, so an empty key would pin an entire application's stream to a
+// single partition.
 func TestEvent_PartitionKey(t *testing.T) {
 	t.Parallel()
 
@@ -121,7 +128,7 @@ func TestEvent_PartitionKey(t *testing.T) {
 	}{
 		{
 			name:  "tenant id is the default partition key",
-			event: Event{TenantID: "t-abc", EventType: "created"},
+			event: Event{TenantID: "t-abc", EventType: "created", Subject: "agg-1", EventID: "evt-1"},
 			want:  "t-abc",
 		},
 		{
@@ -139,7 +146,17 @@ func TestEvent_PartitionKey(t *testing.T) {
 			want: "system:announce",
 		},
 		{
-			name:  "empty tenant and non-system returns empty string",
+			name:  "empty tenant falls back to subject so per-aggregate order survives",
+			event: Event{EventType: "created", Subject: "loan-42", EventID: "evt-1"},
+			want:  "loan-42",
+		},
+		{
+			name:  "empty tenant and empty subject fall back to event id",
+			event: Event{EventType: "created", EventID: "evt-1"},
+			want:  "evt-1",
+		},
+		{
+			name:  "no identity at all yields an empty key",
 			event: Event{EventType: "created"},
 			want:  "",
 		},

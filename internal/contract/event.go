@@ -41,8 +41,9 @@ import (
 //
 // Lerian extensions:
 //
-//   - SystemEvent: when true, emits ce-systemevent: "true" and allows an
-//     empty TenantID. The PartitionKey becomes "system:" + EventType.
+//   - SystemEvent: when true, emits ce-systemevent: "true", omits ce-tenantid
+//     entirely, and allows an empty TenantID. The PartitionKey becomes
+//     "system:" + EventType.
 //   - Payload: the raw domain payload bytes, sent unchanged as the Kafka
 //     message value. Consumers read metadata from the ce-* headers.
 type Event struct {
@@ -118,13 +119,29 @@ func (e *Event) Topic() string {
 	return AppTopic(e.Source)
 }
 
-// PartitionKey returns the Kafka partition key for this event.
+// PartitionKey returns the Kafka partition key for this event, resolved
+// through a fallback chain:
 //
-// Default: TenantID — preserves per-tenant FIFO ordering under a sticky-key
-// partitioner.
+//  1. SystemEvent: "system:" + EventType. Gives platform-level, tenant-less
+//     events a deterministic key of their own.
+//  2. TenantID, when set — preserves per-tenant FIFO ordering under a
+//     sticky-key partitioner.
+//  3. Subject, when set — the aggregate id. Preserves PER-AGGREGATE ordering
+//     for a single-tenant service, which is the ordering guarantee that
+//     actually matters once there is no tenant to order by.
+//  4. EventID — no ordering guarantee at all, but it spreads.
 //
-// When SystemEvent is true: "system:" + EventType. Gives tenant-less events
-// a deterministic key so they still partition cleanly.
+// Steps 3 and 4 exist because of the topic collapse. franz-go's sticky-key
+// partitioner branches on record.Key != nil, and []byte("") is NOT nil: an
+// empty key takes the murmur2 path on a constant and lands every record on
+// ONE partition. In v2 a single-tenant service's traffic was spread across
+// per-event topics, so the empty key was harmless; in v3 it is one topic per
+// application, so it would pin the entire application stream to one partition.
+//
+// Ordering consequence, stated plainly: multi-tenant services keep per-tenant
+// order; single-tenant services keep per-aggregate order via Subject; events
+// with neither a tenant nor a subject have NO ordering guarantee and are
+// spread by EventID.
 //
 // Operators may override this per-Emitter via WithPartitionKey. This method
 // returns the struct-level default only.
@@ -137,7 +154,15 @@ func (e *Event) PartitionKey() string {
 		return "system:" + e.EventType
 	}
 
-	return e.TenantID
+	if e.TenantID != "" {
+		return e.TenantID
+	}
+
+	if e.Subject != "" {
+		return e.Subject
+	}
+
+	return e.EventID
 }
 
 // ApplyDefaults MUTATES the receiver in place, filling zero-valued optional

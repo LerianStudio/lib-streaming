@@ -127,16 +127,30 @@ func TestUnchanged_OutboxEnvelopeCarriesAppTopicDestination(t *testing.T) {
 	}
 }
 
-// TestUnchanged_PartitionKeyRules pins tenant-keyed partitioning. The topic
-// collapse concentrates far more traffic on one topic, which makes the
-// partition key the ONLY thing preserving per-tenant FIFO ordering — so this
-// invariant matters more in v3 than it did in v2, not less.
-func TestUnchanged_PartitionKeyRules(t *testing.T) {
+// TestChanged_PartitionKeyFallbackChain pins the v3 partition-key chain:
+// TenantID, else Subject, else EventID; system events keep "system:"+EventType.
+//
+// The topic collapse concentrates far more traffic on one topic, so the
+// partition key is the ONLY thing left spreading it. Returning the empty
+// TenantID for a single-tenant service pinned that whole stream to one
+// partition — franz-go's sticky-key partitioner branches on key != nil, and
+// []byte("") is not nil, so it took the murmur2 path on a constant.
+func TestChanged_PartitionKeyFallbackChain(t *testing.T) {
 	t.Parallel()
 
-	business := Event{TenantID: "t-abc", ResourceType: "transaction", EventType: "created"}
+	business := Event{TenantID: "t-abc", ResourceType: "transaction", EventType: "created", Subject: "agg-1"}
 	if got := business.PartitionKey(); got != "t-abc" {
 		t.Errorf("business PartitionKey() = %q; want the tenant id", got)
+	}
+
+	singleTenant := Event{ResourceType: "transaction", EventType: "created", Subject: "agg-1", EventID: "evt-1"}
+	if got := singleTenant.PartitionKey(); got != "agg-1" {
+		t.Errorf("tenant-less PartitionKey() = %q; want the subject (per-aggregate ordering)", got)
+	}
+
+	subjectless := Event{ResourceType: "transaction", EventType: "created", EventID: "evt-1"}
+	if got := subjectless.PartitionKey(); got != "evt-1" {
+		t.Errorf("tenant-less subject-less PartitionKey() = %q; want the event id (spread, no ordering)", got)
 	}
 
 	system := Event{TenantID: "ignored", EventType: "reaper_pass", SystemEvent: true}

@@ -161,7 +161,6 @@ pair moves to the document level, where a one-topic-per-app fact belongs.
   `EventType`, which never appears on the wire.
 - `OutboxEnvelope` shape — no field added, removed, or retyped. (The version
   constant still bumps; see below.)
-- `PartitionKey` = `TenantID`, or `"system:" + EventType` for system events.
 - Tenant identity travels only in `ce-tenantid`, never in topology; the
   `containsTenantTopologyToken` guards on routes, destinations, and attributes
   are intact.
