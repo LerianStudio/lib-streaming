@@ -99,7 +99,7 @@ func NewProducerMulti(
 		return nil, err
 	}
 
-	if err := validateRoutesAgainstTargets(ctx, logger, routes, targets, resolvedOpts.catalog); err != nil {
+	if err := validateRoutesAgainstTargets(ctx, logger, routes, targets, resolvedOpts.catalog, mpc.Source); err != nil {
 		return nil, err
 	}
 
@@ -260,12 +260,15 @@ func NewProducerMulti(
 //
 // Each branch fires under a distinct operation label so dashboards can
 // distinguish "unknown target", "unknown definition", "kind mismatch",
-// and "orphan definition" without parsing wrapped sentinels.
-func validateRoutesAgainstTargets(ctx context.Context, logger log.Logger, routes contract.RouteTable, targets []TargetSpec, catalog contract.Catalog) error {
+// "commands queue named by hand", and "orphan definition" without parsing
+// wrapped sentinels.
+func validateRoutesAgainstTargets(ctx context.Context, logger log.Logger, routes contract.RouteTable, targets []TargetSpec, catalog contract.Catalog, source string) error {
 	targetByName := make(map[string]contract.TransportKind, len(targets))
 	for _, spec := range targets {
 		targetByName[spec.Name] = spec.Kind
 	}
+
+	commandsTopic := contract.AppCommandsTopic(source)
 
 	for _, route := range routes.Definitions() {
 		kind, ok := targetByName[route.Target]
@@ -290,6 +293,38 @@ func validateRoutesAgainstTargets(ctx context.Context, logger log.Logger, routes
 
 			return fmt.Errorf("%w: route %q destination kind %q does not match target %q transport %q",
 				contract.ErrInvalidRouteDefinition, route.Key, route.Destination.Kind, route.Target, kind)
+		}
+
+		// The commands queue is reachable exactly ONE way: Class:
+		// ClassCommand on the event definition. A route that names it by hand
+		// is always the wrong instrument, whichever class it carries:
+		//
+		//   - A COMMAND routed there never reaches commandRoute's rewrite
+		//     (that only moves a destination equal to AppTopic), so its DLQ is
+		//     derived as "<app>.commands.dlq" — the fourth topic name the
+		//     design forbids: nothing provisions it and no ACL grants it, so
+		//     the quarantine copy of a failed command publish silently never
+		//     exists and the evidence of a lost command is lost too.
+		//   - A FACT routed there lands on the strict queue, where an
+		//     unmatched key is quarantined rather than skipped. A fact stream
+		//     is a firehose a consumer legitimately ignores most of; putting
+		//     one on the commands queue turns ordinary disinterest into
+		//     manufactured poison messages.
+		//
+		// Both are silent at emit time and only visible in production, so the
+		// refusal belongs here, at construction, where the caller still has a
+		// stack trace and a startup log.
+		if names, field := destinationNamesCommandsTopic(route, commandsTopic); names {
+			a := newAsserterForLogger(logger, "producer_multi.validate_routes_commands_topic_named")
+			_ = a.That(ctx, false, "route must not name the application commands queue directly",
+				"route_key", route.Key,
+				"target", route.Target,
+				"field", field,
+			)
+
+			return fmt.Errorf(
+				"%w: route %q %s names the commands queue %q directly; set Class: ClassCommand on the event definition instead — the producer moves command traffic onto that queue itself and pins the failed-publish DLQ to %q",
+				contract.ErrInvalidRouteDefinition, route.Key, field, commandsTopic, contract.AppDLQTopic(source))
 		}
 
 		// A catch-all route (empty DefinitionKey) serves every definition, so
@@ -353,6 +388,25 @@ func validateRoutesAgainstTargets(ctx context.Context, logger log.Logger, routes
 	}
 
 	return nil
+}
+
+// destinationNamesCommandsTopic reports whether a route points either of its
+// Kafka-like destinations — the publish target or the explicit DLQ — at the
+// application's commands queue, and which field did it.
+//
+// Non-Kafka destinations are ignored: the commands split is a Kafka topic
+// convention, and an SQS queue that happens to share the string is a different
+// namespace entirely.
+func destinationNamesCommandsTopic(route contract.RouteDefinition, commandsTopic string) (bool, string) {
+	if route.Destination.Kind == contract.TransportKafkaLike && route.Destination.Name == commandsTopic {
+		return true, "destination"
+	}
+
+	if route.DLQ != nil && route.DLQ.Kind == contract.TransportKafkaLike && route.DLQ.Name == commandsTopic {
+		return true, "DLQ"
+	}
+
+	return false, ""
 }
 
 // buildCBConfigFromMulti maps the MultiProducerConfig knobs onto the same

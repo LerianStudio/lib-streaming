@@ -416,6 +416,14 @@
 // dashboards on both sides. The strictness is therefore NOT configurable;
 // UnmatchedPolicy governs fact streams only.
 //
+// The class on the definition is the ONLY way onto the commands queue. A route
+// that names "lerian.streaming.<app>.commands" — as a destination or as an
+// explicit DLQ — is refused by Build with ErrInvalidRouteDefinition. A command
+// arriving there by route bypasses the redirect that pins its DLQ, so its
+// failed-publish quarantine is derived as the ".commands.dlq" that deliberately
+// does not exist and never lands; a fact arriving there sits on the strict
+// queue, where consumers quarantine keys they were always entitled to ignore.
+//
 // # Kafka ACLs: an application writes only its own names
 //
 // An application WRITES only its own names — its topic, its commands queue if it

@@ -319,8 +319,17 @@ The route table is untouched. The synthesized catch-all route, and any
 commands queue — on the direct path, on the outbox fallback, and on the
 transactional `EmitBatch` path, so a replayed command lands on the same queue a
 direct emit would have used. An explicit `KafkaTopic(...)` pointed somewhere on
-purpose is never rewritten. The durability gate (every definition needs at least
-one required route) and the DLQ size rules apply to commands identically.
+purpose is never rewritten — with ONE exception: a route may not name the
+commands queue itself. `Build` REFUSES a Kafka route whose destination (or
+explicit DLQ) is `lerian.streaming.<app>.commands` and returns
+`ErrInvalidRouteDefinition` naming `Class: ClassCommand` as the instrument to
+use instead. Routing there by hand is silently wrong either way: a command that
+arrives by route skips the redirect, so its failed-publish DLQ is derived as the
+`.commands.dlq` that deliberately does not exist and the quarantine copy never
+lands; a fact that arrives by route sits on the strict queue, where consumers
+quarantine every key they were always entitled to ignore. The durability gate
+(every definition needs at least one required route) and the DLQ size rules
+apply to commands identically.
 
 **Consumer.** `Commands("lender")` subscribes `lerian.streaming.lender.commands`,
 adds `lender` to the ce-source allowlist exactly as `Apps` would, and marks that

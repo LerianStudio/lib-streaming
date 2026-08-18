@@ -4,6 +4,7 @@ package streaming_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -88,20 +89,18 @@ func TestBuilder_WarnsOnKafkaDestinationOutsideAppTopicNames(t *testing.T) {
 	}
 }
 
-// TestBuilder_SilentOnItsOwnTopicNames pins the other half: the three names
-// inside the ACL grant — the app topic, its commands queue, and its DLQ —
-// produce no warning at all, so the signal stays worth reading.
+// TestBuilder_SilentOnItsOwnTopicNames pins the other half: the names inside
+// the ACL grant a caller may legitimately route to — the app topic and its DLQ
+// — produce no warning at all, so the signal stays worth reading.
+//
+// The third name in the grant, the commands queue, is NOT here: a route may
+// not name it at all. See TestBuilder_RefusesARouteNamingItsCommandsQueue.
 func TestBuilder_SilentOnItsOwnTopicNames(t *testing.T) {
 	t.Parallel()
 
 	appTopic, err := streaming.AppTopic("builder-test")
 	if err != nil {
 		t.Fatalf("AppTopic() error = %v", err)
-	}
-
-	commandsTopic, err := streaming.AppCommandsTopic("builder-test")
-	if err != nil {
-		t.Fatalf("AppCommandsTopic() error = %v", err)
 	}
 
 	dlqTopic, err := streaming.AppDLQTopic("builder-test")
@@ -111,7 +110,7 @@ func TestBuilder_SilentOnItsOwnTopicNames(t *testing.T) {
 
 	// One build per name: two catch-all routes to one target would be
 	// rejected as a duplicate before the warning logic ever ran.
-	for _, topic := range []string{appTopic, commandsTopic, dlqTopic} {
+	for _, topic := range []string{appTopic, dlqTopic} {
 		t.Run(topic, func(t *testing.T) {
 			t.Parallel()
 
@@ -135,5 +134,45 @@ func TestBuilder_SilentOnItsOwnTopicNames(t *testing.T) {
 				t.Fatalf("off-topic warnings = %d; want 0 for %q, one of this application's own names", got, topic)
 			}
 		})
+	}
+}
+
+// TestBuilder_RefusesARouteNamingItsCommandsQueue pins the public half of the
+// construction guard: the commands queue is reachable ONLY through
+// Class: ClassCommand on an event definition, never by naming it in a route.
+//
+// A warning would not do here, unlike an off-topic route. Naming the queue by
+// hand is not a legitimate-but-unusual choice: a command routed there derives
+// a ".commands.dlq" nothing provisions, so its failed-publish quarantine copy
+// silently never lands; a fact routed there gets quarantined by consumers for
+// keys they were always entitled to ignore. Both are invisible until
+// production, so Build refuses instead of logging.
+func TestBuilder_RefusesARouteNamingItsCommandsQueue(t *testing.T) {
+	t.Parallel()
+
+	commandsTopic, err := streaming.AppCommandsTopic("builder-test")
+	if err != nil {
+		t.Fatalf("AppCommandsTopic() error = %v", err)
+	}
+
+	target, _ := builderKfakeTarget(t)
+
+	emitter, err := streaming.NewBuilder().
+		Source("builder-test").
+		Catalog(builderCatalog(t)).
+		Routes(builderRoute(commandsTopic)).
+		Target(target).
+		Logger(log.NewNop()).
+		Build(context.Background())
+	if emitter != nil {
+		t.Cleanup(func() { _ = emitter.Close() })
+	}
+
+	if !errors.Is(err, streaming.ErrInvalidRouteDefinition) {
+		t.Fatalf("Build() error = %v; want ErrInvalidRouteDefinition", err)
+	}
+
+	if !strings.Contains(err.Error(), "ClassCommand") {
+		t.Errorf("error %q does not tell the caller to use Class: ClassCommand instead", err)
 	}
 }
