@@ -65,6 +65,8 @@ func (l *warnSpyLogger) offTopicWarnings() int {
 // surfaces at publish time as an authorization error that reads like a broker
 // fault. So: warn, never fail.
 func TestBuilder_WarnsOnKafkaDestinationOutsideAppTopicPair(t *testing.T) {
+	t.Parallel()
+
 	target, _ := builderKfakeTarget(t)
 	spy := newWarnSpy()
 
@@ -90,6 +92,8 @@ func TestBuilder_WarnsOnKafkaDestinationOutsideAppTopicPair(t *testing.T) {
 // the ACL grant — the app topic and its DLQ — produce no warning at all, so the
 // signal stays worth reading.
 func TestBuilder_SilentOnAppTopicPair(t *testing.T) {
+	t.Parallel()
+
 	target, _ := builderKfakeTarget(t)
 	spy := newWarnSpy()
 

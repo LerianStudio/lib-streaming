@@ -69,6 +69,8 @@ func TestPublisherDescriptor_RejectsInvalidShape(t *testing.T) {
 // the Producer's UUIDv7 producerID to the returned descriptor and that the
 // descriptor validates cleanly.
 func TestProducer_Descriptor_PopulatesProducerID(t *testing.T) {
+	t.Parallel()
+
 	cfg, _ := kfakeConfig(t)
 
 	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
@@ -110,6 +112,8 @@ func TestProducer_Descriptor_PopulatesProducerID(t *testing.T) {
 // topic the producer never publishes to, and the Hub would subscribe to an
 // empty topic forever while both sides report healthy.
 func TestProducer_Descriptor_StampsProducerSource(t *testing.T) {
+	t.Parallel()
+
 	cfg, _ := kfakeConfig(t)
 
 	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))

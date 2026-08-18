@@ -48,22 +48,27 @@ func TestAppTopic_RejectsMalformedSource(t *testing.T) {
 	cases := []struct {
 		name   string
 		source string
+		want   error
 	}{
-		{"empty", ""},
-		{"v2 uri shape", "//lerian.midaz/tx"},
-		{"capitalized", "Lender"},
-		{"dotted namespace", "lerian.midaz"},
-		{"leading hyphen", "-lender"},
-		{"over the byte bound", strings.Repeat("a", 229)},
+		{"empty", "", streaming.ErrMissingSource},
+		{"v2 uri shape", "//lerian.midaz/tx", streaming.ErrInvalidSource},
+		{"capitalized", "Lender", streaming.ErrInvalidSource},
+		{"dotted namespace", "lerian.midaz", streaming.ErrInvalidSource},
+		{"leading hyphen", "-lender", streaming.ErrInvalidSource},
+		{"over the byte bound", strings.Repeat("a", 229), streaming.ErrInvalidSource},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
+			// The sentinel, not merely "an error": a caller branches on
+			// ErrMissingSource ("nothing configured") vs ErrInvalidSource
+			// ("configured wrong") to say something useful at startup, and
+			// asserting err != nil would let the two swap places unnoticed.
 			topic, err := streaming.AppTopic(tc.source)
-			if err == nil {
-				t.Fatalf("AppTopic(%q) = %q, nil; want an error", tc.source, topic)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("AppTopic(%q) error = %v; want %v", tc.source, err, tc.want)
 			}
 
 			if topic != "" {
@@ -71,8 +76,12 @@ func TestAppTopic_RejectsMalformedSource(t *testing.T) {
 			}
 
 			dlq, err := streaming.AppDLQTopic(tc.source)
-			if err == nil {
-				t.Fatalf("AppDLQTopic(%q) = %q, nil; want an error", tc.source, dlq)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("AppDLQTopic(%q) error = %v; want %v", tc.source, err, tc.want)
+			}
+
+			if dlq != "" {
+				t.Errorf("AppDLQTopic(%q) returned %q alongside its error; want the empty string", tc.source, dlq)
 			}
 		})
 	}

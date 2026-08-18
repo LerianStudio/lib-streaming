@@ -549,13 +549,9 @@ func (b *Builder) buildMulti(ctx context.Context, routeTable RouteTable) (Emitte
 		return nil, fmt.Errorf("%w: catalog is empty", ErrInvalidEventDefinition)
 	}
 
-	// Strict ce-source validation, same gate as LoadConfig and preflight:
-	// the source IS this application's topic, so a malformed one fails
-	// Build rather than being rewritten into a topic nobody expects.
-	if err := contract.ValidateSource(b.source); err != nil {
-		return nil, err
-	}
-
+	// The ce-source gate lives in producer.NewProducerMulti, which this
+	// function always reaches. Duplicating it here validated the same string
+	// twice and left two places to keep in step.
 	if len(b.targets) == 0 {
 		return nil, ErrMissingTarget
 	}

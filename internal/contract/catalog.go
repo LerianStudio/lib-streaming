@@ -59,7 +59,10 @@ func NewCatalog(definitions ...EventDefinition) (Catalog, error) {
 			return Catalog{}, fmt.Errorf("%w: key %q", ErrDuplicateEventDefinition, definition.Key)
 		}
 
-		contractKey := definition.ResourceType + "." + definition.EventType + "." + definition.SchemaVersion
+		// EventKey owns the "<resourceType>.<eventType>" composition; the schema
+		// version is appended because two majors of one event key are legal and
+		// must not collide as duplicate contracts.
+		contractKey := EventKey(definition.ResourceType, definition.EventType) + "." + definition.SchemaVersion
 		if existingKey, exists := byContract[contractKey]; exists {
 			a := newContractAsserter("catalog.new")
 			_ = a.That(context.Background(), false, "catalog must not contain duplicate (ResourceType, EventType, SchemaVersion) tuples",

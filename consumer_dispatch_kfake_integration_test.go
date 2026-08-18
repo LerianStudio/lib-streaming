@@ -82,12 +82,36 @@ func literalCEHeaders(source string) []kgo.RecordHeader {
 // until stop closes. A steady trickle removes kfake's non-deterministic
 // fresh-group join latency as a flake source: whenever the group stabilizes, a
 // record is waiting at or after the cursor.
-func keepProducingLiteral(t *testing.T, cluster *kfake.Cluster, source string, payload []byte, stop <-chan struct{}, wg *sync.WaitGroup) {
+//
+// It returns a reporter for the FIRST produce failure, valid once the caller
+// has closed stop and waited on wg (cl.Close flushes, so every callback has
+// fired by then). Discarding produce errors made a broker that never accepted a
+// single record surface as "handler never ran" — a consumer bug for a fixture
+// fault, in the one test whose whole job is to tell those apart.
+func keepProducingLiteral(t *testing.T, cluster *kfake.Cluster, source string, payload []byte, stop <-chan struct{}, wg *sync.WaitGroup) func() error {
 	t.Helper()
 
 	cl, err := kgo.NewClient(kgo.SeedBrokers(cluster.ListenAddrs()...))
 	if err != nil {
 		t.Fatalf("producer client init err = %v", err)
+	}
+
+	var (
+		mu       sync.Mutex
+		firstErr error
+	)
+
+	onProduce := func(_ *kgo.Record, err error) {
+		if err == nil {
+			return
+		}
+
+		mu.Lock()
+		defer mu.Unlock()
+
+		if firstErr == nil {
+			firstErr = err
+		}
 	}
 
 	wg.Go(func() {
@@ -102,7 +126,7 @@ func keepProducingLiteral(t *testing.T, cluster *kfake.Cluster, source string, p
 				Key:     []byte("tenant-abc"),
 				Headers: literalCEHeaders(source),
 				Value:   payload,
-			}, nil)
+			}, onProduce)
 
 			select {
 			case <-stop:
@@ -111,6 +135,13 @@ func keepProducingLiteral(t *testing.T, cluster *kfake.Cluster, source string, p
 			}
 		}
 	})
+
+	return func() error {
+		mu.Lock()
+		defer mu.Unlock()
+
+		return firstErr
+	}
 }
 
 // TestIntegration_ConsumerDispatchKfakeRoundTrip produces a record
@@ -159,7 +190,7 @@ func TestIntegration_ConsumerDispatchKfakeRoundTrip(t *testing.T) {
 
 	var producers sync.WaitGroup
 
-	keepProducingLiteral(t, cluster, dispatchApp, payload, stop, &producers)
+	produceErr := keepProducingLiteral(t, cluster, dispatchApp, payload, stop, &producers)
 
 	runDone := make(chan error, 1)
 
@@ -172,6 +203,10 @@ func TestIntegration_ConsumerDispatchKfakeRoundTrip(t *testing.T) {
 		producers.Wait()
 		cancel()
 		_ = consumer.Close()
+
+		if err := produceErr(); err != nil {
+			t.Fatalf("no record was ever produced: %v", err)
+		}
 
 		t.Fatal("handler never ran: a literal-header record on the app topic was not dispatched by event key")
 	}
@@ -188,6 +223,10 @@ func TestIntegration_ConsumerDispatchKfakeRoundTrip(t *testing.T) {
 	close(stop)
 	producers.Wait()
 	cancel()
+
+	if err := produceErr(); err != nil {
+		t.Errorf("produce failed: %v", err)
+	}
 
 	if err := consumer.Close(); err != nil {
 		t.Errorf("Close() = %v; want nil", err)
@@ -286,7 +325,7 @@ func TestIntegration_ConsumerDispatchForeignSourceQuarantines(t *testing.T) {
 	var producers sync.WaitGroup
 
 	// "matcher" is a legal source — just not one this consumer subscribed to.
-	keepProducingLiteral(t, cluster, "matcher", []byte(`{"foreign":true}`), stop, &producers)
+	produceErr := keepProducingLiteral(t, cluster, "matcher", []byte(`{"foreign":true}`), stop, &producers)
 
 	runDone := make(chan error, 1)
 
@@ -297,6 +336,10 @@ func TestIntegration_ConsumerDispatchForeignSourceQuarantines(t *testing.T) {
 	close(stop)
 	producers.Wait()
 	cancel()
+
+	if err := produceErr(); err != nil {
+		t.Errorf("produce failed: %v", err)
+	}
 
 	_ = consumer.Close()
 	<-runDone
