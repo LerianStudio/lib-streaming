@@ -1071,6 +1071,24 @@ func (c *consumerRuntime) classify(err error, source errSource) disposition {
 		return dispositionDLQ
 
 	case sourceHandler:
+		// STRUCTURAL LIBRARY VERDICTS BYPASS THE CLASSIFIER. ErrUnhandledEvent
+		// and ErrUnexpectedSource are synthesized by THIS library, not by the
+		// service: no handler is registered for the key, or the record came
+		// from a source this consumer refuses. Neither can ever become
+		// satisfiable by waiting, so neither is reclassifiable — exactly like a
+		// codec fault, which is why they short-circuit in the same place.
+		//
+		// Handing them to the service Classifier was a wedge waiting to happen.
+		// The common classifier shape is "retry anything that is not my own
+		// business rule", which turns a never-satisfiable verdict into a
+		// transient: retried to exhaustion, seeked back, partition halted,
+		// redelivered, forever — and under one topic per app that is the
+		// producing application's ENTIRE catalog stuck behind one record, with
+		// nothing reaching the DLQ where an operator would have seen it.
+		if errors.Is(err, ErrUnhandledEvent) || errors.Is(err, ErrUnexpectedSource) {
+			return dispositionDLQ
+		}
+
 		// Handler-return error: FAIL-CLOSED. The optional Classifier RECLASSIFIES
 		// a known downstream-transient (Midaz/Postgres down) BACK to retry; the
 		// DEFAULT (no Classifier, or it returns false / does not recognize the
