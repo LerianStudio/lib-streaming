@@ -347,20 +347,26 @@ READ to the services it commands, and add `Commands(...)` (or
 must now be at most 223 bytes, down from 228, because `.commands` is the longest
 suffix a source has to leave room for.
 
-### BREAKING: manifest 2.1.0
+### BREAKING: manifest 1.0.0
 
 `ManifestEvent.topic` is REMOVED and replaced by `eventKey`
-(`"<resourceType>.<eventType>"`). The application's single `topic` / `dlqTopic`
-pair moves to the document level, where a one-topic-per-app fact belongs.
-`PublisherDescriptor.SourceBase` is renamed `Source` (JSON `sourceBase` →
-`source`) and is now validated by `ValidateSource` rather than merely trimmed.
+(`"<resourceType>.<eventType>"`). The application's `topic` / `dlqTopic` pair
+moves to the document level, where a one-topic-per-app fact belongs, joined by
+`commandsTopic` — present ONLY when the catalog holds at least one command, so
+its presence is the manifest's answer to "does this application command
+anyone?" and a fact-only producer never points provisioning at a topic it will
+not write. There is no `commandsDlqTopic`. Every event names its `class`
+(`"fact"` or `"command"`), always present so a reader can tell "emits only
+facts" from "predates the field". `PublisherDescriptor.SourceBase` is renamed
+`Source` (JSON `sourceBase` → `source`) and is now validated by
+`ValidateSource` rather than merely trimmed.
 
-2.1.0 adds, additively: a per-event `class` (`"fact"` or `"command"`, always
-present so a reader can tell "emits only facts" from "predates the field"), and
-a document-level `commandsTopic` present ONLY when the catalog holds at least
-one command — its presence is the manifest's answer to "does this application
-command anyone?", so a fact-only producer never points provisioning at a topic
-it will not write. There is no `commandsDlqTopic`.
+The wire version is `1.0.0`, not `2.x`: the platform is greenfield, so this
+document IS the first shipped manifest contract. The pre-v3 shape (per-event
+topics, `sourceBase`) never reached production, so labeling it `2.0.0` implied
+a migration that never existed. For the same reason the commands fields ship
+IN `1.0.0` rather than as a `1.1.0` bump — no manifest without them exists to
+be additive against. Consumers discriminate by structure, never by this string.
 
 ### Fixed: `WithPartitionKey` can no longer collapse the stream
 

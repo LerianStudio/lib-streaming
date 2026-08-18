@@ -229,7 +229,7 @@ func TestStreamingHandler_GoldenManifestJSON(t *testing.T) {
 	}
 }
 
-// TestStreamingHandler_GoldenManifestJSONWithCommand pins the 2.1.0 additions
+// TestStreamingHandler_GoldenManifestJSONWithCommand pins the commands fields
 // as LITERALS on a catalog that mixes a fact with a command — the shape the
 // consignado rail actually publishes.
 //

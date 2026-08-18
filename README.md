@@ -487,7 +487,7 @@ doc, err := streaming.BuildManifest(descriptor, catalog, routeTable)
 // pass an empty RouteTable for a catalog-only document.
 ```
 
-The manifest version is exposed as `streaming.ManifestVersion` (currently `2.1.0`). Routes are deterministically ordered (definition key, then route key) so the JSON document is byte-stable across builds.
+The manifest version is exposed as `streaming.ManifestVersion` (currently `1.0.0` — the platform is greenfield, so this document is the first shipped manifest contract and consumers discriminate by structure, never by this string). Routes are deterministically ordered (definition key, then route key) so the JSON document is byte-stable across builds.
 
 The document advertises the application's `topic` and `dlqTopic`, and — only when the catalog holds at least one `ClassCommand` definition — its `commandsTopic`. Its presence is the manifest's answer to "does this application command anyone?", so a fact-only producer never points provisioning or ACL tooling at a topic it will not write. There is no `commandsDlqTopic`. Every event carries a `class` of `"fact"` or `"command"`, always present so a reader can tell "emits only facts" from "predates the field".
 
