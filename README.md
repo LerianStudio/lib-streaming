@@ -325,7 +325,13 @@ streaming.EventDefinition{
 The route table is untouched — a catch-all route to `AppTopic(source)` still
 serves the whole catalog, and the producer redirects command-class definitions
 at dispatch. An explicit `KafkaTopic(...)` you pointed somewhere on purpose is
-never rewritten. The wire record is byte-identical either way: **no `ce-*`
+never rewritten — with one exception: you may not point one at
+`lerian.streaming.<source>.commands` itself. `Build` refuses that route with
+`ErrInvalidRouteDefinition`, because a command reaching the queue by route
+skips the DLQ pin and derives the `.commands.dlq` that deliberately does not
+exist, and a fact reaching it by route lands on the strict queue where
+consumers quarantine keys they were entitled to ignore. The class on the
+definition is the only door. The wire record is byte-identical either way: **no `ce-*`
 header carries the class**, because the queue *is* the class — which makes it a
 subscription-time, ACL-visible fact rather than a runtime string every consumer
 has to trust.
