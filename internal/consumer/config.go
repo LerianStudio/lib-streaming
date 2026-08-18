@@ -55,12 +55,20 @@ var (
 	ErrHandlerAndDispatchBothSet = errors.New(
 		"streaming consumer: Handler(...) and On(...) are mutually exclusive — use On for per-event dispatch, Handler for the raw stream")
 
-	// ErrHandlerAndExpectSourcesBothSet is returned when a whole-stream
-	// Handler is combined with ExpectSources. Source verification is enforced
-	// by the dispatcher; a raw Handler sees every record regardless, so the
-	// allowlist would be silently inert.
-	ErrHandlerAndExpectSourcesBothSet = errors.New(
-		"streaming consumer: ExpectSources(...) applies to On(...) dispatch only — a whole-stream Handler(...) must verify ce-source itself")
+	// ErrBareOnWithMultipleApps is returned when a consumer subscribed to more
+	// than one producing application registers a handler with a bare
+	// On(eventKey, ...). With two producers in scope the key alone does not say
+	// whose event it is — and two apps publishing the same event name is the
+	// normal case, not a corner one. Binding to whichever record arrived would
+	// hand one app's payload to the other app's handler, silently.
+	ErrBareOnWithMultipleApps = errors.New(
+		"streaming consumer: On(...) is ambiguous when the consumer subscribes to more than one producing application — register with OnFrom(app, eventKey, handler)")
+
+	// ErrUnknownDispatchApp is returned when OnFrom names an application the
+	// consumer does not accept. That handler could never receive a record, so
+	// it is a wiring mistake, not a filter.
+	ErrUnknownDispatchApp = errors.New(
+		"streaming consumer: OnFrom(...) names an application this consumer does not subscribe to — no record could ever reach that handler")
 
 	// ErrHandlerAndUnmatchedPolicyBothSet is returned when a whole-stream
 	// Handler is combined with UnmatchedPolicy. The policy decides what the
@@ -146,17 +154,23 @@ type ConsumerConfig struct {
 	// producer could legally publish under would otherwise subscribe to a
 	// topic that stays empty forever while the consumer reports healthy.
 	Apps []string
-	// ExpectSources declares the ce-source allowlist explicitly, for the shapes
-	// Apps alone cannot express. STREAMING_CONSUMER_EXPECT_SOURCES (csv).
+	// ExpectSources is the RESOLVED ce-source allowlist the runtime verifies
+	// every record against, before either handler mode is invoked. An empty
+	// list means verification is off (the raw Topics escape hatch, whose
+	// producers were never named).
 	//
-	// It REPLACES the allowlist Apps would have implied, must COVER every entry
-	// in Apps, and every entry is held to the same strict source contract the
+	// On the env surface (STREAMING_CONSUMER_EXPECT_SOURCES, csv) it declares
+	// the allowlist explicitly, for the shapes Apps alone cannot express: it
+	// REPLACES the allowlist Apps would have implied, must COVER every entry in
+	// Apps, and every entry is held to the same strict source contract the
 	// producer enforces. Its reason to exist: setting BOTH Apps and Topics
 	// without an explicit allowlist is a hard Build failure (neither defaulting
 	// to Apps — which quarantines the whole raw-topics stream — nor skipping the
 	// check is a defensible guess), and without this variable that shape had no
 	// env-only resolution at all.
 	//
+	// It applies in BOTH handler modes. A whole-stream Handler(...) needs it
+	// most: it sees every record on a topic whose write ACL it does not own.
 	// ConsumerBuilder.ExpectSources(...) called on the builder overrides it.
 	ExpectSources []string
 	// ClientID is the Kafka client.id for broker-side diagnostics.

@@ -30,6 +30,7 @@ func TestRouteDLQ_StampsTheCauseKindThatQuarantinedTheRecord(t *testing.T) {
 	tests := []struct {
 		name        string
 		handler     Handler
+		mutate      func(*ConsumerConfig)
 		headers     []kgo.RecordHeader
 		wantKind    string
 		wantCauseIs error
@@ -52,8 +53,8 @@ func TestRouteDLQ_StampsTheCauseKindThatQuarantinedTheRecord(t *testing.T) {
 		{
 			name: "source mismatch",
 			handler: NewDispatcher().
-				On("loan.created", func(context.Context, contract.Event, []byte) error { return nil }).
-				ExpectSources("some-other-app"),
+				On("loan.created", func(context.Context, contract.Event, []byte) error { return nil }),
+			mutate:      func(cfg *ConsumerConfig) { cfg.ExpectSources = []string{"some-other-app"} },
 			headers:     ceHeaders("tenantA", false),
 			wantKind:    dlqCauseSourceMismatch,
 			wantCauseIs: ErrUnexpectedSource,
@@ -74,7 +75,7 @@ func TestRouteDLQ_StampsTheCauseKindThatQuarantinedTheRecord(t *testing.T) {
 			t.Parallel()
 
 			dlq := &fakeDLQ{}
-			r := newTestRuntime(t, newFakeGroupClient(), tt.handler, dlq)
+			r := newTestRuntimeCfg(t, tt.mutate, newFakeGroupClient(), tt.handler, dlq)
 
 			r.processFetches(context.Background(), fetchOf("t", 0, rec("t", 0, 1, tt.headers)))
 

@@ -110,10 +110,13 @@ var (
 	// ErrHandlerAndDispatchBothSet is returned by ConsumerBuilder.Build when a
 	// consumer wires both Handler (whole-stream) and On (per-event dispatch).
 	ErrHandlerAndDispatchBothSet = consumer.ErrHandlerAndDispatchBothSet
-	// ErrHandlerAndExpectSourcesBothSet is returned by ConsumerBuilder.Build
-	// when a whole-stream Handler is combined with ExpectSources, which only
-	// the dispatcher enforces.
-	ErrHandlerAndExpectSourcesBothSet = consumer.ErrHandlerAndExpectSourcesBothSet
+	// ErrBareOnWithMultipleApps is returned by ConsumerBuilder.Build when a
+	// consumer subscribed to several producing applications registers a handler
+	// with a bare On(eventKey, ...) instead of OnFrom(app, eventKey, ...).
+	ErrBareOnWithMultipleApps = consumer.ErrBareOnWithMultipleApps
+	// ErrUnknownDispatchApp is returned by ConsumerBuilder.Build when
+	// OnFrom(...) names an application the consumer does not subscribe to.
+	ErrUnknownDispatchApp = consumer.ErrUnknownDispatchApp
 	// ErrHandlerAndUnmatchedPolicyBothSet is returned by ConsumerBuilder.Build
 	// when a whole-stream Handler is combined with UnmatchedPolicy, which only
 	// the dispatcher enforces.

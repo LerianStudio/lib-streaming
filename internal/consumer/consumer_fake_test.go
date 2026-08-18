@@ -392,6 +392,14 @@ func clientClosedFetch() kgo.Fetches {
 func newTestRuntime(t testingTB, client GroupClient, handler Handler, dlq dlqPublisher, opts ...Option) *consumerRuntime {
 	t.Helper()
 
+	return newTestRuntimeCfg(t, nil, client, handler, dlq, opts...)
+}
+
+// newTestRuntimeCfg is newTestRuntime with a hook to adjust the config — used by
+// the tests that drive config-carried behaviour such as the ce-source allowlist.
+func newTestRuntimeCfg(t testingTB, mutate func(*ConsumerConfig), client GroupClient, handler Handler, dlq dlqPublisher, opts ...Option) *consumerRuntime {
+	t.Helper()
+
 	cfg := ConsumerConfig{
 		Enabled:             true,
 		Brokers:             []string{"localhost:9092"},
@@ -404,6 +412,10 @@ func newTestRuntime(t testingTB, client GroupClient, handler Handler, dlq dlqPub
 		RetryInLoopMaxDwell: 10 * time.Millisecond,
 		HaltBackoff:         time.Millisecond,
 		CloseTimeout:        time.Second,
+	}
+
+	if mutate != nil {
+		mutate(&cfg)
 	}
 
 	all := append([]Option{WithDLQPublisher(dlq)}, opts...)

@@ -89,78 +89,6 @@ func TestDispatcher_UnmatchedErrorPolicy(t *testing.T) {
 	}
 }
 
-// TestDispatcher_VerifiesSource pins built-in source verification. Every
-// consumer repo hand-rolled this check; an event whose ce-source is not an
-// expected producer is a misconfiguration or a foreign write to the app
-// topic, and must never reach a business handler.
-func TestDispatcher_VerifiesSource(t *testing.T) {
-	t.Parallel()
-
-	d := NewDispatcher().
-		ExpectSources("lender").
-		On("loan.disbursed", func(context.Context, contract.Event, []byte) error {
-			t.Fatal("handler must not run for an unexpected ce-source")
-			return nil
-		})
-
-	err := d.Handle(context.Background(), dispatchEvent("matcher", "loan", "disbursed"), nil)
-	if !errors.Is(err, ErrUnexpectedSource) {
-		t.Fatalf("Handle() = %v; want ErrUnexpectedSource", err)
-	}
-
-	// The expected producer still dispatches normally.
-	ran := false
-	d2 := NewDispatcher().
-		ExpectSources("lender", "matcher").
-		On("loan.disbursed", func(context.Context, contract.Event, []byte) error {
-			ran = true
-			return nil
-		})
-
-	if err := d2.Handle(context.Background(), dispatchEvent("matcher", "loan", "disbursed"), nil); err != nil {
-		t.Fatalf("Handle() error = %v", err)
-	}
-
-	if !ran {
-		t.Error("handler did not run for an expected ce-source")
-	}
-}
-
-// TestDispatcher_NoExpectedSourcesAcceptsAny pins that verification is opt-in:
-// a dispatcher with no declared producers accepts every source, so the raw
-// .Topics() escape hatch is not forced into naming its producers.
-func TestDispatcher_NoExpectedSourcesAcceptsAny(t *testing.T) {
-	t.Parallel()
-
-	ran := false
-	d := NewDispatcher().On("loan.disbursed", func(context.Context, contract.Event, []byte) error {
-		ran = true
-		return nil
-	})
-
-	if err := d.Handle(context.Background(), dispatchEvent("whoever", "loan", "disbursed"), nil); err != nil {
-		t.Fatalf("Handle() error = %v", err)
-	}
-
-	if !ran {
-		t.Error("handler did not run; source verification must be opt-in")
-	}
-}
-
-// TestDispatcher_SourceCheckPrecedesDispatch pins ordering: an unexpected
-// source is rejected even when its event key IS registered, and even when the
-// unmatched policy would otherwise ignore it.
-func TestDispatcher_SourceCheckPrecedesDispatch(t *testing.T) {
-	t.Parallel()
-
-	d := NewDispatcher().ExpectSources("lender")
-
-	err := d.Handle(context.Background(), dispatchEvent("matcher", "anything", "at-all"), nil)
-	if !errors.Is(err, ErrUnexpectedSource) {
-		t.Fatalf("Handle() = %v; want ErrUnexpectedSource even with no matching handler", err)
-	}
-}
-
 // TestDispatcher_HandlerErrorPropagates pins that a business handler's error
 // reaches the runtime unchanged, so the Classifier / fail-closed machinery
 // still governs it.
@@ -319,4 +247,119 @@ func TestRuntime_WiresUnmatchedObservation(t *testing.T) {
 	// The wired callback must be safe to call with no metrics factory and no
 	// logger configured — observability is optional, never a panic source.
 	d.observeUnmatched(context.Background(), "audit.logged")
+}
+
+// TestDispatcher_BindResolvesBareRegistrationsToTheSoleApp pins the terse
+// single-producer case: a bare On(...) needs no app argument, and Bind attaches
+// it to the one application in scope.
+func TestDispatcher_BindResolvesBareRegistrationsToTheSoleApp(t *testing.T) {
+	t.Parallel()
+
+	ran := false
+	d := NewDispatcher().On("loan.disbursed", func(context.Context, contract.Event, []byte) error {
+		ran = true
+		return nil
+	})
+
+	if err := d.Bind("lender"); err != nil {
+		t.Fatalf("Bind(lender) = %v; want nil", err)
+	}
+
+	if err := d.Handle(context.Background(), dispatchEvent("lender", "loan", "disbursed"), nil); err != nil {
+		t.Fatalf("Handle() = %v; want nil", err)
+	}
+
+	if !ran {
+		t.Fatal("bare On did not bind to the sole app in scope")
+	}
+}
+
+// TestDispatcher_BindRejectsBareRegistrationsUnderSeveralApps pins the
+// ambiguity as a build failure.
+//
+// v3 put the producing app into ce-type precisely to stop same-named events
+// from two services colliding. A dispatch key that ignores the app throws that
+// away — and the real fleet has byte-identical vocabularies across apps, so
+// this is the common shape, not a corner one.
+func TestDispatcher_BindRejectsBareRegistrationsUnderSeveralApps(t *testing.T) {
+	t.Parallel()
+
+	d := NewDispatcher().On("loan.disbursed", func(context.Context, contract.Event, []byte) error { return nil })
+
+	err := d.Bind("lender", "matcher")
+	if !errors.Is(err, ErrBareOnWithMultipleApps) {
+		t.Fatalf("Bind(lender, matcher) = %v; want ErrBareOnWithMultipleApps", err)
+	}
+}
+
+// TestDispatcher_BindRejectsAnUnknownApp pins that a handler nothing can reach
+// is a wiring mistake. Left unchecked it is silent: the build passes, the
+// consumer reports Healthy, and the handler never fires.
+func TestDispatcher_BindRejectsAnUnknownApp(t *testing.T) {
+	t.Parallel()
+
+	d := NewDispatcher().OnFrom("matcher", "loan.disbursed", func(context.Context, contract.Event, []byte) error { return nil })
+
+	err := d.Bind("lender")
+	if !errors.Is(err, ErrUnknownDispatchApp) {
+		t.Fatalf("Bind(lender) = %v; want ErrUnknownDispatchApp", err)
+	}
+}
+
+// TestDispatcher_BindWithNoAppsLeavesBareRegistrationsWild pins the raw
+// Topics(...) path: with no allowlist there is nothing to bind against, so a
+// bare registration matches any producer rather than nothing at all.
+func TestDispatcher_BindWithNoAppsLeavesBareRegistrationsWild(t *testing.T) {
+	t.Parallel()
+
+	ran := false
+	d := NewDispatcher().On("loan.disbursed", func(context.Context, contract.Event, []byte) error {
+		ran = true
+		return nil
+	})
+
+	if err := d.Bind(); err != nil {
+		t.Fatalf("Bind() = %v; want nil", err)
+	}
+
+	if err := d.Handle(context.Background(), dispatchEvent("whoever", "loan", "disbursed"), nil); err != nil {
+		t.Fatalf("Handle() = %v; want nil", err)
+	}
+
+	if !ran {
+		t.Fatal("bare On did not stay a wildcard with no apps in scope")
+	}
+}
+
+// TestDispatcher_HomonymsFromTwoAppsRouteSeparately is the behaviour the app
+// segment buys: two services publishing the same event name reach two handlers,
+// each with its own payload shape.
+func TestDispatcher_HomonymsFromTwoAppsRouteSeparately(t *testing.T) {
+	t.Parallel()
+
+	got := ""
+
+	d := NewDispatcher().
+		OnFrom("lender", "loan.disbursed", func(context.Context, contract.Event, []byte) error { got = "lender"; return nil }).
+		OnFrom("matcher", "loan.disbursed", func(context.Context, contract.Event, []byte) error { got = "matcher"; return nil })
+
+	if err := d.Bind("lender", "matcher"); err != nil {
+		t.Fatalf("Bind() = %v; want nil", err)
+	}
+
+	if err := d.Handle(context.Background(), dispatchEvent("matcher", "loan", "disbursed"), nil); err != nil {
+		t.Fatalf("Handle() = %v; want nil", err)
+	}
+
+	if got != "matcher" {
+		t.Errorf("dispatched to %q; want matcher's own handler", got)
+	}
+
+	if err := d.Handle(context.Background(), dispatchEvent("lender", "loan", "disbursed"), nil); err != nil {
+		t.Fatalf("Handle() = %v; want nil", err)
+	}
+
+	if got != "lender" {
+		t.Errorf("dispatched to %q; want lender's own handler", got)
+	}
 }

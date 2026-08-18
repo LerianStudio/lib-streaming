@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -47,6 +48,18 @@ const (
 	// drifted behind the producer's catalog.
 	dlqCauseUnhandledKey = "unhandled_key"
 )
+
+// ErrUnexpectedSource is returned when a record's ce-source is not one of the
+// consumer's expected producers. It means either a producer misconfiguration or
+// a foreign write to a topic this consumer reads, so it quarantines rather than
+// dispatching.
+//
+// The check lives in the RUNTIME, ahead of the handler, not in the Dispatcher.
+// It used to be dispatch-only, which left a whole-stream Handler(...) — the
+// mode most exposed on a shared-ACL topic, since it sees every record — with no
+// verification at all, and made ExpectSources a build error in that mode with
+// no in-API opt-out for a fleet-wide env var.
+var ErrUnexpectedSource = errors.New("streaming consumer: event ce-source is not an expected producer")
 
 // quarantineCause carries WHY a record is going to the DLQ, from the gate that
 // decided it down to the publisher that stamps the forensic headers.
@@ -290,6 +303,19 @@ func (c *consumerRuntime) recordUnmatched(ctx context.Context, eventKey string) 
 	}
 
 	c.recordMetricWithLabels(ctx, metricUnmatchedTotal, map[string]string{"event_key": label})
+}
+
+// sourceAccepted reports whether source is one of the producing applications
+// this consumer accepts. An EMPTY allowlist accepts everything: verification
+// stays opt-in for the raw Topics(...) escape hatch, whose producers were never
+// named. Subscribing by Apps(...) fills the allowlist automatically, so the
+// ergonomic path gets verification for free.
+func (c *consumerRuntime) sourceAccepted(source string) bool {
+	if len(c.cfg.ExpectSources) == 0 {
+		return true
+	}
+
+	return slices.Contains(c.cfg.ExpectSources, source)
 }
 
 // unmatchedPolicy reports the dispatcher's unmatched policy for logging, or
@@ -575,6 +601,20 @@ func (c *consumerRuntime) handleRecord(ctx context.Context, rec *kgo.Record) (di
 		// Codec decode fault: malformed CloudEvent, can never parse, not
 		// reclassifiable -> always terminal -> DLQ.
 		return c.classify(err, sourceCodec), 0, quarantineCause{kind: dlqCauseCodec, err: err}
+	}
+
+	// Source verification, ahead of BOTH handler modes. A record whose
+	// ce-source is not an accepted producer is either a foreign write to a
+	// topic this consumer reads or an allowlist that drifted from what actually
+	// publishes there — never something to hand a business handler.
+	//
+	// It runs here rather than inside the Dispatcher so a whole-stream
+	// Handler(...) gets the same guarantee. That mode needs it MOST: it
+	// receives every record on a topic whose write ACL it does not control.
+	if !c.sourceAccepted(ev.Source) {
+		err := fmt.Errorf("%w: got %q, want one of %v", ErrUnexpectedSource, ev.Source, c.cfg.ExpectSources)
+
+		return dispositionDLQ, 0, quarantineCause{kind: dlqCauseSourceMismatch, err: err}
 	}
 
 	// Empty tenant is NOT a DLQ reason. Mirroring the producer (v1.6.2

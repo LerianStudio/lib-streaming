@@ -5,6 +5,8 @@ package streaming
 import (
 	"context"
 	"errors"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/LerianStudio/lib-streaming/v3/internal/consumer"
@@ -30,13 +32,35 @@ type rawStreamHandler struct{}
 
 func (rawStreamHandler) Handle(context.Context, Event, []byte) error { return nil }
 
+// newDispatchBuilder returns a builder with the required fields filled, so each
+// test states only the knob it is about.
+func newDispatchBuilder() *ConsumerBuilder {
+	return NewConsumer().Brokers("localhost:9092").Group("g").Source("test-consumer")
+}
+
+// resolveWithSources resolves the builder and returns the handler plus the
+// ce-source allowlist the RUNTIME will verify against.
+//
+// Source verification lives in the runtime now, not in the dispatcher, so the
+// allowlist — not a Handle call — is what a builder test can assert on.
+func resolveWithSources(t *testing.T, b *ConsumerBuilder) (Handler, []string) {
+	t.Helper()
+
+	handler, err := b.resolveHandler()
+	if err != nil {
+		t.Fatalf("resolveHandler() error = %v", err)
+	}
+
+	return handler, b.cfg.ExpectSources
+}
+
 // TestConsumerBuilder_AppsResolveSubscription pins subscribe-by-application on
 // the public surface: naming producers is enough, and the caller never spells
 // the "lerian.streaming." derivation.
 func TestConsumerBuilder_AppsResolveSubscription(t *testing.T) {
 	t.Parallel()
 
-	b := NewConsumer().Brokers("localhost:9092").Group("g").Source("test-consumer").Apps("lender", "matcher")
+	b := newDispatchBuilder().Apps("lender", "matcher")
 
 	got := b.cfg.ResolvedTopics()
 	if len(got) != 2 || got[0] != "lerian.streaming.lender" || got[1] != "lerian.streaming.matcher" {
@@ -53,25 +77,12 @@ func TestConsumerBuilder_AppsArmSourceVerification(t *testing.T) {
 
 	handlerFn, ran := trackingHandler()
 
-	b := NewConsumer().
-		Brokers("localhost:9092").
-		Group("g").
-		Source("test-consumer").
-		Apps("lender").
-		On("loan.disbursed", handlerFn)
+	b := newDispatchBuilder().Apps("lender").On("loan.disbursed", handlerFn)
 
-	handler, err := b.resolveHandler()
-	if err != nil {
-		t.Fatalf("resolveHandler() error = %v", err)
-	}
+	handler, sources := resolveWithSources(t, b)
 
-	foreign := Event{Source: "matcher", ResourceType: "loan", EventType: "disbursed"}
-	if err := handler.Handle(context.Background(), foreign, nil); !errors.Is(err, ErrUnexpectedSource) {
-		t.Fatalf("Handle(foreign source) = %v; want ErrUnexpectedSource", err)
-	}
-
-	if *ran {
-		t.Fatal("handler ran for a foreign ce-source; verification must reject before dispatch")
+	if !slices.Equal(sources, []string{"lender"}) {
+		t.Fatalf("expected sources = %v; want [lender] derived from Apps", sources)
 	}
 
 	own := Event{Source: "lender", ResourceType: "loan", EventType: "disbursed"}
@@ -90,39 +101,17 @@ func TestConsumerBuilder_AppsArmSourceVerification(t *testing.T) {
 func TestConsumerBuilder_ExplicitExpectSourcesReplacesAppsDefault(t *testing.T) {
 	t.Parallel()
 
-	handlerFn, ran := trackingHandler()
+	handlerFn, _ := trackingHandler()
 
-	b := NewConsumer().
-		Brokers("localhost:9092").
-		Group("g").
-		Source("test-consumer").
+	b := newDispatchBuilder().
 		Apps("lender").
 		ExpectSources("lender", "matcher").
-		On("loan.disbursed", handlerFn)
+		OnFrom("lender", "loan.disbursed", handlerFn)
 
-	handler, err := b.resolveHandler()
-	if err != nil {
-		t.Fatalf("resolveHandler() error = %v", err)
-	}
+	_, sources := resolveWithSources(t, b)
 
-	matcher := Event{Source: "matcher", ResourceType: "loan", EventType: "disbursed"}
-	if err := handler.Handle(context.Background(), matcher, nil); err != nil {
-		t.Fatalf("Handle(explicitly expected source) = %v; want nil", err)
-	}
-
-	if !*ran {
-		t.Fatal("handler did not run for an explicitly expected source")
-	}
-
-	*ran = false
-
-	stranger := Event{Source: "someone-else", ResourceType: "loan", EventType: "disbursed"}
-	if err := handler.Handle(context.Background(), stranger, nil); !errors.Is(err, ErrUnexpectedSource) {
-		t.Fatalf("Handle(unlisted source) = %v; want ErrUnexpectedSource", err)
-	}
-
-	if *ran {
-		t.Fatal("handler ran for a source outside the explicit allowlist")
+	if !slices.Equal(sources, []string{"lender", "matcher"}) {
+		t.Fatalf("expected sources = %v; want the explicit list verbatim", sources)
 	}
 }
 
@@ -136,10 +125,7 @@ func TestConsumerBuilder_ExpectSourcesMustCoverApps(t *testing.T) {
 
 	handlerFn, _ := trackingHandler()
 
-	_, err := NewConsumer().
-		Brokers("localhost:9092").
-		Group("g").
-		Source("test-consumer").
+	_, err := newDispatchBuilder().
 		Apps("lender").
 		ExpectSources("matcher").
 		On("loan.disbursed", handlerFn).
@@ -147,6 +133,39 @@ func TestConsumerBuilder_ExpectSourcesMustCoverApps(t *testing.T) {
 
 	if !errors.Is(err, ErrExpectSourcesMissingApp) {
 		t.Fatalf("resolveHandler() = %v; want ErrExpectSourcesMissingApp", err)
+	}
+}
+
+// TestConsumerBuilder_EnvExpectSourcesMissingAppNamesTheVariable pins the same
+// rule for the environment-supplied list, and pins that the failure NAMES
+// STREAMING_CONSUMER_EXPECT_SOURCES.
+//
+// Diagnosis time is the whole point: an operator reading "ExpectSources(...)
+// omits an app" goes hunting for a fluent call that does not exist anywhere in
+// the service, when the value came from a fleet-wide environment variable.
+func TestConsumerBuilder_EnvExpectSourcesMissingAppNamesTheVariable(t *testing.T) {
+	t.Parallel()
+
+	handlerFn, _ := trackingHandler()
+
+	cfg := consumer.DefaultBuilderConfig()
+	cfg.Brokers = []string{"localhost:9092"}
+	cfg.Group = "g"
+	cfg.Source = "test-consumer"
+	cfg.Apps = []string{"lender", "matcher"}
+	cfg.ExpectSources = []string{"lender"}
+
+	_, err := NewConsumer().
+		FromConfig(cfg).
+		OnFrom("lender", "loan.disbursed", handlerFn).
+		resolveHandler()
+
+	if !errors.Is(err, ErrExpectSourcesMissingApp) {
+		t.Fatalf("resolveHandler() = %v; want ErrExpectSourcesMissingApp", err)
+	}
+
+	if !strings.Contains(err.Error(), "STREAMING_CONSUMER_EXPECT_SOURCES") {
+		t.Errorf("error = %q; want it to name the environment variable the list came from", err)
 	}
 }
 
@@ -159,10 +178,7 @@ func TestConsumerBuilder_RejectsMalformedExpectSource(t *testing.T) {
 
 	handlerFn, _ := trackingHandler()
 
-	_, err := NewConsumer().
-		Brokers("localhost:9092").
-		Group("g").
-		Source("test-consumer").
+	_, err := newDispatchBuilder().
 		Topics("some.legacy.topic").
 		ExpectSources("Lender").
 		On("loan.disbursed", handlerFn).
@@ -189,10 +205,7 @@ func TestConsumerBuilder_AppsAndTopicsRequireExplicitExpectSources(t *testing.T)
 
 	handlerFn, _ := trackingHandler()
 
-	b := NewConsumer().
-		Brokers("localhost:9092").
-		Group("g").
-		Source("test-consumer").
+	b := newDispatchBuilder().
 		Apps("lender").
 		Topics("some.legacy.topic").
 		On("loan.disbursed", handlerFn)
@@ -201,28 +214,18 @@ func TestConsumerBuilder_AppsAndTopicsRequireExplicitExpectSources(t *testing.T)
 		t.Fatalf("resolveHandler() = %v; want ErrAmbiguousSourceVerification", err)
 	}
 
-	explicitFn, ran := trackingHandler()
+	explicitFn, _ := trackingHandler()
 
-	handler, err := NewConsumer().
-		Brokers("localhost:9092").
-		Group("g").
-		Source("test-consumer").
+	explicit := newDispatchBuilder().
 		Apps("lender").
 		Topics("some.legacy.topic").
 		ExpectSources("lender", "legacy-writer").
-		On("loan.disbursed", explicitFn).
-		resolveHandler()
-	if err != nil {
-		t.Fatalf("resolveHandler() with explicit ExpectSources error = %v; want nil", err)
-	}
+		OnFrom("legacy-writer", "loan.disbursed", explicitFn)
 
-	legacy := Event{Source: "legacy-writer", ResourceType: "loan", EventType: "disbursed"}
-	if err := handler.Handle(context.Background(), legacy, nil); err != nil {
-		t.Fatalf("Handle(raw-topic producer) = %v; want nil", err)
-	}
+	_, sources := resolveWithSources(t, explicit)
 
-	if !*ran {
-		t.Fatal("handler did not run for a source named explicitly alongside the raw topics")
+	if !slices.Equal(sources, []string{"lender", "legacy-writer"}) {
+		t.Fatalf("expected sources = %v; want both the app and the raw-topic producer", sources)
 	}
 }
 
@@ -234,13 +237,7 @@ func TestConsumerBuilder_UnmatchedDefaultIgnores(t *testing.T) {
 
 	handlerFn, ran := trackingHandler()
 
-	handler, err := NewConsumer().
-		Brokers("localhost:9092").Group("g").Source("test-consumer").Apps("lender").
-		On("loan.disbursed", handlerFn).
-		resolveHandler()
-	if err != nil {
-		t.Fatalf("resolveHandler() error = %v", err)
-	}
+	handler, _ := resolveWithSources(t, newDispatchBuilder().Apps("lender").On("loan.disbursed", handlerFn))
 
 	sibling := Event{Source: "lender", ResourceType: "audit", EventType: "logged"}
 	if err := handler.Handle(context.Background(), sibling, nil); err != nil {
@@ -258,14 +255,10 @@ func TestConsumerBuilder_UnmatchedErrorPolicyOptIn(t *testing.T) {
 
 	handlerFn, ran := trackingHandler()
 
-	handler, err := NewConsumer().
-		Brokers("localhost:9092").Group("g").Source("test-consumer").Apps("lender").
+	handler, _ := resolveWithSources(t, newDispatchBuilder().
+		Apps("lender").
 		UnmatchedPolicy(UnmatchedError).
-		On("loan.disbursed", handlerFn).
-		resolveHandler()
-	if err != nil {
-		t.Fatalf("resolveHandler() error = %v", err)
-	}
+		On("loan.disbursed", handlerFn))
 
 	sibling := Event{Source: "lender", ResourceType: "audit", EventType: "logged"}
 	if err := handler.Handle(context.Background(), sibling, nil); !errors.Is(err, ErrUnhandledEvent) {
@@ -284,8 +277,8 @@ func TestConsumerBuilder_HandlerAndOnAreExclusive(t *testing.T) {
 
 	handlerFn, _ := trackingHandler()
 
-	_, err := NewConsumer().
-		Brokers("localhost:9092").Group("g").Source("test-consumer").Apps("lender").
+	_, err := newDispatchBuilder().
+		Apps("lender").
 		Handler(rawStreamHandler{}).
 		On("loan.disbursed", handlerFn).
 		resolveHandler()
@@ -295,47 +288,64 @@ func TestConsumerBuilder_HandlerAndOnAreExclusive(t *testing.T) {
 	}
 }
 
-// TestConsumerBuilder_HandlerWithExpectSourcesFailsPrecisely pins that
-// combining a whole-stream Handler with ExpectSources gets its OWN error.
+// TestConsumerBuilder_HandlerModeArmsSourceVerification is the mode that needed
+// it most, and the one that had none.
 //
-// ExpectSources allocates the dispatcher internally, which used to read as
-// "the caller wanted On(...)" and produced "Handler and On are mutually
-// exclusive" — advice pointing at an On call the caller never wrote. Dispatch
-// intent now comes from On alone.
-func TestConsumerBuilder_HandlerWithExpectSourcesFailsPrecisely(t *testing.T) {
+// A whole-stream Handler receives EVERY record on a topic whose write ACL it
+// does not control, so it is the mode a foreign write reaches first — and
+// ExpectSources used to be a hard build error there, which meant a fleet-wide
+// STREAMING_CONSUMER_EXPECT_SOURCES CrashLooped every Handler-mode service with
+// no in-API way out. Verification runs in the runtime now, so the allowlist is
+// armed in both modes.
+func TestConsumerBuilder_HandlerModeArmsSourceVerification(t *testing.T) {
 	t.Parallel()
 
-	_, err := NewConsumer().
-		Brokers("localhost:9092").Group("g").Source("test-consumer").Apps("lender").
-		Handler(rawStreamHandler{}).
-		ExpectSources("lender").
-		resolveHandler()
+	b := newDispatchBuilder().
+		Apps("lender").
+		ExpectSources("lender", "legacy-writer").
+		Handler(rawStreamHandler{})
 
-	if !errors.Is(err, ErrHandlerAndExpectSourcesBothSet) {
-		t.Fatalf("resolveHandler() = %v; want ErrHandlerAndExpectSourcesBothSet", err)
+	handler, sources := resolveWithSources(t, b)
+
+	if _, ok := handler.(rawStreamHandler); !ok {
+		t.Fatalf("resolveHandler() returned %T; want the caller's whole-stream handler", handler)
 	}
 
-	if errors.Is(err, ErrHandlerAndDispatchBothSet) {
-		t.Fatal("resolveHandler() blamed On(...), which the caller never wrote")
+	if !slices.Equal(sources, []string{"lender", "legacy-writer"}) {
+		t.Fatalf("expected sources = %v; want the explicit list armed under a whole-stream Handler", sources)
 	}
 }
 
-// TestConsumerBuilder_HandlerWithUnmatchedPolicyFailsPrecisely pins the third
-// dispatch-only knob under the same rule as the other two.
+// TestConsumerBuilder_HandlerModeDerivesSourcesFromApps pins that the free
+// verification Apps buys applies under a whole-stream Handler too.
+func TestConsumerBuilder_HandlerModeDerivesSourcesFromApps(t *testing.T) {
+	t.Parallel()
+
+	b := newDispatchBuilder().Apps("lender", "matcher").Handler(rawStreamHandler{})
+
+	_, sources := resolveWithSources(t, b)
+
+	if !slices.Equal(sources, []string{"lender", "matcher"}) {
+		t.Fatalf("expected sources = %v; want both apps", sources)
+	}
+}
+
+// TestConsumerBuilder_HandlerWithUnmatchedPolicyFailsPrecisely pins the
+// remaining dispatch-only knob.
 //
 // UnmatchedPolicy decides what the DISPATCHER does with a key it has no handler
 // for. A whole-stream Handler receives every record and selects for itself, so
 // the knob does nothing — and an operator who wrote UnmatchedPolicy(
 // UnmatchedError) believes unknown keys are being quarantined when they are
-// not. Every dispatch-only knob now errors under Handler; none is inert.
+// not.
 //
 // It still must not blame On(...), which the caller never wrote: allocating the
 // dispatcher is not the same as asking for dispatch.
 func TestConsumerBuilder_HandlerWithUnmatchedPolicyFailsPrecisely(t *testing.T) {
 	t.Parallel()
 
-	_, err := NewConsumer().
-		Brokers("localhost:9092").Group("g").Source("test-consumer").Apps("lender").
+	_, err := newDispatchBuilder().
+		Apps("lender").
 		UnmatchedPolicy(UnmatchedError).
 		Handler(rawStreamHandler{}).
 		resolveHandler()
@@ -350,8 +360,9 @@ func TestConsumerBuilder_HandlerWithUnmatchedPolicyFailsPrecisely(t *testing.T) 
 }
 
 // TestConsumerBuilder_HandlerRejectsEveryDispatchOnlyKnob is the rule itself, as
-// one table: under a whole-stream Handler, each dispatch-only knob fails with
-// its own sentinel, and a Handler with none of them builds clean.
+// one table: under a whole-stream Handler, each GENUINELY dispatch-only knob
+// fails with its own sentinel, while ExpectSources — no longer dispatch-only —
+// builds clean.
 func TestConsumerBuilder_HandlerRejectsEveryDispatchOnlyKnob(t *testing.T) {
 	t.Parallel()
 
@@ -364,8 +375,13 @@ func TestConsumerBuilder_HandlerRejectsEveryDispatchOnlyKnob(t *testing.T) {
 	}{
 		{"no dispatch-only knob", func(b *ConsumerBuilder) *ConsumerBuilder { return b }, nil},
 		{"On", func(b *ConsumerBuilder) *ConsumerBuilder { return b.On("loan.disbursed", handlerFn) }, ErrHandlerAndDispatchBothSet},
+		{
+			"OnFrom",
+			func(b *ConsumerBuilder) *ConsumerBuilder { return b.OnFrom("lender", "loan.disbursed", handlerFn) },
+			ErrHandlerAndDispatchBothSet,
+		},
 		{"UnmatchedPolicy", func(b *ConsumerBuilder) *ConsumerBuilder { return b.UnmatchedPolicy(UnmatchedError) }, ErrHandlerAndUnmatchedPolicyBothSet},
-		{"ExpectSources", func(b *ConsumerBuilder) *ConsumerBuilder { return b.ExpectSources("lender") }, ErrHandlerAndExpectSourcesBothSet},
+		{"ExpectSources is no longer dispatch-only", func(b *ConsumerBuilder) *ConsumerBuilder { return b.ExpectSources("lender") }, nil},
 		{
 			"ExpectSources from the environment",
 			func(b *ConsumerBuilder) *ConsumerBuilder {
@@ -374,7 +390,7 @@ func TestConsumerBuilder_HandlerRejectsEveryDispatchOnlyKnob(t *testing.T) {
 
 				return b.FromConfig(cfg)
 			},
-			ErrHandlerAndExpectSourcesBothSet,
+			nil,
 		},
 	}
 
@@ -382,8 +398,7 @@ func TestConsumerBuilder_HandlerRejectsEveryDispatchOnlyKnob(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			b := tt.apply(NewConsumer().Brokers("localhost:9092").Group("g").Source("test-consumer").Apps("lender")).
-				Handler(rawStreamHandler{})
+			b := tt.apply(newDispatchBuilder().Apps("lender")).Handler(rawStreamHandler{})
 
 			handler, err := b.resolveHandler()
 
@@ -425,26 +440,17 @@ func TestConsumerBuilder_EnvExpectSourcesResolvesTheAppsPlusTopicsRefusal(t *tes
 	cfg := consumer.DefaultBuilderConfig()
 	cfg.Brokers = []string{"localhost:9092"}
 	cfg.Group = "g"
+	cfg.Source = "test-consumer"
 	cfg.Apps = []string{"lender"}
 	cfg.Topics = []string{"some.legacy.topic"}
 	cfg.ExpectSources = []string{"lender", "legacy-writer"}
 
-	handler, err := NewConsumer().
-		FromConfig(cfg).
-		On("loan.disbursed", handlerFn).
-		resolveHandler()
-	if err != nil {
-		t.Fatalf("resolveHandler() = %v; want nil (the env allowlist is an explicit list)", err)
-	}
+	b := NewConsumer().FromConfig(cfg).OnFrom("legacy-writer", "loan.disbursed", handlerFn)
 
-	legacy := Event{Source: "legacy-writer", ResourceType: "loan", EventType: "disbursed"}
-	if err := handler.Handle(context.Background(), legacy, nil); err != nil {
-		t.Fatalf("Handle(raw-topic producer) = %v; want nil (the env allowlist admits it)", err)
-	}
+	_, sources := resolveWithSources(t, b)
 
-	foreign := Event{Source: "someone-else", ResourceType: "loan", EventType: "disbursed"}
-	if err := handler.Handle(context.Background(), foreign, nil); !errors.Is(err, ErrUnexpectedSource) {
-		t.Fatalf("Handle(foreign producer) = %v; want ErrUnexpectedSource", err)
+	if !slices.Equal(sources, []string{"lender", "legacy-writer"}) {
+		t.Fatalf("expected sources = %v; want the env allowlist verbatim", sources)
 	}
 }
 
@@ -460,21 +466,19 @@ func TestConsumerBuilder_FluentExpectSourcesOverridesTheEnvironment(t *testing.T
 	cfg := consumer.DefaultBuilderConfig()
 	cfg.Brokers = []string{"localhost:9092"}
 	cfg.Group = "g"
+	cfg.Source = "test-consumer"
 	cfg.Apps = []string{"lender"}
 	cfg.ExpectSources = []string{"lender", "stale-from-env"}
 
-	handler, err := NewConsumer().
+	b := NewConsumer().
 		FromConfig(cfg).
 		ExpectSources("lender").
-		On("loan.disbursed", handlerFn).
-		resolveHandler()
-	if err != nil {
-		t.Fatalf("resolveHandler() = %v; want nil", err)
-	}
+		On("loan.disbursed", handlerFn)
 
-	stale := Event{Source: "stale-from-env", ResourceType: "loan", EventType: "disbursed"}
-	if err := handler.Handle(context.Background(), stale, nil); !errors.Is(err, ErrUnexpectedSource) {
-		t.Fatalf("Handle(env-only source) = %v; want ErrUnexpectedSource (the fluent list replaced it)", err)
+	_, sources := resolveWithSources(t, b)
+
+	if !slices.Equal(sources, []string{"lender"}) {
+		t.Fatalf("expected sources = %v; want the fluent list to replace the env one", sources)
 	}
 }
 
@@ -486,23 +490,124 @@ func TestConsumerBuilder_RawTopicsEscapeHatch(t *testing.T) {
 
 	handlerFn, ran := trackingHandler()
 
-	handler, err := NewConsumer().
-		Brokers("localhost:9092").Group("g").
-		Source("test-consumer").
+	handler, sources := resolveWithSources(t, newDispatchBuilder().
 		Topics("some.legacy.topic").
-		On("loan.disbursed", handlerFn).
-		resolveHandler()
-	if err != nil {
-		t.Fatalf("resolveHandler() error = %v", err)
+		On("loan.disbursed", handlerFn))
+
+	if len(sources) != 0 {
+		t.Fatalf("expected sources = %v; want empty (verification is opt-in on the raw path)", sources)
 	}
 
 	anySource := Event{Source: "whoever", ResourceType: "loan", EventType: "disbursed"}
 	if err := handler.Handle(context.Background(), anySource, nil); err != nil {
-		t.Fatalf("Handle() = %v; want nil (verification is opt-in on the raw path)", err)
+		t.Fatalf("Handle() = %v; want nil", err)
 	}
 
 	if !*ran {
 		t.Fatal("handler did not run on the raw-topics path")
+	}
+}
+
+// TestConsumerBuilder_HomonymsFromTwoAppsReachTwoHandlers is the reason the
+// dispatch key carries the producing application at all.
+//
+// "loan.disbursed" from lender and "loan.disbursed" from matcher are different
+// facts with different payloads. On a key that ignored the source they
+// collapsed into one registration — whichever was written last swallowed both,
+// and the wrong handler parsed the wrong payload without an error anywhere.
+func TestConsumerBuilder_HomonymsFromTwoAppsReachTwoHandlers(t *testing.T) {
+	t.Parallel()
+
+	lenderFn, lenderRan := trackingHandler()
+	matcherFn, matcherRan := trackingHandler()
+
+	handler, _ := resolveWithSources(t, newDispatchBuilder().
+		Apps("lender", "matcher").
+		OnFrom("lender", "loan.disbursed", lenderFn).
+		OnFrom("matcher", "loan.disbursed", matcherFn))
+
+	fromLender := Event{Source: "lender", ResourceType: "loan", EventType: "disbursed"}
+	if err := handler.Handle(context.Background(), fromLender, nil); err != nil {
+		t.Fatalf("Handle(lender) = %v; want nil", err)
+	}
+
+	if !*lenderRan || *matcherRan {
+		t.Fatalf("lender's event reached lender=%v matcher=%v; want only lender", *lenderRan, *matcherRan)
+	}
+
+	*lenderRan = false
+
+	fromMatcher := Event{Source: "matcher", ResourceType: "loan", EventType: "disbursed"}
+	if err := handler.Handle(context.Background(), fromMatcher, nil); err != nil {
+		t.Fatalf("Handle(matcher) = %v; want nil", err)
+	}
+
+	if !*matcherRan || *lenderRan {
+		t.Fatalf("matcher's event reached lender=%v matcher=%v; want only matcher", *lenderRan, *matcherRan)
+	}
+}
+
+// TestConsumerBuilder_BareOnFailsUnderMultipleApps pins the ambiguity as a BUILD
+// failure rather than a coin flip at runtime.
+//
+// With two producers in scope a bare event key does not say whose event it is.
+// Binding it to one of them silently would hand the other app's payload to the
+// wrong handler — and the fleet really does have byte-identical event
+// vocabularies across apps, so this is the common case.
+func TestConsumerBuilder_BareOnFailsUnderMultipleApps(t *testing.T) {
+	t.Parallel()
+
+	handlerFn, _ := trackingHandler()
+
+	_, err := newDispatchBuilder().
+		Apps("lender", "matcher").
+		On("loan.disbursed", handlerFn).
+		resolveHandler()
+
+	if !errors.Is(err, ErrBareOnWithMultipleApps) {
+		t.Fatalf("resolveHandler() = %v; want ErrBareOnWithMultipleApps", err)
+	}
+
+	if !strings.Contains(err.Error(), "loan.disbursed") {
+		t.Errorf("error = %q; want it to name the ambiguous registration", err)
+	}
+}
+
+// TestConsumerBuilder_BareOnBindsToTheSoleApp keeps the common case terse: one
+// producer, no app argument, everything binds to it.
+func TestConsumerBuilder_BareOnBindsToTheSoleApp(t *testing.T) {
+	t.Parallel()
+
+	handlerFn, ran := trackingHandler()
+
+	handler, _ := resolveWithSources(t, newDispatchBuilder().
+		Apps("lender").
+		On("loan.disbursed", handlerFn))
+
+	if err := handler.Handle(context.Background(), Event{Source: "lender", ResourceType: "loan", EventType: "disbursed"}, nil); err != nil {
+		t.Fatalf("Handle() = %v; want nil", err)
+	}
+
+	if !*ran {
+		t.Fatal("bare On did not bind to the sole subscribed app")
+	}
+}
+
+// TestConsumerBuilder_OnFromUnknownAppFails pins that a handler nothing could
+// ever reach is a wiring mistake, not a filter. Left unchecked it is invisible:
+// the build passes, the consumer reports Healthy, and the handler never fires.
+func TestConsumerBuilder_OnFromUnknownAppFails(t *testing.T) {
+	t.Parallel()
+
+	handlerFn, _ := trackingHandler()
+
+	_, err := newDispatchBuilder().
+		Apps("lender").
+		OnFrom("matcher", "loan.disbursed", handlerFn).
+		resolveHandler()
+
+	if !errors.Is(err, ErrUnknownDispatchApp) {
+		t.Fatalf("resolveHandler() = %v; want ErrUnknownDispatchApp", err)
 	}
 }
 
@@ -512,8 +617,8 @@ func TestConsumerBuilder_RawTopicsEscapeHatch(t *testing.T) {
 func TestConsumerBuilder_DispatchWithoutHandlersFails(t *testing.T) {
 	t.Parallel()
 
-	_, err := NewConsumer().
-		Brokers("localhost:9092").Group("g").Source("test-consumer").Apps("lender").
+	_, err := newDispatchBuilder().
+		Apps("lender").
 		UnmatchedPolicy(UnmatchedIgnore).
 		resolveHandler()
 
@@ -529,9 +634,7 @@ func TestConsumerBuilder_RejectsMalformedApp(t *testing.T) {
 
 	handlerFn, _ := trackingHandler()
 
-	_, err := NewConsumer().
-		Brokers("localhost:9092").Group("g").
-		Source("test-consumer").
+	_, err := newDispatchBuilder().
 		Apps("//lerian.midaz/tx").
 		On("loan.disbursed", handlerFn).
 		Build(context.Background())
@@ -569,15 +672,16 @@ func TestConsumerBuilder_FromConfigWiresTheEnvSurface(t *testing.T) {
 
 	handlerFn, ran := trackingHandler()
 
-	b := NewConsumer().FromConfig(cfg).On("loan.disbursed", handlerFn)
+	b := NewConsumer().FromConfig(cfg).OnFrom("matcher", "loan.disbursed", handlerFn)
 
 	if got := b.cfg.ResolvedTopics(); len(got) != 2 || got[0] != "lerian.streaming.lender" {
 		t.Fatalf("resolved topics = %v; want the two app topics from STREAMING_CONSUMER_APPS", got)
 	}
 
-	handler, err := b.resolveHandler()
-	if err != nil {
-		t.Fatalf("resolveHandler() error = %v", err)
+	handler, sources := resolveWithSources(t, b)
+
+	if !slices.Equal(sources, []string{"lender", "matcher"}) {
+		t.Fatalf("expected sources = %v; want both apps from STREAMING_CONSUMER_APPS", sources)
 	}
 
 	own := Event{Source: "matcher", ResourceType: "loan", EventType: "disbursed"}
