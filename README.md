@@ -15,7 +15,7 @@ It does not replace `github.com/LerianStudio/lib-commons/v6/commons/rabbitmq`, w
 
 | | |
 |---|---|
-| **Module** | `github.com/LerianStudio/lib-streaming` |
+| **Module** | `github.com/LerianStudio/lib-streaming/v3` |
 | **Go** | `1.26.3` |
 | **License** | Elastic License 2.0. See [LICENSE](./LICENSE) |
 
@@ -89,7 +89,7 @@ It does not replace `github.com/LerianStudio/lib-commons/v6/commons/rabbitmq`, w
 ### 1. Install
 
 ```bash
-go get github.com/LerianStudio/lib-streaming@latest
+go get github.com/LerianStudio/lib-streaming/v3@latest
 ```
 
 ### 2. Bootstrap a Producer
@@ -122,7 +122,13 @@ if err != nil {
 }
 
 // ONE topic per producing application: lerian.streaming.<source>.
-appTopic := streaming.AppTopic(cfg.CloudEventsSource)
+// AppTopic VALIDATES the source and returns (string, error): provisioning
+// creates this name, an ACL grants it, and a route publishes to it, so a
+// malformed source fails here rather than reaching a real broker.
+appTopic, err := streaming.AppTopic(cfg.CloudEventsSource)
+if err != nil {
+    return err
+}
 
 if !cfg.Enabled {
     emitter := streaming.NewNoopEmitter()
@@ -239,8 +245,8 @@ defer c.Close()
 | Subscription | `Apps("lender")` → `lerian.streaming.lender`. `Topics(...)` remains the raw escape hatch and composes with `Apps`. |
 | Dispatch key | `"<resourceType>.<eventType>"` — the same pair the producer's catalog spells and its manifest advertises. Underscores travel verbatim. |
 | Unmatched events | **Ignored** (skipped and committed) by default. `UnmatchedPolicy(streaming.UnmatchedError)` quarantines them instead. |
-| Source verification | An event whose `ce-source` is not one of the named `Apps` is rejected with `ErrUnexpectedSource` and quarantined — it never reaches a handler. `ExpectSources(...)` overrides the default for the raw-topics path. |
-| Whole-stream handler | `Handler(h)` still receives every event for consumers that select themselves. `Handler` and `On` are mutually exclusive. |
+| Source verification | An event whose `ce-source` is not one of the named `Apps` is rejected with `ErrUnexpectedSource` and quarantined — it never reaches a handler. `ExpectSources(...)` — or `STREAMING_CONSUMER_EXPECT_SOURCES` — overrides the default for the raw-topics path, and is the only way to resolve the `Apps`+`Topics` refusal from the environment. |
+| Whole-stream handler | `Handler(h)` still receives every event for consumers that select themselves. It rejects every dispatch-only knob rather than ignoring one: `On`, `UnmatchedPolicy`, and `ExpectSources` each fail the build with their own sentinel. |
 
 `UnmatchedIgnore` is the default because it is the only safe one here: a
 consumer subscribed to a producer's app stream receives every event that
@@ -252,6 +258,13 @@ the stream and an unknown key means the producer's catalog drifted ahead of it.
 Tenant filtering remains the handler's responsibility: `event.TenantID` comes
 from the validated `ce-tenantid` header, never from the payload, and a handler
 that skips the tenant check has a cross-tenant leak.
+
+**Handler errors must not carry PII.** A terminal handler error travels to the
+DLQ as `x-lerian-dlq-error-message`, with only broker credentials stripped —
+nothing else is redacted. A CPF, account number, or name interpolated into a
+returned error is published onto the DLQ topic verbatim, readable by anything
+with DLQ read access for the topic's whole retention window. Return an opaque
+identifier and look the record up out of band.
 
 ## Multi-Transport Routing
 
@@ -268,6 +281,12 @@ A single Emit can dispatch to N routes. Route attempts run in deterministic rout
 ### Wiring multiple targets
 
 ```go
+// AppTopic returns (string, error), so hoist it out of the literal.
+appTopic, err := streaming.AppTopic("midaz-ledger")
+if err != nil {
+    return err
+}
+
 emitter, err := streaming.NewBuilder().
     Source("midaz-ledger").
     Catalog(catalog).
@@ -276,7 +295,7 @@ emitter, err := streaming.NewBuilder().
         streaming.RouteDefinition{
             Key:         "kafka_primary.all",
             Target:      "kafka-primary",
-            Destination: streaming.KafkaTopic(streaming.AppTopic("midaz-ledger")),
+            Destination: streaming.KafkaTopic(appTopic),
             Requirement: streaming.RouteRequired,
         },
         // Definition-scoped: shadow ONE event to SQS. Resolution is
@@ -420,6 +439,30 @@ Do not assume a green `streaming_circuit_state` means every route is healthy. It
 A single `Emit` dispatched across N routes increments `streaming_emitted_total` **N times** — one per route attempt — even though the caller issued a single Emit call. Dashboards computing "logical Emits per second" should aggregate per-Emit attempts via trace spans, **not** by summing per-route counters. The `topic` label distinguishes destinations across routes; the `outcome` label uses the current closed set from code: `produced`, `outboxed`, `circuit_open`, `caller_error`, `dlq`, `failed`, and `outbox_failed`.
 
 Capacity-plan accordingly: counter volume scales with route count, not Emit count.
+
+### Outbox replay: classify caller errors as non-retryable
+
+Wire `streaming.IsCallerError` into the lib-commons outbox dispatcher:
+
+```go
+dispatcher, err := outbox.NewDispatcher(
+    // ...
+    outbox.WithRetryClassifier(outbox.RetryClassifierFunc(streaming.IsCallerError)),
+)
+```
+
+Without it, a row that can never succeed burns its whole retry budget and its
+whole backoff window before anyone hears about it, and the relay's throughput
+goes with it. `IsCallerError` returns true exactly for the synchronous,
+caller-correctable faults — validation, serialization, auth, and every
+caller-correctable sentinel — so the dispatcher moves those rows straight to
+INVALID and keeps retrying only the ones a retry could fix.
+
+This matters most right after a v3 deploy: `OutboxEnvelopeVersion` is now 2 and
+a leftover version-1 row is rejected with `ErrInvalidOutboxEnvelope`, a caller
+error. Every such row is permanently unpublishable, so a fleet of them should
+land in INVALID immediately (alertable, countable, replayable after a rewrite)
+rather than cycling through retries for hours.
 
 ### DLQ alerting
 

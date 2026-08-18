@@ -41,7 +41,7 @@ Architectural constraints and design decisions for the `lib-streaming` codebase.
 - `WithOutboxRepository` and `WithOutboxWriter` are mutually exclusive; last call wins.
 - Service methods must depend on `streaming.Emitter`, not concrete `*streaming.Producer`, unless they need lifecycle or relay registration.
 - The root facade may use aliases to internal types, but exported behavior and docs are the public contract.
-- **Routes** are immutable after `NewRouteTable` construction. Every catalog `EventDefinition` MUST resolve to at least one registered route, and every route's `Target` MUST match a registered target whose adapter `Kind` matches the route's `Destination.Kind`.
+- **Routes** are immutable after `NewRouteTable` construction. Every catalog `EventDefinition` MUST resolve to at least one **Required** route (an all-optional definition can lose every copy while `Emit` returns nil — `ErrNoRequiredRoute`), no two routes may share a `(DefinitionKey, Target)` pair (both would publish, duplicating the event), and every route's `Target` MUST match a registered target whose adapter `Kind` matches the route's `Destination.Kind`.
 - **RabbitMQ via the streaming Builder is events-only** — past-tense business facts for third-party / SaaS subscribers. Internal command queues remain on `github.com/LerianStudio/lib-commons/v6/commons/rabbitmq`. Producer-only ownership applies even when the destination is AMQP.
 - **Built-in non-Kafka adapters** (`internal/transport/sqs`, `internal/transport/rabbitmq`, `internal/transport/eventbridge`) MUST NOT depend on the corresponding SDK module. Each adapter exposes a small caller-supplied interface so callers own their SDK lifecycle. Production callers MUST implement `Ping(ctx) error`; adapter health fails closed when the client has no health affordance.
 - **Per-target tenant-aware circuit breakers** isolate broker failures by target and, when the configured manager satisfies lib-commons `TenantAwareManager`, by `(tenant, target)` for non-system events. System events and custom managers that only satisfy the legacy `Manager` interface use the no-tenant compatibility breaker. `targetRuntime.state` mirrors only the no-tenant breaker; tenant-scoped state is read from the manager and observed through lib-commons `tenant_hash` CB metrics/logs. `streaming_circuit_state` is a single-dimension gauge tracking the primary target's no-tenant breaker only.
@@ -50,7 +50,7 @@ Architectural constraints and design decisions for the `lib-streaming` codebase.
 
 ## 3. Required Libraries
 
-- Module path: `github.com/LerianStudio/lib-streaming` (bare path; no `/vN` suffix while on v0/v1 per Go's semantic-import-versioning rules).
+- Module path: `github.com/LerianStudio/lib-streaming/v3` — the `/vN` suffix is required from v2 onward by Go's semantic-import-versioning rules, and `go.mod` declares it.
 - Go version: `1.26.3` as declared in `go.mod`.
 - Commons: use `github.com/LerianStudio/lib-commons/v6` primitives where they are the Lerian standard.
 - Assertions: use `github.com/LerianStudio/lib-observability/assert` for post-construction internal invariants.

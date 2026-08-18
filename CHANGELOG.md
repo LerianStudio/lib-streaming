@@ -22,6 +22,13 @@ instead of an open per-event namespace. `streaming.AppTopic(source)` and
 `streaming.AppDLQTopic(source)` are exported so provisioning and ACL tooling
 derive the same names the runtime does.
 
+Both are `func(source string) (string, error)`: they VALIDATE the source and
+return `ErrMissingSource` / `ErrInvalidSource` rather than handing back a
+name derived from garbage — every caller is deriving a name something else
+acts on, and an unvalidated empty source produced the real, creatable topic
+`"lerian.streaming."`. **Migration:** assign both return values and check the
+error; the name is only usable when the error is nil.
+
 **Migration:** provision `lerian.streaming.<source>` and
 `lerian.streaming.<source>.dlq` per producing service, and repoint every
 consumer subscription at them. Per-event topics are no longer written to.
@@ -87,9 +94,17 @@ Two catch-all routes on different targets therefore mean deliberate app-wide
 mirroring: the whole stream published twice.
 
 `validateRoutesAgainstTargets` now FAILS construction when a catalog definition
-resolves to zero `RouteRequired` routes. An all-optional definition can lose
-every copy and still return a nil `Emit` error; delivery must be provable at
-build time, not discovered in production.
+resolves to zero `RouteRequired` routes, with the new `ErrNoRequiredRoute`
+sentinel (exported at the root). An all-optional definition can lose every copy
+and still return a nil `Emit` error; delivery must be provable at build time,
+not discovered in production. A definition with NO routes at all keeps
+`ErrNoRoutesConfigured` — the two are different bugs and no longer share a name.
+
+`NewRouteTable` additionally rejects two routes sharing one
+`(DefinitionKey, Target)` pair, with `ErrDuplicateRouteDefinition`. Resolution
+buckets by definition and the Emit fan-out publishes every route in the bucket,
+so such a pair delivered the same event TWICE to one destination while `Emit`
+returned nil. Two catch-all routes on the same target collide the same way.
 
 The single-Kafka `NewProducer` path now synthesizes exactly ONE catch-all route
 to the app topic on the `"primary"` target; v2's route-per-catalog-entry fanout
@@ -123,13 +138,17 @@ from the broker into the consumer. Three additions cover it:
   would fail-closed the sibling stream into the DLQ.
 - Source verification is built in: an event whose `ce-source` is not an expected
   producer is quarantined with `ErrUnexpectedSource` before any handler runs.
-  `Apps(...)` populates the allowlist automatically; `ExpectSources(...)`
-  overrides it for the raw-topics path. Consumers can delete their hand-rolled
-  `ce-source` checks.
+  `Apps(...)` populates the allowlist automatically; `ExpectSources(...)` — or
+  `STREAMING_CONSUMER_EXPECT_SOURCES` — overrides it for the raw-topics path and
+  is the only way out of the `Apps`+`Topics` ambiguity refusal. Consumers can
+  delete their hand-rolled `ce-source` checks.
 
 `Handler(...)` still takes the whole stream for consumers that select
-themselves; wiring both `Handler` and `On` returns
-`ErrHandlerAndDispatchBothSet` rather than silently dropping one.
+themselves. It rejects EVERY dispatch-only knob rather than ignoring any of
+them: `On` → `ErrHandlerAndDispatchBothSet`, `UnmatchedPolicy` →
+`ErrHandlerAndUnmatchedPolicyBothSet`, `ExpectSources` →
+`ErrHandlerAndExpectSourcesBothSet`. A silently inert one is an operator
+believing a check runs that does not.
 
 ### BREAKING: `OutboxEnvelopeVersion` is 2
 
@@ -154,6 +173,19 @@ replay rather than publish to a dead topic.
 pair moves to the document level, where a one-topic-per-app fact belongs.
 `PublisherDescriptor.SourceBase` is renamed `Source` (JSON `sourceBase` →
 `source`) and is now validated by `ValidateSource` rather than merely trimmed.
+
+### Fixed: `WithPartitionKey` can no longer collapse the stream
+
+A `WithPartitionKey` override returning `""` was applied verbatim. That is not
+"no key": franz-go's sticky-key partitioner branches on `key != nil` and
+`[]byte("")` is not nil, so every record hashed to murmur2 of a constant and the
+whole application stream pinned to ONE partition — silently, with no error
+anywhere. The outbox side collapsed the same way, folding every row of every
+tenant onto a single `AggregateID`.
+
+An override that yields `""` now falls back to `Event.PartitionKey()`, at every
+publish path (route dispatch, route DLQ, outbox replay, outbox aggregate id, and
+the debug span attribute). An override returning a real key is unaffected.
 
 ### Unchanged (verified by tests)
 

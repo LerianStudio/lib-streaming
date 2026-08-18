@@ -409,13 +409,14 @@ mirroring the producer; validated at `Build`.
   `adapter.Publish`). The record is republished **payload-verbatim**; the source
   offset is committed strictly **after** the DLQ publish is acknowledged so the
   quarantine copy is durable before the original is dropped.
-- **Forensic metadata headers** — canonicalized on the producer's **six shipped
-  constants** (`internal/producer/dlq_helpers.go:13-20`) so producer and
-  consumer share ONE header schema, plus **two** genuinely consumer-specific
-  headers. In addition to the original CloudEvents headers (preserved verbatim):
+- **Forensic metadata headers** — canonicalized on the **six shared constants**
+  (`internal/dlqheader`) so producer and consumer share ONE header schema, plus
+  **three** genuinely consumer-specific headers. In addition to the original
+  CloudEvents headers (preserved verbatim):
   - `x-lerian-dlq-source-topic`
   - `x-lerian-dlq-error-class` (transport `ErrorClass`)
-  - `x-lerian-dlq-error-message` (redacted message)
+  - `x-lerian-dlq-error-message` (the error string, broker-credential-sanitized
+    — NOT otherwise redacted; see the PII note below)
   - `x-lerian-dlq-retry-count` — **a real count** = the **in-loop** retry
     attempts made before terminal classification, NOT the producer's always-0 stub
     (`dlq_helpers.go:59-61` returns 0 because franz-go v2 doesn't export the
@@ -429,14 +430,30 @@ mirroring the producer; validated at `Build`.
     identity)
   - `x-lerian-dlq-source-partition` *(consumer-specific)*
   - `x-lerian-dlq-source-offset` *(consumer-specific)*
+  - `x-lerian-dlq-cause-kind` *(consumer-specific)* — the low-cardinality bucket
+    naming WHICH gate quarantined the record: `codec` (the CloudEvents headers
+    would not decode — the producer's wire format is the suspect), `handler` (a
+    genuine business rejection), `source_mismatch` (a foreign write, or a
+    drifted `ExpectSources` allowlist), `unhandled_key` (this consumer's `On`
+    registrations fell behind the producer's catalog). Filter and alert on this;
+    read `x-lerian-dlq-error-message` for the detail. Without it a filling DLQ
+    said only "something was terminal", and those four causes have four
+    different owners and four different fixes.
+
+  > **PII: `x-lerian-dlq-error-message` carries the handler's error string
+  > verbatim.** The only transformation applied is `SanitizeBrokerURL`, which
+  > strips broker credentials — it does not redact anything else. A handler that
+  > interpolates a CPF, an account number, a name, or any other personal datum
+  > into a returned error publishes it onto the DLQ topic, where it is readable
+  > by anything with DLQ read access and retained for the topic's whole
+  > retention window. **Handlers MUST NOT embed PII in returned errors**; carry
+  > an opaque identifier and look the record up out of band.
 
   The earlier draft invented a divergent set (`cause-class`/`cause`/`time`) that
   collided semantically with the producer's `error-class`/`error-message`/
-  `first-failure-at`. Those are **dropped**. These eight constants will move to a
-  **shared package** alongside the wave-2 `kafkasec` extraction so producer and
-  consumer reference one definition; until then the consumer package cannot
-  import the producer-private constants, so the skeleton's `dlqPublisher` body
-  stays `TODO(impl)` and references them via a note (see §8).
+  `first-failure-at`. Those are **dropped**. These nine constants live in the
+  shared `internal/dlqheader` package so producer and consumer reference one
+  definition; their string values are a frozen wire contract.
 - **Alerting:** `streaming_consumer_dlq_total` on route, and a
   `streaming_consumer_dlq_publish_failed_total` for the case where the DLQ
   publish itself fails (in which case the source offset is **not** committed and
