@@ -13,6 +13,12 @@
 // data across header namespaces would widen the wire contract beyond the
 // documented six DLQ headers and force every consumer to reconcile two
 // sources of truth.
+//
+// The package also owns the two size rules every DLQ writer obeys —
+// MaxErrorMessageBytes / TruncateErrorMessage for the one unbounded header
+// value, and IsSizeError plus the PayloadOmitted / PayloadBytes markers for the
+// payload-omitted retry — because a DLQ record is strictly larger than the
+// record it quarantines and must still fit. See budget.go.
 package dlqheader
 
 // The six DLQ forensic header keys (TRD §C8). Every DLQ message carries all
