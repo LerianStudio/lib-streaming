@@ -56,6 +56,14 @@ var (
 	ErrHandlerAndExpectSourcesBothSet = errors.New(
 		"streaming consumer: ExpectSources(...) applies to On(...) dispatch only — a whole-stream Handler(...) must verify ce-source itself")
 
+	// ErrHandlerAndUnmatchedPolicyBothSet is returned when a whole-stream
+	// Handler is combined with UnmatchedPolicy. The policy decides what the
+	// DISPATCHER does with a key it has no handler for; a raw Handler receives
+	// every record and selects for itself, so the knob would be silently inert
+	// — and an operator who set it believes unknown keys are being quarantined.
+	ErrHandlerAndUnmatchedPolicyBothSet = errors.New(
+		"streaming consumer: UnmatchedPolicy(...) applies to On(...) dispatch only — a whole-stream Handler(...) receives every record and selects for itself")
+
 	// ErrAmbiguousSourceVerification is returned when Apps(...) and Topics(...)
 	// are BOTH set and no explicit ExpectSources(...) was given. Defaulting the
 	// allowlist to Apps would quarantine 100% of the raw Topics stream, whose
@@ -118,6 +126,19 @@ type ConsumerConfig struct {
 	// producer could legally publish under would otherwise subscribe to a
 	// topic that stays empty forever while the consumer reports healthy.
 	Apps []string
+	// ExpectSources declares the ce-source allowlist explicitly, for the shapes
+	// Apps alone cannot express. STREAMING_CONSUMER_EXPECT_SOURCES (csv).
+	//
+	// It REPLACES the allowlist Apps would have implied, must COVER every entry
+	// in Apps, and every entry is held to the same strict source contract the
+	// producer enforces. Its reason to exist: setting BOTH Apps and Topics
+	// without an explicit allowlist is a hard Build failure (neither defaulting
+	// to Apps — which quarantines the whole raw-topics stream — nor skipping the
+	// check is a defensible guess), and without this variable that shape had no
+	// env-only resolution at all.
+	//
+	// ConsumerBuilder.ExpectSources(...) called on the builder overrides it.
+	ExpectSources []string
 	// ClientID is the Kafka client.id for broker-side diagnostics.
 	// STREAMING_CONSUMER_CLIENT_ID.
 	ClientID string
@@ -219,6 +240,7 @@ func LoadConsumerConfig() (ConsumerConfig, []string, error) {
 		Group:               commons.GetenvOrDefault("STREAMING_CONSUMER_GROUP", ""),
 		Topics:              splitCSV(commons.GetenvOrDefault("STREAMING_CONSUMER_TOPICS", "")),
 		Apps:                splitCSV(commons.GetenvOrDefault("STREAMING_CONSUMER_APPS", "")),
+		ExpectSources:       splitCSV(commons.GetenvOrDefault("STREAMING_CONSUMER_EXPECT_SOURCES", "")),
 		ClientID:            commons.GetenvOrDefault("STREAMING_CONSUMER_CLIENT_ID", ""),
 		RetryBudget:         int(commons.GetenvIntOrDefault("STREAMING_CONSUMER_RETRY_BUDGET", defaultRetryBudget)),
 		RetryBackoffInitial: getenvMsOrDefault("STREAMING_CONSUMER_RETRY_BACKOFF_INITIAL_MS", defaultRetryBackoffInitial),
@@ -259,6 +281,12 @@ func (c ConsumerConfig) Validate() error {
 	for _, app := range c.Apps {
 		if err := contract.ValidateSource(app); err != nil {
 			return fmt.Errorf("%w: app %q: %w", ErrInvalidConfigField, app, err)
+		}
+	}
+
+	for _, source := range c.ExpectSources {
+		if err := contract.ValidateSource(source); err != nil {
+			return fmt.Errorf("%w: expect source %q: %w", ErrInvalidConfigField, source, err)
 		}
 	}
 

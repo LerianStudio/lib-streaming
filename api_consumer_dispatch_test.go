@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/LerianStudio/lib-streaming/v3/internal/consumer"
 )
 
 // trackingHandler returns a HandlerFunc and a pointer to the flag it flips.
@@ -312,23 +314,161 @@ func TestConsumerBuilder_HandlerWithExpectSourcesFailsPrecisely(t *testing.T) {
 	}
 }
 
-// TestConsumerBuilder_HandlerWithUnmatchedPolicyIsAccepted pins the other half
-// of the same fix: UnmatchedPolicy also allocates the dispatcher, and it must
-// not turn a valid whole-stream Handler build into a mutual-exclusion error.
-func TestConsumerBuilder_HandlerWithUnmatchedPolicyIsAccepted(t *testing.T) {
+// TestConsumerBuilder_HandlerWithUnmatchedPolicyFailsPrecisely pins the third
+// dispatch-only knob under the same rule as the other two.
+//
+// UnmatchedPolicy decides what the DISPATCHER does with a key it has no handler
+// for. A whole-stream Handler receives every record and selects for itself, so
+// the knob does nothing — and an operator who wrote UnmatchedPolicy(
+// UnmatchedError) believes unknown keys are being quarantined when they are
+// not. Every dispatch-only knob now errors under Handler; none is inert.
+//
+// It still must not blame On(...), which the caller never wrote: allocating the
+// dispatcher is not the same as asking for dispatch.
+func TestConsumerBuilder_HandlerWithUnmatchedPolicyFailsPrecisely(t *testing.T) {
 	t.Parallel()
 
-	handler, err := NewConsumer().
+	_, err := NewConsumer().
 		Brokers("localhost:9092").Group("g").Apps("lender").
 		UnmatchedPolicy(UnmatchedError).
 		Handler(rawStreamHandler{}).
 		resolveHandler()
-	if err != nil {
-		t.Fatalf("resolveHandler() = %v; want nil (UnmatchedPolicy is inert without On)", err)
+
+	if !errors.Is(err, ErrHandlerAndUnmatchedPolicyBothSet) {
+		t.Fatalf("resolveHandler() = %v; want ErrHandlerAndUnmatchedPolicyBothSet", err)
 	}
 
-	if _, ok := handler.(rawStreamHandler); !ok {
-		t.Fatalf("resolveHandler() returned %T; want the caller's whole-stream handler", handler)
+	if errors.Is(err, ErrHandlerAndDispatchBothSet) {
+		t.Fatal("resolveHandler() blamed On(...), which the caller never wrote")
+	}
+}
+
+// TestConsumerBuilder_HandlerRejectsEveryDispatchOnlyKnob is the rule itself, as
+// one table: under a whole-stream Handler, each dispatch-only knob fails with
+// its own sentinel, and a Handler with none of them builds clean.
+func TestConsumerBuilder_HandlerRejectsEveryDispatchOnlyKnob(t *testing.T) {
+	t.Parallel()
+
+	handlerFn, _ := trackingHandler()
+
+	tests := []struct {
+		name  string
+		apply func(*ConsumerBuilder) *ConsumerBuilder
+		want  error
+	}{
+		{"no dispatch-only knob", func(b *ConsumerBuilder) *ConsumerBuilder { return b }, nil},
+		{"On", func(b *ConsumerBuilder) *ConsumerBuilder { return b.On("loan.disbursed", handlerFn) }, ErrHandlerAndDispatchBothSet},
+		{"UnmatchedPolicy", func(b *ConsumerBuilder) *ConsumerBuilder { return b.UnmatchedPolicy(UnmatchedError) }, ErrHandlerAndUnmatchedPolicyBothSet},
+		{"ExpectSources", func(b *ConsumerBuilder) *ConsumerBuilder { return b.ExpectSources("lender") }, ErrHandlerAndExpectSourcesBothSet},
+		{
+			"ExpectSources from the environment",
+			func(b *ConsumerBuilder) *ConsumerBuilder {
+				cfg := b.cfg
+				cfg.ExpectSources = []string{"lender"}
+
+				return b.FromConfig(cfg)
+			},
+			ErrHandlerAndExpectSourcesBothSet,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			b := tt.apply(NewConsumer().Brokers("localhost:9092").Group("g").Apps("lender")).
+				Handler(rawStreamHandler{})
+
+			handler, err := b.resolveHandler()
+
+			if tt.want == nil {
+				if err != nil {
+					t.Fatalf("resolveHandler() = %v; want nil", err)
+				}
+
+				if _, ok := handler.(rawStreamHandler); !ok {
+					t.Fatalf("resolveHandler() returned %T; want the caller's whole-stream handler", handler)
+				}
+
+				return
+			}
+
+			if !errors.Is(err, tt.want) {
+				t.Fatalf("resolveHandler() = %v; want %v", err, tt.want)
+			}
+
+			if handler != nil {
+				t.Errorf("resolveHandler() returned a %T alongside its error; want nil", handler)
+			}
+		})
+	}
+}
+
+// TestConsumerBuilder_EnvExpectSourcesResolvesTheAppsPlusTopicsRefusal pins the
+// env-only escape from the Apps+Topics ambiguity.
+//
+// Build hard-fails when both subscription styles are set and no allowlist is
+// stated, and until STREAMING_CONSUMER_EXPECT_SOURCES existed that shape could
+// only be resolved in code — an operator wiring both from the environment had
+// no way out at all.
+func TestConsumerBuilder_EnvExpectSourcesResolvesTheAppsPlusTopicsRefusal(t *testing.T) {
+	t.Parallel()
+
+	handlerFn, _ := trackingHandler()
+
+	cfg := consumer.DefaultBuilderConfig()
+	cfg.Brokers = []string{"localhost:9092"}
+	cfg.Group = "g"
+	cfg.Apps = []string{"lender"}
+	cfg.Topics = []string{"some.legacy.topic"}
+	cfg.ExpectSources = []string{"lender", "legacy-writer"}
+
+	handler, err := NewConsumer().
+		FromConfig(cfg).
+		On("loan.disbursed", handlerFn).
+		resolveHandler()
+	if err != nil {
+		t.Fatalf("resolveHandler() = %v; want nil (the env allowlist is an explicit list)", err)
+	}
+
+	legacy := Event{Source: "legacy-writer", ResourceType: "loan", EventType: "disbursed"}
+	if err := handler.Handle(context.Background(), legacy, nil); err != nil {
+		t.Fatalf("Handle(raw-topic producer) = %v; want nil (the env allowlist admits it)", err)
+	}
+
+	foreign := Event{Source: "someone-else", ResourceType: "loan", EventType: "disbursed"}
+	if err := handler.Handle(context.Background(), foreign, nil); !errors.Is(err, ErrUnexpectedSource) {
+		t.Fatalf("Handle(foreign producer) = %v; want ErrUnexpectedSource", err)
+	}
+}
+
+// TestConsumerBuilder_FluentExpectSourcesOverridesTheEnvironment pins the
+// precedence: a fluent ExpectSources call wins over
+// STREAMING_CONSUMER_EXPECT_SOURCES, matching every other builder setter
+// applied after FromConfig.
+func TestConsumerBuilder_FluentExpectSourcesOverridesTheEnvironment(t *testing.T) {
+	t.Parallel()
+
+	handlerFn, _ := trackingHandler()
+
+	cfg := consumer.DefaultBuilderConfig()
+	cfg.Brokers = []string{"localhost:9092"}
+	cfg.Group = "g"
+	cfg.Apps = []string{"lender"}
+	cfg.ExpectSources = []string{"lender", "stale-from-env"}
+
+	handler, err := NewConsumer().
+		FromConfig(cfg).
+		ExpectSources("lender").
+		On("loan.disbursed", handlerFn).
+		resolveHandler()
+	if err != nil {
+		t.Fatalf("resolveHandler() = %v; want nil", err)
+	}
+
+	stale := Event{Source: "stale-from-env", ResourceType: "loan", EventType: "disbursed"}
+	if err := handler.Handle(context.Background(), stale, nil); !errors.Is(err, ErrUnexpectedSource) {
+		t.Fatalf("Handle(env-only source) = %v; want ErrUnexpectedSource (the fluent list replaced it)", err)
 	}
 }
 

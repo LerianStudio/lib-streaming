@@ -187,3 +187,45 @@ func TestLoadConsumerConfig_EnabledMissingBrokers(t *testing.T) {
 		t.Fatalf("LoadConsumerConfig() = %v; want ErrMissingBrokers", err)
 	}
 }
+
+// TestLoadConsumerConfig_ReadsExpectSources pins the env surface for the
+// ce-source allowlist.
+//
+// Without it the environment surface was incomplete in a way that made one
+// documented shape unreachable: Build hard-fails when APPS and TOPICS are both
+// set and no explicit allowlist is given, and the allowlist could only be
+// stated in code. An operator wiring both from env had no env-only way out.
+func TestLoadConsumerConfig_ReadsExpectSources(t *testing.T) {
+	t.Setenv("STREAMING_CONSUMER_ENABLED", "true")
+	t.Setenv("STREAMING_CONSUMER_BROKERS", "b1:9092")
+	t.Setenv("STREAMING_CONSUMER_GROUP", "svc")
+	t.Setenv("STREAMING_CONSUMER_APPS", "lender")
+	t.Setenv("STREAMING_CONSUMER_TOPICS", "legacy.topic")
+	t.Setenv("STREAMING_CONSUMER_EXPECT_SOURCES", "lender, matcher")
+
+	cfg, _, err := LoadConsumerConfig()
+	if err != nil {
+		t.Fatalf("LoadConsumerConfig() error = %v", err)
+	}
+
+	if len(cfg.ExpectSources) != 2 || cfg.ExpectSources[0] != "lender" || cfg.ExpectSources[1] != "matcher" {
+		t.Errorf("ExpectSources = %v; want [lender matcher] (trimmed CSV split)", cfg.ExpectSources)
+	}
+}
+
+// TestLoadConsumerConfig_RejectsMalformedExpectSources holds the env entries to
+// the same strict source rule Apps entries obey. A hyphen/underscore typo
+// matches no real producer, so it would quarantine 100% of the stream while the
+// consumer reports healthy — that must fail at load, not at 3am.
+func TestLoadConsumerConfig_RejectsMalformedExpectSources(t *testing.T) {
+	t.Setenv("STREAMING_CONSUMER_ENABLED", "true")
+	t.Setenv("STREAMING_CONSUMER_BROKERS", "b1:9092")
+	t.Setenv("STREAMING_CONSUMER_GROUP", "svc")
+	t.Setenv("STREAMING_CONSUMER_TOPICS", "legacy.topic")
+	t.Setenv("STREAMING_CONSUMER_EXPECT_SOURCES", "Lender")
+
+	_, _, err := LoadConsumerConfig()
+	if !errors.Is(err, ErrInvalidConfigField) {
+		t.Fatalf("LoadConsumerConfig() = %v; want ErrInvalidConfigField", err)
+	}
+}

@@ -167,8 +167,13 @@ type ConsumerBuilder struct {
 	// != nil` made .Handler(h).ExpectSources(...) fail with "Handler and On
 	// are mutually exclusive" when the caller had never written On.
 	dispatchWanted bool
-	classifier     Classifier
-	opts           []ConsumerOption
+	// unmatchedSet records that UnmatchedPolicy was called. The dispatcher's
+	// own field cannot answer this — UnmatchedIgnore is both the default and a
+	// legal explicit choice — and the knob is inert under a whole-stream
+	// Handler, so Build has to be able to tell "set" from "defaulted".
+	unmatchedSet bool
+	classifier   Classifier
+	opts         []ConsumerOption
 }
 
 // NewConsumer returns a ConsumerBuilder defaulted to ENABLED — an explicitly
@@ -302,7 +307,9 @@ func (b *ConsumerBuilder) On(eventKey string, handler HandlerFunc) *ConsumerBuil
 }
 
 // UnmatchedPolicy sets what happens to an event with no registered handler.
-// Defaults to UnmatchedIgnore. Only meaningful alongside On.
+// Defaults to UnmatchedIgnore. It applies to On(...) dispatch only; combining
+// it with a whole-stream Handler(...) is a build error rather than a silently
+// inert setting.
 func (b *ConsumerBuilder) UnmatchedPolicy(policy UnmatchedPolicy) *ConsumerBuilder {
 	if b == nil {
 		return b
@@ -311,6 +318,8 @@ func (b *ConsumerBuilder) UnmatchedPolicy(policy UnmatchedPolicy) *ConsumerBuild
 	if b.dispatcher == nil {
 		b.dispatcher = consumer.NewDispatcher()
 	}
+
+	b.unmatchedSet = true
 
 	b.dispatcher.OnUnmatched(policy)
 
@@ -507,6 +516,12 @@ func (b *ConsumerBuilder) Build(ctx context.Context) (Consumer, error) {
 // .Handler(h).ExpectSources("lender") fail with "Handler and On are mutually
 // exclusive" while the caller had never written On.
 //
+// A whole-stream Handler rejects EVERY dispatch-only knob rather than ignoring
+// any of them: On, UnmatchedPolicy, and ExpectSources (including the one
+// STREAMING_CONSUMER_EXPECT_SOURCES supplies) each name a selection or
+// verification the raw Handler owns itself, so a silently inert one is an
+// operator believing a check is running that is not.
+//
 // When the dispatcher is used and the caller did not name expected sources
 // explicitly, the Apps list becomes the expected-source allowlist. That is the
 // ergonomic payoff of subscribing by application: source verification — which
@@ -520,7 +535,11 @@ func (b *ConsumerBuilder) resolveHandler() (Handler, error) {
 			return nil, consumer.ErrHandlerAndDispatchBothSet
 		}
 
-		if b.dispatcher != nil && len(b.dispatcher.ExpectedSources()) > 0 {
+		if b.unmatchedSet {
+			return nil, consumer.ErrHandlerAndUnmatchedPolicyBothSet
+		}
+
+		if len(b.cfg.ExpectSources) > 0 || (b.dispatcher != nil && len(b.dispatcher.ExpectedSources()) > 0) {
 			return nil, consumer.ErrHandlerAndExpectSourcesBothSet
 		}
 
@@ -537,7 +556,11 @@ func (b *ConsumerBuilder) resolveHandler() (Handler, error) {
 		return nil, fmt.Errorf("%w: dispatching consumer has no On(...) handlers registered", consumer.ErrNilHandler)
 	}
 
-	return b.dispatcher, b.resolveExpectedSources()
+	if err := b.resolveExpectedSources(); err != nil {
+		return nil, err
+	}
+
+	return b.dispatcher, nil
 }
 
 // resolveExpectedSources settles the dispatcher's ce-source allowlist.
@@ -555,7 +578,15 @@ func (b *ConsumerBuilder) resolveHandler() (Handler, error) {
 //     would DLQ every record from the raw topics, whose producers were never
 //     named; skipping verification would silently drop the check the Apps
 //     subscription paid for. Neither is a defensible guess.
+//
+// STREAMING_CONSUMER_EXPECT_SOURCES (adopted via FromConfig) counts as an
+// explicit list — it is the env-only way out of the Apps+Topics refusal — and a
+// fluent ExpectSources(...) call overrides it.
 func (b *ConsumerBuilder) resolveExpectedSources() error {
+	if len(b.dispatcher.ExpectedSources()) == 0 && len(b.cfg.ExpectSources) > 0 {
+		b.dispatcher.ExpectSources(b.cfg.ExpectSources...)
+	}
+
 	explicit := b.dispatcher.ExpectedSources()
 
 	if len(explicit) == 0 {

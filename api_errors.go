@@ -110,6 +110,10 @@ var (
 	// when a whole-stream Handler is combined with ExpectSources, which only
 	// the dispatcher enforces.
 	ErrHandlerAndExpectSourcesBothSet = consumer.ErrHandlerAndExpectSourcesBothSet
+	// ErrHandlerAndUnmatchedPolicyBothSet is returned by ConsumerBuilder.Build
+	// when a whole-stream Handler is combined with UnmatchedPolicy, which only
+	// the dispatcher enforces.
+	ErrHandlerAndUnmatchedPolicyBothSet = consumer.ErrHandlerAndUnmatchedPolicyBothSet
 	// ErrAmbiguousSourceVerification is returned by ConsumerBuilder.Build when
 	// Apps(...) and Topics(...) are both set without an explicit
 	// ExpectSources(...).
