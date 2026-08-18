@@ -25,7 +25,6 @@ func kgoOptsTestConfig() ConsumerConfig {
 		RetryBackoffMax:     2 * time.Millisecond,
 		RetryInLoopMaxDwell: 10 * time.Millisecond,
 		CloseTimeout:        time.Second,
-		DLQTopicSuffix:      ".dlq",
 	}
 }
 

@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/twmb/franz-go/pkg/sasl/plain"
+
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
 )
 
 func validBaseConfig() ConsumerConfig {
@@ -23,7 +25,6 @@ func validBaseConfig() ConsumerConfig {
 		RetryInLoopMaxDwell: time.Second,
 		HaltBackoff:         250 * time.Millisecond,
 		CloseTimeout:        30 * time.Second,
-		DLQTopicSuffix:      ".dlq",
 	}
 }
 
@@ -46,8 +47,6 @@ func TestValidate(t *testing.T) {
 		{"zero retry budget is valid (no in-loop retry)", func(c *ConsumerConfig) { c.RetryBudget = 0 }, nil},
 		{"zero halt backoff is valid", func(c *ConsumerConfig) { c.HaltBackoff = 0 }, nil},
 		{"zero poll timeout is valid (block)", func(c *ConsumerConfig) { c.PollTimeout = 0 }, nil},
-		{"whitespace-only DLQ suffix rejected", func(c *ConsumerConfig) { c.DLQTopicSuffix = "  " }, ErrInvalidConfigField},
-		{"empty DLQ suffix is valid (defaulted upstream)", func(c *ConsumerConfig) { c.DLQTopicSuffix = "" }, nil},
 		{"in-loop dwell above ceiling rejected", func(c *ConsumerConfig) { c.RetryInLoopMaxDwell = maxSafeRetryInLoopDwell + time.Second }, ErrInvalidConfigField},
 		{"in-loop dwell at ceiling is valid", func(c *ConsumerConfig) { c.RetryInLoopMaxDwell = maxSafeRetryInLoopDwell }, nil},
 	}
@@ -142,28 +141,26 @@ func TestLoadConsumerConfig_Defaults(t *testing.T) {
 		t.Errorf("RetryInLoopMaxDwell = %s; want default %s", cfg.RetryInLoopMaxDwell, defaultRetryInLoopMaxDwell)
 	}
 
-	if cfg.DLQTopicSuffix != DefaultDLQTopicSuffix {
-		t.Errorf("DLQTopicSuffix = %q; want default %q", cfg.DLQTopicSuffix, DefaultDLQTopicSuffix)
-	}
 }
 
-// TestLoadConsumerConfig_BlankSuffixDefaulted proves an env var explicitly set to
-// "" (which GetenvOrDefault does NOT substitute) is re-defaulted to ".dlq" so a
-// terminal record never republishes into the source topic and loops.
-func TestLoadConsumerConfig_BlankSuffixDefaulted(t *testing.T) {
+// TestLoadConsumerConfig_IgnoresRetiredDLQSuffixVar proves the DLQ topic name
+// is not configurable from the environment. The two-name ACL contract
+// (lerian.streaming.<app> plus its .dlq) is the point of the topic collapse; a
+// free-text knob could rename the second half out from under the grant, and
+// the suffix was duplicated in two packages to boot.
+func TestLoadConsumerConfig_IgnoresRetiredDLQSuffixVar(t *testing.T) {
 	t.Setenv("STREAMING_CONSUMER_ENABLED", "true")
 	t.Setenv("STREAMING_CONSUMER_BROKERS", "b1:9092")
 	t.Setenv("STREAMING_CONSUMER_GROUP", "svc")
 	t.Setenv("STREAMING_CONSUMER_TOPICS", "topic.a")
-	t.Setenv("STREAMING_CONSUMER_DLQ_SUFFIX", "")
+	t.Setenv("STREAMING_CONSUMER_DLQ_SUFFIX", ".quarantine")
 
-	cfg, _, err := LoadConsumerConfig()
-	if err != nil {
+	if _, _, err := LoadConsumerConfig(); err != nil {
 		t.Fatalf("LoadConsumerConfig() error = %v", err)
 	}
 
-	if cfg.DLQTopicSuffix != DefaultDLQTopicSuffix {
-		t.Errorf("DLQTopicSuffix = %q; want re-defaulted %q", cfg.DLQTopicSuffix, DefaultDLQTopicSuffix)
+	if contract.DLQTopicSuffix != ".dlq" {
+		t.Fatalf("contract.DLQTopicSuffix = %q; want the single library-owned \".dlq\"", contract.DLQTopicSuffix)
 	}
 }
 

@@ -34,6 +34,50 @@ var (
 	ErrNilHandler = errors.New("streaming consumer: handler is required")
 )
 
+// Builder-shape sentinels. Every one of these is a wiring mistake the builder
+// can prove at Build time, and each says exactly which combination is
+// contradictory — a shared "invalid configuration" error would leave the
+// adopter guessing which of two knobs to remove.
+//
+// They live here rather than at the root facade so the root can alias them and
+// internal/consumer stays the single owner of the consumer error vocabulary.
+var (
+	// ErrHandlerAndDispatchBothSet is returned when a consumer wires both
+	// Handler (whole-stream) and On (per-event dispatch). They are two
+	// different answers to "who selects events", and silently preferring one
+	// would drop the other's handlers without a word.
+	ErrHandlerAndDispatchBothSet = errors.New(
+		"streaming consumer: Handler(...) and On(...) are mutually exclusive — use On for per-event dispatch, Handler for the raw stream")
+
+	// ErrHandlerAndExpectSourcesBothSet is returned when a whole-stream
+	// Handler is combined with ExpectSources. Source verification is enforced
+	// by the dispatcher; a raw Handler sees every record regardless, so the
+	// allowlist would be silently inert.
+	ErrHandlerAndExpectSourcesBothSet = errors.New(
+		"streaming consumer: ExpectSources(...) applies to On(...) dispatch only — a whole-stream Handler(...) must verify ce-source itself")
+
+	// ErrAmbiguousSourceVerification is returned when Apps(...) and Topics(...)
+	// are BOTH set and no explicit ExpectSources(...) was given. Defaulting the
+	// allowlist to Apps would quarantine 100% of the raw Topics stream, whose
+	// producers were never named; refusing to verify would silently drop the
+	// check the Apps subscription paid for. The adopter has to say which.
+	ErrAmbiguousSourceVerification = errors.New(
+		"streaming consumer: Apps(...) and Topics(...) are both set — state ExpectSources(...) explicitly, since the Apps-derived allowlist would quarantine every record from the raw topics")
+
+	// ErrExpectSourcesMissingApp is returned when an explicit ExpectSources
+	// list omits an application named in Apps. Subscribing to an app's topic
+	// while refusing its ce-source quarantines that whole stream, which is
+	// always a bug.
+	ErrExpectSourcesMissingApp = errors.New(
+		"streaming consumer: ExpectSources(...) omits an app named in Apps(...) — its entire stream would be quarantined")
+
+	// ErrInvalidExpectSource is returned when an ExpectSources entry is not a
+	// legal ce-source. A hyphen/underscore typo there matches nothing, so the
+	// consumer quarantines 100% of its stream while reporting healthy.
+	ErrInvalidExpectSource = errors.New(
+		"streaming consumer: ExpectSources(...) entry is not a legal ce-source")
+)
+
 // ConsumerConfig is the full runtime configuration for a Consumer. It is the
 // inbound symmetric counterpart to internal/config.Config (producer). Every
 // field maps to a STREAMING_CONSUMER_* environment variable consumed by
@@ -113,10 +157,6 @@ type ConsumerConfig struct {
 	// CloseTimeout bounds graceful drain on Close. Default: 30s.
 	// STREAMING_CONSUMER_CLOSE_TIMEOUT_S.
 	CloseTimeout time.Duration
-	// DLQTopicSuffix is appended to the source topic to derive the DLQ
-	// topic (<topic><suffix>). Default: ".dlq". STREAMING_CONSUMER_DLQ_SUFFIX.
-	DLQTopicSuffix string
-
 	// tlsConfig / saslMechanism / allowPlaintextSASL mirror the producer's
 	// transport-security plumbing. In wave 2 these move to a shared
 	// internal/kafkasec package (see docs/design/consumer.md) so producer and
@@ -135,13 +175,6 @@ const (
 	defaultRetryInLoopMaxDwell = 1 * time.Second
 	defaultHaltBackoff         = 250 * time.Millisecond
 	defaultCloseTimeout        = 30 * time.Second
-	// DefaultDLQTopicSuffix is the suffix appended to a source topic to derive its
-	// DLQ topic when the caller omits one. Exported so the root builder
-	// (NewConsumer) applies the identical default on the programmatic path that
-	// LoadConsumerConfig applies on the env path — a blank suffix would derive
-	// <topic><""> == the source topic and loop a terminal record forever.
-	DefaultDLQTopicSuffix = ".dlq"
-
 	// maxSafeRetryInLoopDwell caps RetryInLoopMaxDwell. The member holds
 	// BlockRebalanceOnPoll for the life of the batch (config.go:1944-1953 warns this
 	// exact mode), so the aggregate in-loop dwell must stay comfortably below the
@@ -166,7 +199,6 @@ func DefaultBuilderConfig() ConsumerConfig {
 		RetryInLoopMaxDwell: defaultRetryInLoopMaxDwell,
 		HaltBackoff:         defaultHaltBackoff,
 		CloseTimeout:        defaultCloseTimeout,
-		DLQTopicSuffix:      DefaultDLQTopicSuffix,
 	}
 }
 
@@ -195,14 +227,6 @@ func LoadConsumerConfig() (ConsumerConfig, []string, error) {
 		HaltBackoff:         getenvMsOrDefault("STREAMING_CONSUMER_HALT_BACKOFF_MS", defaultHaltBackoff),
 		PollTimeout:         getenvMsOrDefault("STREAMING_CONSUMER_POLL_TIMEOUT_MS", 0),
 		CloseTimeout:        getenvSecOrDefault("STREAMING_CONSUMER_CLOSE_TIMEOUT_S", defaultCloseTimeout),
-		DLQTopicSuffix:      commons.GetenvOrDefault("STREAMING_CONSUMER_DLQ_SUFFIX", DefaultDLQTopicSuffix),
-	}
-
-	// GetenvOrDefault only substitutes the default when the var is UNSET; an env
-	// var explicitly set to "" slips through as a blank suffix. Re-apply the
-	// default so <topic><suffix> never collides with the source topic.
-	if cfg.DLQTopicSuffix == "" {
-		cfg.DLQTopicSuffix = DefaultDLQTopicSuffix
 	}
 
 	if !cfg.Enabled {
@@ -275,15 +299,6 @@ func (c ConsumerConfig) Validate() error {
 
 	if c.PollTimeout < 0 {
 		return fmt.Errorf("%w: PollTimeout=%s (must be >= 0)", ErrInvalidConfigField, c.PollTimeout)
-	}
-
-	// A whitespace-only suffix trims to empty -> <topic><suffix> collides with the
-	// source topic and a terminal record loops back into the SUBSCRIBED stream
-	// instead of quarantining. An EMPTY suffix is defaulted to DefaultDLQTopicSuffix
-	// upstream (NewConsumer / LoadConsumerConfig); a non-empty-but-blank one is a
-	// caller mistake we reject rather than silently default over.
-	if c.DLQTopicSuffix != "" && strings.TrimSpace(c.DLQTopicSuffix) == "" {
-		return fmt.Errorf("%w: DLQTopicSuffix is whitespace-only (would collide with the source topic)", ErrInvalidConfigField)
 	}
 
 	// Transport-security gate (shared with the producer via internal/kafkasec):

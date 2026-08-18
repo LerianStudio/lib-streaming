@@ -387,7 +387,6 @@ func newTestRuntime(t testingTB, client GroupClient, handler Handler, dlq dlqPub
 		RetryInLoopMaxDwell: 10 * time.Millisecond,
 		HaltBackoff:         time.Millisecond,
 		CloseTimeout:        time.Second,
-		DLQTopicSuffix:      ".dlq",
 	}
 
 	all := append([]Option{WithDLQPublisher(dlq)}, opts...)

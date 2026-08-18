@@ -40,10 +40,6 @@ func TestDefaultBuilderConfig(t *testing.T) {
 		t.Errorf("duration defaults not all applied: %+v", cfg)
 	}
 
-	if cfg.DLQTopicSuffix != DefaultDLQTopicSuffix {
-		t.Errorf("DLQTopicSuffix = %q; want %q", cfg.DLQTopicSuffix, DefaultDLQTopicSuffix)
-	}
-
 	// Seeded config + the required fields must validate clean.
 	cfg.Brokers = []string{"localhost:9092"}
 	cfg.Group = "g"
@@ -111,15 +107,17 @@ func TestBuild_BlankSuffixNormalized(t *testing.T) {
 	cfg.Brokers = []string{"localhost:9092"}
 	cfg.Group = "g"
 	cfg.Topics = []string{"t"}
-	cfg.DLQTopicSuffix = "" // blank -> must be normalized
 
 	c, err := Build(context.Background(), cfg, &fakeHandler{})
 	if err != nil {
-		t.Fatalf("Build with blank suffix = %v; want nil (normalized)", err)
+		t.Fatalf("Build = %v; want nil", err)
 	}
 
-	if got := c.(*consumerRuntime).cfg.DLQTopicSuffix; got != DefaultDLQTopicSuffix {
-		t.Errorf("normalized DLQTopicSuffix = %q; want %q", got, DefaultDLQTopicSuffix)
+	// The DLQ suffix is not configurable: the two-name ACL contract
+	// (lerian.streaming.<app> plus its .dlq) is the whole point, and a
+	// free-text knob could rename the second half out from under it.
+	if got := c.(*consumerRuntime).dlq.(*transportDLQPublisher).suffix; got != contract.DLQTopicSuffix {
+		t.Errorf("DLQ suffix = %q; want the library constant %q", got, contract.DLQTopicSuffix)
 	}
 
 	_ = c.Close()

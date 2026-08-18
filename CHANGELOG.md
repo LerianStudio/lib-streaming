@@ -29,7 +29,7 @@ consumer subscription at them. Per-event topics are no longer written to.
 ### BREAKING: `ce-source` is strict
 
 A source must be a single dot-free lowercase segment matching
-`^[a-z0-9][a-z0-9_-]*$`, and at most 231 bytes so the derived DLQ topic fits
+`^[a-z0-9][a-z0-9_-]*$`, and at most 228 bytes so the derived DLQ topic fits
 Kafka's 249-byte limit. `contract.ValidateSource` (exported as
 `streaming.ValidateSource`) is applied at `LoadConfig`, `Builder.Build`,
 `NewPublisherDescriptor`, and producer preflight.

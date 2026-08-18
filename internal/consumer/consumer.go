@@ -186,14 +186,6 @@ func Build(ctx context.Context, cfg ConsumerConfig, handler Handler, opts ...Opt
 		return NewNoop(), nil
 	}
 
-	// Normalize a blank suffix to the safe default before validation/wiring so a
-	// directly-constructed ConsumerConfig (not via NewConsumer/LoadConsumerConfig)
-	// never derives <topic><""> == the source topic. A whitespace-only suffix is
-	// rejected by Validate below.
-	if cfg.DLQTopicSuffix == "" {
-		cfg.DLQTopicSuffix = DefaultDLQTopicSuffix
-	}
-
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
@@ -227,7 +219,7 @@ func Build(ctx context.Context, cfg ConsumerConfig, handler Handler, opts ...Opt
 
 	dlq := &transportDLQPublisher{
 		adapter: dlqAdapter,
-		suffix:  cfg.DLQTopicSuffix,
+		suffix:  contract.DLQTopicSuffix,
 		groupID: cfg.Group,
 	}
 

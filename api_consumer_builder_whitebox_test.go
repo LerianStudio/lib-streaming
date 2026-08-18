@@ -41,7 +41,6 @@ func TestConsumerBuilder_SettersMapToConfig(t *testing.T) {
 		Group("svc-group").
 		Topics("topic.a", "topic.b").
 		Handler(noopHandler{}).
-		DLQTopicSuffix(".quarantine").
 		RetryBudget(7).
 		CloseTimeout(12 * time.Second)
 
@@ -63,10 +62,6 @@ func TestConsumerBuilder_SettersMapToConfig(t *testing.T) {
 
 	if b.handler == nil {
 		t.Error("Handler did not set b.handler")
-	}
-
-	if b.cfg.DLQTopicSuffix != ".quarantine" {
-		t.Errorf("DLQTopicSuffix = %q; want .quarantine", b.cfg.DLQTopicSuffix)
 	}
 
 	if b.cfg.RetryBudget != 7 {
@@ -115,7 +110,6 @@ func TestConsumerBuilder_NilReceiverGuards(t *testing.T) {
 		func() *ConsumerBuilder { return b.SASL(plain.Auth{User: "u", Pass: "p"}.AsMechanism()) },
 		func() *ConsumerBuilder { return b.AllowPlaintextSASL() },
 		func() *ConsumerBuilder { return b.Handler(noopHandler{}) },
-		func() *ConsumerBuilder { return b.DLQTopicSuffix(".dlq") },
 		func() *ConsumerBuilder { return b.RetryBudget(3) },
 		func() *ConsumerBuilder { return b.Classifier(func(error) bool { return false }) },
 		func() *ConsumerBuilder { return b.CloseTimeout(time.Second) },

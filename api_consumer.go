@@ -3,7 +3,6 @@ package streaming
 import (
 	"context"
 	"crypto/tls"
-	"errors"
 	"fmt"
 	"time"
 
@@ -50,6 +49,29 @@ type Consumer = consumer.Runner
 // ConsumerOption is the functional-option type for advanced consumer wiring
 // not covered by a dedicated builder method.
 type ConsumerOption = consumer.Option
+
+// ConsumerConfig is the full runtime configuration for a Consumer — the
+// inbound counterpart to the producer's Config. Every field maps to a
+// STREAMING_CONSUMER_* environment variable read by LoadConsumerConfig.
+type ConsumerConfig = consumer.ConsumerConfig
+
+// LoadConsumerConfig reads every STREAMING_CONSUMER_* environment variable,
+// applies defaults, and validates the result when Enabled=true. The second
+// return value carries human-readable warnings and is never nil.
+//
+// TLS and SASL are deliberately absent from the environment surface — wire
+// them programmatically through ConsumerBuilder.TLS / .SASL. Secrets do not
+// belong in env-string config.
+//
+// Pair it with ConsumerBuilder.FromConfig to go from environment to a running
+// consumer without restating a single knob:
+//
+//	cfg, warnings, err := streaming.LoadConsumerConfig()
+//	if err != nil { return err }
+//	c, err := streaming.NewConsumer().FromConfig(cfg).On("loan.disbursed", h).Build(ctx)
+func LoadConsumerConfig() (ConsumerConfig, []string, error) {
+	return consumer.LoadConsumerConfig()
+}
 
 // HandlerFunc is a single-event handler registered under an event key via
 // ConsumerBuilder.On. Same signature as Handler.Handle.
@@ -138,8 +160,15 @@ type ConsumerBuilder struct {
 	cfg        consumer.ConsumerConfig
 	handler    Handler
 	dispatcher *consumer.Dispatcher
-	classifier Classifier
-	opts       []ConsumerOption
+	// dispatchWanted records that the caller asked for per-event dispatch,
+	// which ONLY On(...) does. UnmatchedPolicy and ExpectSources also
+	// allocate the dispatcher because they have somewhere to write, but
+	// allocating it is not a request for it: reading intent off `dispatcher
+	// != nil` made .Handler(h).ExpectSources(...) fail with "Handler and On
+	// are mutually exclusive" when the caller had never written On.
+	dispatchWanted bool
+	classifier     Classifier
+	opts           []ConsumerOption
 }
 
 // NewConsumer returns a ConsumerBuilder defaulted to ENABLED — an explicitly
@@ -155,6 +184,27 @@ func NewConsumer() *ConsumerBuilder {
 	// prevents <topic><""> == the source topic (a terminal record would loop
 	// forever instead of quarantining).
 	b := &ConsumerBuilder{cfg: consumer.DefaultBuilderConfig()}
+
+	return b
+}
+
+// FromConfig adopts a whole ConsumerConfig — typically the one LoadConsumerConfig
+// read from STREAMING_CONSUMER_* — as the builder's starting point, including
+// its Enabled kill switch. Fluent setters called AFTER it override individual
+// fields; setters called before it are discarded.
+//
+// This is the seam that makes the STREAMING_CONSUMER_* surface reachable at
+// all: without it, an operator could set STREAMING_CONSUMER_APPS and every
+// sibling variable and have nothing read them.
+//
+// Handlers are NOT part of ConsumerConfig — follow FromConfig with On(...) or
+// Handler(...).
+func (b *ConsumerBuilder) FromConfig(cfg ConsumerConfig) *ConsumerBuilder {
+	if b == nil {
+		return b
+	}
+
+	b.cfg = cfg
 
 	return b
 }
@@ -244,6 +294,8 @@ func (b *ConsumerBuilder) On(eventKey string, handler HandlerFunc) *ConsumerBuil
 		b.dispatcher = consumer.NewDispatcher()
 	}
 
+	b.dispatchWanted = true
+
 	b.dispatcher.On(eventKey, handler)
 
 	return b
@@ -265,10 +317,29 @@ func (b *ConsumerBuilder) UnmatchedPolicy(policy UnmatchedPolicy) *ConsumerBuild
 	return b
 }
 
-// ExpectSources overrides the producers accepted by source verification.
-// Apps(...) already populates this; use ExpectSources when subscribing through
-// the raw Topics(...) escape hatch and still wanting the check. With neither,
-// verification is off and any ce-source dispatches.
+// ExpectSources declares the producing applications accepted by source
+// verification, by ce-source.
+//
+// Precedence and shape, exactly:
+//
+//   - An explicit list REPLACES the allowlist Apps(...) would have implied.
+//     Repeated calls APPEND to each other, so the union of every call is the
+//     final list.
+//   - Every entry is validated at Build against the same strict source rule
+//     the producer enforces. A hyphen/underscore typo matches no real producer
+//     and would quarantine 100% of the stream, so it fails the build instead.
+//   - The list must COVER every app named in Apps(...). Subscribing to an
+//     app's topic while refusing its ce-source is a bug, not a filter — use
+//     On(...) to select events, not this.
+//   - With no explicit list and only Apps(...), the Apps become the allowlist.
+//   - With no explicit list and only raw Topics(...), verification is off and
+//     any ce-source dispatches.
+//   - With no explicit list and BOTH Apps and Topics, Build FAILS: neither
+//     defaulting to Apps (which would DLQ the whole raw stream) nor skipping
+//     the check is a defensible guess.
+//
+// It applies to On(...) dispatch only; combining it with a whole-stream
+// Handler(...) is a build error rather than a silently inert setting.
 func (b *ConsumerBuilder) ExpectSources(sources ...string) *ConsumerBuilder {
 	if b == nil {
 		return b
@@ -326,20 +397,6 @@ func (b *ConsumerBuilder) Handler(h Handler) *ConsumerBuilder {
 	}
 
 	b.handler = h
-
-	return b
-}
-
-// DLQTopicSuffix sets the suffix appended to the source topic to derive the DLQ
-// topic (<topic><suffix>). Default ".dlq". This is the only public DLQ knob:
-// the DLQ publisher itself is constructed internally over the transport seam,
-// not from a caller-supplied emitter (see ConsumerBuilder docs).
-func (b *ConsumerBuilder) DLQTopicSuffix(suffix string) *ConsumerBuilder {
-	if b == nil {
-		return b
-	}
-
-	b.cfg.DLQTopicSuffix = suffix
 
 	return b
 }
@@ -439,16 +496,16 @@ func (b *ConsumerBuilder) Build(ctx context.Context) (Consumer, error) {
 	return consumer.Build(ctx, b.cfg, handler, opts...)
 }
 
-// ErrHandlerAndDispatchBothSet is returned by Build when a consumer wires both
-// Handler (whole-stream) and On (per-event dispatch). They are two different
-// answers to "who selects events", and silently preferring one would drop the
-// other's handlers without a word.
-var ErrHandlerAndDispatchBothSet = errors.New(
-	"streaming consumer: Handler(...) and On(...) are mutually exclusive — use On for per-event dispatch, Handler for the raw stream")
-
 // resolveHandler picks the handler Build hands to the runtime: the
 // caller-supplied whole-stream Handler, or the dispatcher assembled from On /
 // UnmatchedPolicy / ExpectSources.
+//
+// Dispatch intent is read from dispatchWanted, which ONLY On(...) sets.
+// UnmatchedPolicy and ExpectSources also allocate the dispatcher (they have to
+// record something), but allocating it is not the same as asking for
+// per-event dispatch — treating it as such made
+// .Handler(h).ExpectSources("lender") fail with "Handler and On are mutually
+// exclusive" while the caller had never written On.
 //
 // When the dispatcher is used and the caller did not name expected sources
 // explicitly, the Apps list becomes the expected-source allowlist. That is the
@@ -458,15 +515,19 @@ var ErrHandlerAndDispatchBothSet = errors.New(
 func (b *ConsumerBuilder) resolveHandler() (Handler, error) {
 	hasHandler := !transport.IsNilInterface(b.handler)
 
-	if hasHandler && b.dispatcher != nil {
-		return nil, ErrHandlerAndDispatchBothSet
-	}
-
 	if hasHandler {
+		if b.dispatchWanted {
+			return nil, consumer.ErrHandlerAndDispatchBothSet
+		}
+
+		if b.dispatcher != nil && len(b.dispatcher.ExpectedSources()) > 0 {
+			return nil, consumer.ErrHandlerAndExpectSourcesBothSet
+		}
+
 		return b.handler, nil
 	}
 
-	if b.dispatcher == nil {
+	if !b.dispatchWanted {
 		// Neither wired. Let the runtime's own ErrNilHandler gate speak; it is
 		// the same failure a v2 consumer would have hit.
 		return nil, consumer.ErrNilHandler
@@ -476,9 +537,52 @@ func (b *ConsumerBuilder) resolveHandler() (Handler, error) {
 		return nil, fmt.Errorf("%w: dispatching consumer has no On(...) handlers registered", consumer.ErrNilHandler)
 	}
 
-	if len(b.dispatcher.ExpectedSources()) == 0 {
+	return b.dispatcher, b.resolveExpectedSources()
+}
+
+// resolveExpectedSources settles the dispatcher's ce-source allowlist.
+//
+// Three shapes, three outcomes:
+//
+//   - Explicit ExpectSources: REPLACES anything Apps would have implied. Every
+//     entry is validated with the same strict source rule the producer
+//     enforces (a hyphen/underscore typo would otherwise quarantine 100% of a
+//     stream while the consumer reported healthy), and the list must cover
+//     every app named in Apps — subscribing to an app's topic while refusing
+//     its source is always a bug, never a filter.
+//   - Apps only: the Apps list becomes the allowlist, verification for free.
+//   - Apps AND raw Topics with no explicit list: REFUSED. Defaulting to Apps
+//     would DLQ every record from the raw topics, whose producers were never
+//     named; skipping verification would silently drop the check the Apps
+//     subscription paid for. Neither is a defensible guess.
+func (b *ConsumerBuilder) resolveExpectedSources() error {
+	explicit := b.dispatcher.ExpectedSources()
+
+	if len(explicit) == 0 {
+		if len(b.cfg.Apps) > 0 && len(b.cfg.Topics) > 0 {
+			return fmt.Errorf("%w: apps=%v topics=%v", consumer.ErrAmbiguousSourceVerification, b.cfg.Apps, b.cfg.Topics)
+		}
+
 		b.dispatcher.ExpectSources(b.cfg.Apps...)
+
+		return nil
 	}
 
-	return b.dispatcher, nil
+	allowed := make(map[string]struct{}, len(explicit))
+
+	for _, source := range explicit {
+		if err := ValidateSource(source); err != nil {
+			return fmt.Errorf("%w: ExpectSources %q: %w", consumer.ErrInvalidExpectSource, source, err)
+		}
+
+		allowed[source] = struct{}{}
+	}
+
+	for _, app := range b.cfg.Apps {
+		if _, ok := allowed[app]; !ok {
+			return fmt.Errorf("%w: app %q is subscribed but not in ExpectSources %v", consumer.ErrExpectSourcesMissingApp, app, explicit)
+		}
+	}
+
+	return nil
 }
