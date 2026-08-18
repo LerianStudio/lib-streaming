@@ -113,11 +113,11 @@ func keepProducingLiteral(t *testing.T, cluster *kfake.Cluster, source string, p
 	})
 }
 
-// TestConsumerDispatch_KfakeRoundTripThroughPublicSurface produces a record
+// TestIntegration_ConsumerDispatchKfakeRoundTrip produces a record
 // with literal ce-headers, subscribes with Apps + On through the public
 // builder, and asserts the handler ran with the payload and that the offset was
 // committed.
-func TestConsumerDispatch_KfakeRoundTripThroughPublicSurface(t *testing.T) {
+func TestIntegration_ConsumerDispatchKfakeRoundTrip(t *testing.T) {
 	cluster := dispatchCluster(t)
 
 	payload := []byte(`{"amount":"1200.00"}`)
@@ -219,17 +219,17 @@ func TestConsumerDispatch_KfakeRoundTripThroughPublicSurface(t *testing.T) {
 	}
 }
 
-// TestConsumerDispatch_KfakeForeignSourceQuarantines is the negative case: the
+// TestIntegration_ConsumerDispatchForeignSourceQuarantines is the negative case: the
 // same literal record carrying a foreign ce-source must never reach a handler,
 // and must land on the DLQ tagged source_mismatch.
-func TestConsumerDispatch_KfakeForeignSourceQuarantines(t *testing.T) {
+func TestIntegration_ConsumerDispatchForeignSourceQuarantines(t *testing.T) {
 	cluster := dispatchCluster(t)
 
 	ran := make(chan struct{}, 1)
 
 	consumer, err := streaming.NewConsumer().
 		Brokers(cluster.ListenAddrs()...).
-		Group(dispatchGroup + "-foreign").
+		Group(dispatchGroup+"-foreign").
 		Apps(dispatchApp).
 		On(dispatchEventKey, func(context.Context, streaming.Event, []byte) error {
 			select {

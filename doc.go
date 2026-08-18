@@ -275,8 +275,23 @@
 //     ErrNoRoutesConfigured, ErrMissingTarget,
 //     ErrMultiTransportRuntimeNotConfigured, ErrInvalidTLSConfig,
 //     ErrPlaintextSASLNotAllowed, ErrInvalidSASLMechanism.
-//   - Config validation (LoadConfig): ErrMissingBrokers, ErrMissingSource,
-//     ErrInvalidCompression, ErrInvalidAcks.
+//
+//   - Producer config validation (LoadConfig, Builder.Build):
+//     ErrProducerMissingBrokers, ErrMissingSource, ErrInvalidSource,
+//     ErrProducerInvalidConfigField, ErrInvalidCompression, ErrInvalidAcks.
+//
+//   - Consumer config and wiring validation (ConsumerBuilder.Build):
+//     ErrConsumerMissingBrokers, ErrConsumerMissingGroup,
+//     ErrConsumerMissingTopics, ErrConsumerInvalidConfigField, ErrNilHandler,
+//     ErrHandlerAndDispatchBothSet, ErrHandlerAndExpectSourcesBothSet,
+//     ErrAmbiguousSourceVerification, ErrExpectSourcesMissingApp,
+//     ErrInvalidExpectSource.
+//
+//     The producer and the consumer define DIFFERENT error values for the
+//     same class of mistake, so each is named for its own side. A single bare
+//     ErrMissingBrokers could only ever have matched one of them, and the one
+//     the root used to export was the producer's.
+//
 //   - Lifecycle / wiring (NOT caller errors — IsCallerError returns false):
 //     ErrEmitterClosed, ErrNilProducer, ErrCircuitOpen,
 //     ErrOutboxNotConfigured, ErrOutboxTxUnsupported, ErrNilOutboxRegistry.
