@@ -129,13 +129,31 @@ const (
 // command, every resource type, every event type, every schema version —
 // rides this topic. Use it when provisioning topics, writing Kafka ACLs, or
 // naming an explicit Kafka destination.
-func AppTopic(source string) string {
-	return contract.AppTopic(source)
+//
+// It VALIDATES source and returns an error for a malformed one, because every
+// caller of this function is deriving a name something else will act on:
+// provisioning creates the topic, an ACL grants it, a route publishes to it.
+// Returning "lerian.streaming." for an empty source — as the unvalidated
+// version did — hands that garbage straight through to a real broker.
+//
+// The internal derivation stays validation-free on the Emit hot path, where
+// the source was already proven legal at Build.
+func AppTopic(source string) (string, error) {
+	if err := contract.ValidateSource(source); err != nil {
+		return "", err
+	}
+
+	return contract.AppTopic(source), nil
 }
 
 // AppDLQTopic returns the dead-letter topic for an application's stream.
-func AppDLQTopic(source string) string {
-	return contract.AppDLQTopic(source)
+// Like AppTopic, it validates source and returns an error for a malformed one.
+func AppDLQTopic(source string) (string, error) {
+	if err := contract.ValidateSource(source); err != nil {
+		return "", err
+	}
+
+	return contract.AppDLQTopic(source), nil
 }
 
 // ValidateSource reports whether source is a legal ce-source: a single

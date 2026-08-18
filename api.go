@@ -560,6 +560,8 @@ func (b *Builder) buildMulti(ctx context.Context, routeTable RouteTable) (Emitte
 		return nil, ErrMissingTarget
 	}
 
+	b.warnOffAppTopicKafkaRoutes(ctx, routeTable)
+
 	// Validate target names + kinds; build TargetSpecs.
 	specs, err := b.buildTargetSpecs(ctx)
 	if err != nil {
@@ -591,6 +593,44 @@ func (b *Builder) buildMulti(ctx context.Context, routeTable RouteTable) (Emitte
 	}
 
 	return &Producer{inner: inner}, nil
+}
+
+// warnOffAppTopicKafkaRoutes logs every Kafka route whose destination is
+// neither the application's topic nor its DLQ.
+//
+// One topic per producing application is a CONVENTION on the Builder path, not
+// a constraint: a Kafka destination is a caller-supplied string, and legitimate
+// reasons to point one elsewhere exist (mirroring into a legacy stream, a
+// migration window). So this warns rather than failing — but it warns, because
+// the same freedom silently defeats the two-name ACL grant the topic collapse
+// bought, and a topic outside the grant fails at publish time in production
+// with an authorization error that reads as a broker problem.
+//
+// AppTopic(source) and AppDLQTopic(source) are the two names in the grant.
+func (b *Builder) warnOffAppTopicKafkaRoutes(ctx context.Context, routeTable RouteTable) {
+	logger := b.resolveLogger()
+
+	appTopic := contract.AppTopic(b.source)
+	appDLQTopic := contract.AppDLQTopic(b.source)
+
+	for _, route := range routeTable.Definitions() {
+		if route.Destination.Kind != contract.TransportKafkaLike {
+			continue
+		}
+
+		if route.Destination.Name == appTopic || route.Destination.Name == appDLQTopic {
+			continue
+		}
+
+		logger.Log(ctx, log.LevelWarn,
+			"streaming: Kafka route destination is outside this application's topic pair — one topic per producing application is the convention, and a Kafka ACL scoped to the pair will reject this publish",
+			log.String("route_key", route.Key),
+			log.String("target", route.Target),
+			log.String("destination", route.Destination.Name),
+			log.String("app_topic", appTopic),
+			log.String("app_dlq_topic", appDLQTopic),
+		)
+	}
 }
 
 // buildTargetSpecs invokes the per-kind TransportAdapterFactory for each

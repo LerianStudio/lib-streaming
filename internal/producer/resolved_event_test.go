@@ -156,3 +156,64 @@ func TestResolveEvent_SystemEventLegalWithoutTenantID(t *testing.T) {
 		t.Errorf("PartitionKey() = %q; want prefix system:", partitionKey)
 	}
 }
+
+// TestResolveEvent_SystemEventDropsTenantID pins that a system event never
+// carries ce-tenantid, no matter what the caller passed.
+//
+// The contract says so in two places — Event.SystemEvent's godoc ("omits
+// ce-tenantid from headers") and the header builder, which emits ce-tenantid
+// whenever TenantID is non-empty. Those two disagreed: a system event with a
+// TenantID set shipped the header anyway, so a platform-level event arrived
+// looking tenant-scoped and any consumer filtering on ce-tenantid would route
+// it into one tenant's processing.
+func TestResolveEvent_SystemEventDropsTenantID(t *testing.T) {
+	t.Parallel()
+
+	cfg, _ := kfakeConfig(t)
+
+	catalog, err := NewCatalog(EventDefinition{
+		Key:          "ledger.rolled_over",
+		ResourceType: "ledger",
+		EventType:    "rolled_over",
+		SystemEvent:  true,
+	})
+	if err != nil {
+		t.Fatalf("NewCatalog err = %v", err)
+	}
+
+	emitter, err := New(context.Background(), cfg,
+		WithLogger(log.NewNop()),
+		WithCatalog(catalog),
+		WithAllowSystemEvents(),
+	)
+	if err != nil {
+		t.Fatalf("New err = %v", err)
+	}
+
+	t.Cleanup(func() { _ = emitter.Close() })
+
+	p := asProducer(t, emitter)
+
+	resolved, err := p.resolveEventAllowDisabled(EmitRequest{
+		DefinitionKey: "ledger.rolled_over",
+		TenantID:      "t-should-be-dropped",
+		Payload:       []byte(`{}`),
+	})
+	if err != nil {
+		t.Fatalf("resolveEvent err = %v", err)
+	}
+
+	if resolved.Event.TenantID != "" {
+		t.Fatalf("system event TenantID = %q; want empty", resolved.Event.TenantID)
+	}
+
+	for _, h := range buildTransportHeaders(context.Background(), resolved.Event) {
+		if h.Key == "ce-tenantid" {
+			t.Fatalf("system event emitted ce-tenantid = %q; the contract omits it", string(h.Value))
+		}
+	}
+
+	if got := resolved.Event.PartitionKey(); got != "system:"+resolved.Event.EventType {
+		t.Errorf("system PartitionKey() = %q; want the system prefix", got)
+	}
+}

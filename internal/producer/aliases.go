@@ -62,7 +62,6 @@ const (
 	maxTenantIDBytes          = contract.MaxTenantIDBytes
 	maxResourceTypeBytes      = contract.MaxResourceTypeBytes
 	maxEventTypeBytes         = contract.MaxEventTypeBytes
-	maxSourceBytes            = contract.MaxSourceBytes
 	maxSubjectBytes           = contract.MaxSubjectBytes
 	maxEventIDBytes           = contract.MaxEventIDBytes
 	maxSchemaVersionBytes     = contract.MaxSchemaVersionBytes

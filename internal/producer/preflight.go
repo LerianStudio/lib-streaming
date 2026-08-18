@@ -143,6 +143,10 @@ func (p *Producer) preFlightWithPayload(ctx context.Context, event Event, valida
 // the first offending sentinel. Empty values are NOT checked here —
 // required-vs-optional semantics live in preFlight (tenant, source).
 //
+// Source is absent from the table: ValidateSource already ran in preFlight and
+// bounds it at 228 bytes with a charset that admits no control character, so a
+// 2048-byte cap here could never fire. A dead check reads as protection.
+//
 // Uses the canonical contract.HeaderFieldCheck shape (re-exported via
 // aliases.go as headerFieldCheck) so the producer-side check table cannot
 // drift from the contract-side equivalent.
@@ -151,7 +155,6 @@ func (*Producer) validateHeaderSafeFields(event Event) error {
 		{Value: event.TenantID, MaxBytes: maxTenantIDBytes, Sentinel: ErrInvalidTenantID},
 		{Value: event.ResourceType, MaxBytes: maxResourceTypeBytes, Sentinel: ErrInvalidResourceType},
 		{Value: event.EventType, MaxBytes: maxEventTypeBytes, Sentinel: ErrInvalidEventType},
-		{Value: event.Source, MaxBytes: maxSourceBytes, Sentinel: ErrInvalidSource},
 		{Value: event.Subject, MaxBytes: maxSubjectBytes, Sentinel: ErrInvalidSubject},
 		{Value: event.EventID, MaxBytes: maxEventIDBytes, Sentinel: ErrInvalidEventID},
 		{Value: event.SchemaVersion, MaxBytes: maxSchemaVersionBytes, Sentinel: ErrInvalidSchemaVersion},

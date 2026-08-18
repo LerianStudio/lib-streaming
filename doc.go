@@ -44,7 +44,8 @@
 //	if err != nil { return err }
 //	// ONE topic per producing application. Every event this service emits
 //	// rides it; consumers select by ce-resourcetype / ce-eventtype.
-//	appTopic := streaming.AppTopic(cfg.CloudEventsSource) // lerian.streaming.<source>
+//	appTopic, err := streaming.AppTopic(cfg.CloudEventsSource) // lerian.streaming.<source>
+//	if err != nil { return err }
 //	// Consuming services wire panic + assertion metrics once at bootstrap
 //	// after telemetry is initialized. lib-streaming uses lib-observability/assert
 //	// internally for post-construction invariant checks; without this call

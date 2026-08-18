@@ -46,9 +46,10 @@ const cloudEventsSpecVersion = "1.0"
 // Including the producing application makes ce-type globally unambiguous.
 const cloudEventsTypePrefix = "studio.lerian."
 
-// TypeOf composes the ce-type header value for one event. Exported so
-// consumers can build the same string when matching by ce-type rather than
-// by the ce-resourcetype / ce-eventtype extension pair.
+// TypeOf composes the ce-type header value for one event. Re-exported at the
+// root facade as streaming.CloudEventsType, which is the reachable name — this
+// package is internal, so a consumer matching by ce-type rather than by the
+// ce-resourcetype / ce-eventtype extension pair goes through the facade.
 func TypeOf(source, resourceType, eventType string) string {
 	return cloudEventsTypePrefix + source + "." + resourceType + "." + eventType
 }

@@ -1,6 +1,10 @@
 package producer
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+)
 
 // resolvedEvent is the internal output of resolving an EmitRequest against the
 // producer catalog and policy overrides.
@@ -73,6 +77,16 @@ func (p *Producer) resolveEventWithPolicy(request EmitRequest, rejectDisabled bo
 		SystemEvent:     definition.SystemEvent,
 		Payload:         request.Payload,
 	}
+	// A system event is platform-level, not tenant-scoped: the contract says
+	// it omits ce-tenantid entirely. The header builder emits ce-tenantid
+	// whenever TenantID is non-empty, so a caller passing a tenant on a system
+	// definition would have shipped one — and a consumer filtering on
+	// ce-tenantid would have routed a platform event into one tenant's
+	// processing. Drop it here, at the single place the wire event is built.
+	if event.SystemEvent {
+		event.TenantID = ""
+	}
+
 	// ApplyDefaults fills Timestamp from time.Now().UTC() when zero, along
 	// with EventID / SchemaVersion / DataContentType. No pre-fill needed.
 	(&event).ApplyDefaults()
@@ -85,14 +99,18 @@ func (p *Producer) resolveEventWithPolicy(request EmitRequest, rejectDisabled bo
 	// before it could emit — a streaming-level tenant guard would be redundant
 	// and would only block legitimate single-tenant emits.
 
-	if event.Source == "" {
-		return resolvedEvent{}, ErrMissingSource
+	// Validate BEFORE deriving. The source is the sole input to the topic
+	// name, so deriving first would build a name from a value not yet known
+	// to be legal. Unreachable today (the source is the producer's own,
+	// validated at Build) but the ordering is the invariant, not the luck.
+	//
+	// The full ValidateSource, not a bare non-empty check: an empty source is
+	// only one of the ways a topic name goes wrong, and this is the last gate
+	// before a name is derived.
+	if err := contract.ValidateSource(event.Source); err != nil {
+		return resolvedEvent{}, err
 	}
 
-	// Event.Topic() returns "" only on a nil receiver; here we operate on
-	// a value-type Event that already passed tenant/source validation, so
-	// the empty-topic case is unreachable. (Previously a defensive guard
-	// lived here — Wave 2 confirmed it was dead code.)
 	topic := event.Topic()
 
 	return resolvedEvent{
