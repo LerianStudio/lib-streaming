@@ -166,32 +166,48 @@ func TestChanged_PartitionKeyFallbackChain(t *testing.T) {
 func TestUnchanged_TenantNeverInTopology(t *testing.T) {
 	t.Parallel()
 
-	topological := []contract.RouteDefinition{
+	topological := []struct {
+		name  string
+		route contract.RouteDefinition
+	}{
 		{
-			Key:         "primary.kafka",
-			Target:      "primary",
-			Destination: contract.Destination{Kind: contract.TransportKafkaLike, Name: "lerian.streaming.lender.${tenant_id}"},
+			name: "tenant token in the destination topic name",
+			route: contract.RouteDefinition{
+				Key:         "primary.kafka",
+				Target:      "primary",
+				Destination: contract.Destination{Kind: contract.TransportKafkaLike, Name: "lerian.streaming.lender.${tenant_id}"},
+			},
 		},
 		{
-			Key:         "tenant_id.kafka",
-			Target:      "primary",
-			Destination: contract.Destination{Kind: contract.TransportKafkaLike, Name: "lerian.streaming.lender"},
+			name: "tenant token in the route key",
+			route: contract.RouteDefinition{
+				Key:         "tenant_id.kafka",
+				Target:      "primary",
+				Destination: contract.Destination{Kind: contract.TransportKafkaLike, Name: "lerian.streaming.lender"},
+			},
 		},
 		{
-			Key:    "primary.kafka",
-			Target: "primary",
-			Destination: contract.Destination{
-				Kind:       contract.TransportKafkaLike,
-				Name:       "lerian.streaming.lender",
-				Attributes: map[string]string{"shard": "{tenant}"},
+			name: "tenant token in a destination attribute",
+			route: contract.RouteDefinition{
+				Key:    "primary.kafka",
+				Target: "primary",
+				Destination: contract.Destination{
+					Kind:       contract.TransportKafkaLike,
+					Name:       "lerian.streaming.lender",
+					Attributes: map[string]string{"shard": "{tenant}"},
+				},
 			},
 		},
 	}
 
-	for i, route := range topological {
-		if _, err := contract.NewRouteDefinition(route); err == nil {
-			t.Errorf("case %d: NewRouteDefinition accepted tenant-scoped topology %+v", i, route.Destination)
-		}
+	for _, tt := range topological {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if _, err := contract.NewRouteDefinition(tt.route); err == nil {
+				t.Errorf("NewRouteDefinition accepted tenant-scoped topology %+v", tt.route.Destination)
+			}
+		})
 	}
 
 	// ce-tenantid remains the ONLY place a tenant travels.

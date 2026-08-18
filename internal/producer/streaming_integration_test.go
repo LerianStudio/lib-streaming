@@ -211,6 +211,32 @@ func ensureTopics(t *testing.T, seed string, partitions int32, topics ...string)
 	}
 }
 
+// assertTopicsAbsent fails when any of the named topics exists on the broker.
+// Used to prove a negative the unit suite structurally cannot: that the v2
+// per-event topic names were never written to, on a cluster where auto-create
+// would have brought them into existence had anything published there.
+func assertTopicsAbsent(t *testing.T, seed string, topics ...string) {
+	t.Helper()
+
+	cl, err := kgo.NewClient(kgo.SeedBrokers(seed))
+	require.NoError(t, err, "admin kgo.NewClient")
+
+	defer cl.Close()
+
+	admin := kadm.NewClient(cl)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	details, err := admin.ListTopics(ctx)
+	require.NoError(t, err, "ListTopics")
+
+	for _, topic := range topics {
+		assert.NotContainsf(t, details, topic,
+			"topic %q exists; v2 per-event topics must never be written to under the topic collapse", topic)
+	}
+}
+
 // newTestProducer constructs a Producer against the supplied brokers with the
 // standard CloudEvents source. Uses log.NewNop to keep the test output clean
 // per research §C10.
@@ -401,6 +427,79 @@ func TestIntegration_RoundTripHeaders(t *testing.T) {
 	// event payload bytes.
 	assert.JSONEq(t, string(event.Payload), string(r.Value), "message body JSON mismatch")
 	assert.Equal(t, []byte(event.Payload), r.Value, "message body byte-equal")
+}
+
+// TestIntegration_TopicCollapse proves the v3 headline against a REAL broker:
+// two DIFFERENT resource types emitted by one producer land on the SAME topic.
+//
+// Every unit test asserts this by calling Event.Topic() twice and comparing the
+// two strings, which proves only that one function is deterministic. This test
+// asks the broker: it emits transaction.created and order.submitted, then reads
+// lerian.streaming.<source> and finds both records there — and finds nothing on
+// the v2-shaped per-event topics, which must not exist at all.
+func TestIntegration_TopicCollapse(t *testing.T) {
+	seed, c := startRedpanda(t)
+	if c == nil {
+		return // Docker unavailable — skipIfNoDocker already called t.Skip.
+	}
+
+	brokers := []string{seed}
+	p := newTestProducer(t, brokers)
+
+	appTopic := contract.AppTopic(integrationSource)
+
+	ensureTopics(t, brokers[0], 1, appTopic, dlqTopic(appTopic))
+
+	consumer := newConsumerClient(t, brokers, appTopic)
+
+	transaction := Event{
+		TenantID:     "tenant-collapse",
+		ResourceType: "transaction",
+		EventType:    "created",
+		EventID:      uuid.NewString(),
+		Source:       integrationSource,
+		Subject:      "aggregate-tx",
+		Payload:      json.RawMessage(`{"kind":"transaction"}`),
+	}
+
+	order := Event{
+		TenantID:     "tenant-collapse",
+		ResourceType: "order",
+		EventType:    "submitted",
+		EventID:      uuid.NewString(),
+		Source:       integrationSource,
+		Subject:      "aggregate-order",
+		Payload:      json.RawMessage(`{"kind":"order"}`),
+	}
+
+	require.NoError(t, p.Emit(context.Background(), eventToRequest(transaction)), "Emit(transaction.created)")
+	require.NoError(t, p.Emit(context.Background(), eventToRequest(order)), "Emit(order.submitted)")
+
+	records := pollRecords(t, consumer, 2, 30*time.Second)
+	require.Len(t, records, 2, "both resource types must land on the single app topic %s", appTopic)
+
+	seen := map[string]string{}
+
+	for _, r := range records {
+		assert.Equal(t, appTopic, r.Topic, "record landed off the app topic")
+
+		headers := headerMap(r.Headers)
+		seen[headers["ce-resourcetype"]] = headers["ce-eventtype"]
+
+		// The v2 per-event topic name must not appear anywhere on the wire.
+		assert.NotContains(t, r.Topic, headers["ce-resourcetype"],
+			"the topic name still carries the resource type; the collapse is incomplete")
+	}
+
+	assert.Equal(t, map[string]string{"transaction": "created", "order": "submitted"}, seen,
+		"both events must be distinguishable by ce-resourcetype / ce-eventtype on the shared topic")
+
+	// The v2-shaped per-event topics must not have been created. Auto-create is
+	// on in this cluster, so their absence proves nothing published to them.
+	assertTopicsAbsent(t, brokers[0],
+		integrationSource+".transaction.created",
+		integrationSource+".order.submitted",
+	)
 }
 
 // TestIntegration_PartitionFIFO emits 5 tenants × 200 events concurrently

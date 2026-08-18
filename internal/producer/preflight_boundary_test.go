@@ -113,8 +113,16 @@ func TestProducer_EmitPreFlight_PayloadAtExactBoundary(t *testing.T) {
 // type no longer contribute a single byte, which is why the v2 cases that
 // blew the limit by concatenating a 120-byte resource with a 120-byte event
 // type are gone: that failure mode does not exist any more.
+// The numbers below are HARDCODED. Computing maxSource from TopicPrefix and
+// DLQTopicSuffix — the same constants the production code computes with — made
+// the assertion agree with itself: shorten the prefix and both sides move
+// together while every deployed topic name silently changes. 228 and 249 are
+// the contract, and they belong in the test as literals.
 func TestProducer_EmitPreFlight_TopicAtExactBoundary(t *testing.T) {
-	maxSource := contract.MaxKafkaTopicNameBytes - len(contract.TopicPrefix) - len(contract.DLQTopicSuffix)
+	const (
+		maxSource      = 228 // 249 - len("lerian.streaming.") - len(".dlq")
+		kafkaNameLimit = 249
+	)
 
 	tests := []struct {
 		name       string
@@ -125,13 +133,13 @@ func TestProducer_EmitPreFlight_TopicAtExactBoundary(t *testing.T) {
 		{
 			name:       "longest legal source: DLQ topic lands exactly on the limit",
 			source:     strings.Repeat("s", maxSource),
-			wantDLQLen: contract.MaxKafkaTopicNameBytes,
+			wantDLQLen: kafkaNameLimit,
 		},
 		{
 			name:       "one byte over: rejected before any broker call",
 			source:     strings.Repeat("s", maxSource+1),
 			wantErr:    ErrInvalidSource,
-			wantDLQLen: contract.MaxKafkaTopicNameBytes + 1,
+			wantDLQLen: kafkaNameLimit + 1,
 		},
 	}
 

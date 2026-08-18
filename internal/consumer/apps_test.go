@@ -4,9 +4,10 @@ package consumer
 
 import (
 	"errors"
-	"os"
 	"slices"
 	"testing"
+
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
 )
 
 func appsConfig(mutate func(*ConsumerConfig)) ConsumerConfig {
@@ -92,11 +93,33 @@ func TestConsumerConfig_AppsSatisfyTopicRequirement(t *testing.T) {
 func TestConsumerConfig_RejectsMalformedApp(t *testing.T) {
 	t.Parallel()
 
-	for _, app := range []string{"//lerian.midaz/tx", "Lender", "lerian.midaz", "-lender", ""} {
-		cfg := appsConfig(func(c *ConsumerConfig) { c.Apps = []string{app} })
-		if err := cfg.Validate(); err == nil {
-			t.Errorf("Validate() with Apps=[%q] = nil; want a rejection", app)
-		}
+	cases := []struct {
+		name string
+		app  string
+		want error
+	}{
+		{"v2 uri shape", "//lerian.midaz/tx", contract.ErrInvalidSource},
+		{"capitalized", "Lender", contract.ErrInvalidSource},
+		{"dotted namespace", "lerian.midaz", contract.ErrInvalidSource},
+		{"leading hyphen", "-lender", contract.ErrInvalidSource},
+		{"empty", "", contract.ErrMissingSource},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := appsConfig(func(c *ConsumerConfig) { c.Apps = []string{tc.app} })
+
+			err := cfg.Validate()
+			if !errors.Is(err, tc.want) {
+				t.Errorf("Validate() with Apps=[%q] = %v; want %v", tc.app, err, tc.want)
+			}
+
+			if !errors.Is(err, ErrInvalidConfigField) {
+				t.Errorf("Validate() with Apps=[%q] = %v; want ErrInvalidConfigField wrapping it", tc.app, err)
+			}
+		})
 	}
 }
 
@@ -106,7 +129,7 @@ func TestLoadConsumerConfig_ReadsApps(t *testing.T) {
 	t.Setenv("STREAMING_CONSUMER_BROKERS", "localhost:9092")
 	t.Setenv("STREAMING_CONSUMER_GROUP", "g")
 	t.Setenv("STREAMING_CONSUMER_APPS", "lender, matcher")
-	_ = os.Unsetenv("STREAMING_CONSUMER_TOPICS")
+	t.Setenv("STREAMING_CONSUMER_TOPICS", "")
 
 	cfg, _, err := LoadConsumerConfig()
 	if err != nil {

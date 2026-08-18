@@ -76,10 +76,20 @@ func TestEvent_Topic_FiresNoAssertion(t *testing.T) {
 		}
 	}
 
-	// A source that ValidateSource rejects still must not make Topic() shout;
-	// Topic() has no validation branch by design.
-	bad := Event{Source: "midaz-tx", ResourceType: "transaction", EventType: "created"}
-	_ = bad.Topic()
+	// A source that ValidateSource genuinely REJECTS still must not make
+	// Topic() shout; Topic() has no validation branch by design, and the
+	// rejection is preflight's job.
+	//
+	// The inputs matter: "midaz-tx" PASSES ValidateSource, so using it here
+	// never exercised the stated invariant at all. These two do not.
+	for _, source := range []string{"//lerian.midaz/tx", "Lender"} {
+		if err := ValidateSource(source); err == nil {
+			t.Fatalf("ValidateSource(%q) = nil; this test needs a source that is actually rejected", source)
+		}
+
+		bad := Event{Source: source, ResourceType: "transaction", EventType: "created"}
+		_ = bad.Topic()
+	}
 
 	if cap.containsMessage("ASSERTION FAILED") {
 		t.Fatal("trident fired from Topic(); the hot-path helper MUST stay silent for every input")
