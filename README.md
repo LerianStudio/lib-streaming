@@ -131,8 +131,8 @@ if err != nil {
 }
 
 if !cfg.Enabled {
-    emitter := streaming.NewNoopEmitter()
-    // inject emitter into services; skip launcher.Add for the no-op path
+    // Inject streaming.NewNoopEmitter() into services; skip launcher.Add on
+    // the no-op path.
     return nil
 }
 if len(cfg.Brokers) == 0 {
@@ -322,6 +322,9 @@ emitter, err := streaming.NewBuilder().
     Tracer(tracer).
     OutboxRepository(outboxRepo).
     Build(ctx)
+if err != nil {
+    return err
+}
 ```
 
 ### All-or-error semantics
