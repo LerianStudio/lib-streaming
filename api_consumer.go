@@ -3,6 +3,8 @@ package streaming
 import (
 	"context"
 	"crypto/tls"
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/twmb/franz-go/pkg/sasl"
@@ -12,6 +14,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/LerianStudio/lib-streaming/v3/internal/consumer"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
 )
 
 // Handler is the only interface a consuming service implements. The library
@@ -48,6 +51,38 @@ type Consumer = consumer.Runner
 // not covered by a dedicated builder method.
 type ConsumerOption = consumer.Option
 
+// HandlerFunc is a single-event handler registered under an event key via
+// ConsumerBuilder.On. Same signature as Handler.Handle.
+type HandlerFunc = consumer.HandlerFunc
+
+// UnmatchedPolicy decides what happens to an event on the subscribed stream
+// that has no registered handler. See UnmatchedIgnore / UnmatchedError.
+type UnmatchedPolicy = consumer.UnmatchedPolicy
+
+const (
+	// UnmatchedIgnore skips and commits an unhandled event. DEFAULT, and the
+	// only safe default under one-topic-per-app: subscribing to a producer's
+	// app stream delivers EVERY event that producer emits, and a consumer
+	// legitimately cares about a handful of them.
+	UnmatchedIgnore = consumer.UnmatchedIgnore
+	// UnmatchedError quarantines an unhandled event (ErrUnhandledEvent takes
+	// the fail-closed terminal path to the DLQ). Opt in only when the consumer
+	// genuinely owns every event on the stream.
+	UnmatchedError = consumer.UnmatchedError
+)
+
+// Consumer dispatch sentinels. Both are handler-return errors and therefore
+// obey the usual Classifier / fail-closed disposition rules.
+var (
+	// ErrUnhandledEvent surfaces under UnmatchedError for an event key with no
+	// registered handler.
+	ErrUnhandledEvent = consumer.ErrUnhandledEvent
+	// ErrUnexpectedSource surfaces when an event's ce-source is not one of the
+	// consumer's expected producers — a producer misconfiguration or a foreign
+	// write to the application's topic.
+	ErrUnexpectedSource = consumer.ErrUnexpectedSource
+)
+
 // WithConsumerLogger sets the structured logger.
 func WithConsumerLogger(l log.Logger) ConsumerOption { return consumer.WithLogger(l) }
 
@@ -64,20 +99,35 @@ func WithConsumerTracer(t trace.Tracer) ConsumerOption { return consumer.WithTra
 // client (with BlockRebalanceOnPoll + DisableAutoCommit) and the at-least-once
 // runtime.
 //
+// Under one-topic-per-app the ergonomic path is Apps + On: name the producing
+// applications you consume, register one handler per event you care about,
+// and the library subscribes to the right topics, verifies each event came
+// from an expected producer, and dispatches by event key.
+//
 //	c, err := streaming.NewConsumer().
 //	    Brokers(cfg.Brokers...).
 //	    Group("my-service").
-//	    Topics("lerian.streaming.transaction.created").
+//	    Apps("lender", "matcher").          // -> lerian.streaming.{lender,matcher}
+//	    On("loan.disbursed", onDisbursed).  // "<resourceType>.<eventType>"
+//	    On("loan.settled", onSettled).
 //	    TLS(tlsCfg).
 //	    SASL(mech).
-//	    Handler(myHandler{}).
-//	    DLQTopicSuffix(".dlq").  // optional; default ".dlq"
 //	    RetryBudget(3).
 //	    Classifier(isTransient).
 //	    Build(ctx)
 //	if err != nil { return err }
 //	go func() { _ = c.Run(ctx) }()  // SafeGo in production
 //	defer c.Close()
+//
+// Every other event on those streams is skipped and committed
+// (UnmatchedIgnore); call UnmatchedPolicy(streaming.UnmatchedError) to
+// quarantine unknown keys instead. An event whose ce-source is not one of the
+// named Apps never reaches a handler — that check used to be hand-rolled in
+// every consuming repo.
+//
+// Handler(...) remains for consumers that want the raw stream: it takes the
+// whole record set itself and does its own selection. Handler and On are
+// mutually exclusive.
 //
 // There is deliberately no DLQ(emitter) knob: the DLQ must not flow through the
 // public Emitter (its catalog/payload/header gates reject the very poison it
@@ -87,6 +137,7 @@ func WithConsumerTracer(t trace.Tracer) ConsumerOption { return consumer.WithTra
 type ConsumerBuilder struct {
 	cfg        consumer.ConsumerConfig
 	handler    Handler
+	dispatcher *consumer.Dispatcher
 	classifier Classifier
 	opts       []ConsumerOption
 }
@@ -143,13 +194,91 @@ func (b *ConsumerBuilder) Group(group string) *ConsumerBuilder {
 	return b
 }
 
-// Topics sets the subscription list.
+// Topics sets the RAW subscription list — the escape hatch for topics this
+// library did not derive (legacy streams, third-party producers). It composes
+// with Apps; use Apps for lib-streaming producers.
 func (b *ConsumerBuilder) Topics(topics ...string) *ConsumerBuilder {
 	if b == nil {
 		return b
 	}
 
 	b.cfg.Topics = append([]string(nil), topics...)
+
+	return b
+}
+
+// Apps subscribes by PRODUCING APPLICATION name (ce-source). Each app resolves
+// to its one topic, "lerian.streaming.<app>", so a consumer never hardcodes
+// the derivation.
+//
+// Naming apps here also arms source verification: when the consumer dispatches
+// by event key (see On), an event whose ce-source is not one of these apps is
+// rejected with ErrUnexpectedSource instead of reaching a handler.
+//
+// Each name is validated against the same strict source contract the producer
+// enforces; a name no producer could legally publish under is a Build error
+// rather than a subscription to a topic that stays empty forever.
+func (b *ConsumerBuilder) Apps(apps ...string) *ConsumerBuilder {
+	if b == nil {
+		return b
+	}
+
+	b.cfg.Apps = append([]string(nil), apps...)
+
+	return b
+}
+
+// On registers a handler for one event key, "<resourceType>.<eventType>" — the
+// pair the producer's catalog spells and its manifest advertises. Snake_case
+// resource types travel verbatim; there is no '_'->'-' translation in v3.
+//
+// On and Handler are mutually exclusive: On builds a dispatching handler that
+// selects per event, Handler takes the whole stream. Registering the same key
+// twice keeps the last handler.
+func (b *ConsumerBuilder) On(eventKey string, handler HandlerFunc) *ConsumerBuilder {
+	if b == nil {
+		return b
+	}
+
+	if b.dispatcher == nil {
+		b.dispatcher = consumer.NewDispatcher()
+	}
+
+	b.dispatcher.On(eventKey, handler)
+
+	return b
+}
+
+// UnmatchedPolicy sets what happens to an event with no registered handler.
+// Defaults to UnmatchedIgnore. Only meaningful alongside On.
+func (b *ConsumerBuilder) UnmatchedPolicy(policy UnmatchedPolicy) *ConsumerBuilder {
+	if b == nil {
+		return b
+	}
+
+	if b.dispatcher == nil {
+		b.dispatcher = consumer.NewDispatcher()
+	}
+
+	b.dispatcher.OnUnmatched(policy)
+
+	return b
+}
+
+// ExpectSources overrides the producers accepted by source verification.
+// Apps(...) already populates this; use ExpectSources when subscribing through
+// the raw Topics(...) escape hatch and still wanting the check. With neither,
+// verification is off and any ce-source dispatches.
+func (b *ConsumerBuilder) ExpectSources(sources ...string) *ConsumerBuilder {
+	if b == nil {
+		return b
+	}
+
+	if b.dispatcher == nil {
+		b.dispatcher = consumer.NewDispatcher()
+	}
+
+	b.dispatcher.ExpectSources(sources...)
 
 	return b
 }
@@ -188,7 +317,9 @@ func (b *ConsumerBuilder) AllowPlaintextSASL() *ConsumerBuilder {
 	return b
 }
 
-// Handler wires the service-supplied record handler (required).
+// Handler wires a service-supplied handler that receives EVERY event on the
+// subscribed streams and does its own selection. Mutually exclusive with On;
+// one of the two is required.
 func (b *ConsumerBuilder) Handler(h Handler) *ConsumerBuilder {
 	if b == nil {
 		return b
@@ -278,6 +409,21 @@ func (b *ConsumerBuilder) Build(ctx context.Context) (Consumer, error) {
 		return nil, consumer.ErrNilHandler
 	}
 
+	// Handler resolution runs only for an ENABLED consumer. The disabled-mode
+	// kill switch must stay a pure no-op: a service that wires
+	// .Enabled(false) has deliberately not supplied handlers, and failing its
+	// Build would defeat the point of the switch.
+	var handler Handler
+
+	if b.cfg.Enabled {
+		resolved, err := b.resolveHandler()
+		if err != nil {
+			return nil, err
+		}
+
+		handler = resolved
+	}
+
 	// Fold the builder-level classifier into the option list so the runtime
 	// reclassifier seam stays single-sourced (consumer.WithClassifier).
 	opts := b.opts
@@ -290,5 +436,49 @@ func (b *ConsumerBuilder) Build(ctx context.Context) (Consumer, error) {
 	// DisableAutoCommit + TLS/SASL via kafkasec), the internal transport-seam DLQ
 	// publisher over the same config (NOT the public Emitter), and the transport
 	// error-source classifier. The handler typed-nil guard lives there too.
-	return consumer.Build(ctx, b.cfg, b.handler, opts...)
+	return consumer.Build(ctx, b.cfg, handler, opts...)
+}
+
+// ErrHandlerAndDispatchBothSet is returned by Build when a consumer wires both
+// Handler (whole-stream) and On (per-event dispatch). They are two different
+// answers to "who selects events", and silently preferring one would drop the
+// other's handlers without a word.
+var ErrHandlerAndDispatchBothSet = errors.New(
+	"streaming consumer: Handler(...) and On(...) are mutually exclusive — use On for per-event dispatch, Handler for the raw stream")
+
+// resolveHandler picks the handler Build hands to the runtime: the
+// caller-supplied whole-stream Handler, or the dispatcher assembled from On /
+// UnmatchedPolicy / ExpectSources.
+//
+// When the dispatcher is used and the caller did not name expected sources
+// explicitly, the Apps list becomes the expected-source allowlist. That is the
+// ergonomic payoff of subscribing by application: source verification — which
+// every consuming repo hand-rolled in v2 — comes for free and cannot drift
+// from the subscription it guards.
+func (b *ConsumerBuilder) resolveHandler() (Handler, error) {
+	hasHandler := !transport.IsNilInterface(b.handler)
+
+	if hasHandler && b.dispatcher != nil {
+		return nil, ErrHandlerAndDispatchBothSet
+	}
+
+	if hasHandler {
+		return b.handler, nil
+	}
+
+	if b.dispatcher == nil {
+		// Neither wired. Let the runtime's own ErrNilHandler gate speak; it is
+		// the same failure a v2 consumer would have hit.
+		return nil, consumer.ErrNilHandler
+	}
+
+	if len(b.dispatcher.EventKeys()) == 0 {
+		return nil, fmt.Errorf("%w: dispatching consumer has no On(...) handlers registered", consumer.ErrNilHandler)
+	}
+
+	if len(b.dispatcher.ExpectedSources()) == 0 {
+		b.dispatcher.ExpectSources(b.cfg.Apps...)
+	}
+
+	return b.dispatcher, nil
 }

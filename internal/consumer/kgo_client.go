@@ -41,7 +41,7 @@ func buildConsumerKgoOpts(cfg ConsumerConfig) ([]kgo.Opt, error) {
 	// (a rebalance hazard on a live broker; a ~50% group-join stall under kfake).
 	return append(base,
 		kgo.ConsumerGroup(cfg.Group),
-		kgo.ConsumeTopics(cfg.Topics...),
+		kgo.ConsumeTopics(cfg.ResolvedTopics()...),
 		// Req 3: freeze rebalances for the life of each polled batch so
 		// SetOffsets (seek-back) cannot race a group revoke. The runtime calls
 		// AllowRebalance exactly once per cycle after all seek-backs are staged.

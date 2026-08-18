@@ -11,6 +11,7 @@ import (
 
 	"github.com/LerianStudio/lib-commons/v6/commons"
 
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
 	"github.com/LerianStudio/lib-streaming/v3/internal/kafkasec"
 	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
 )
@@ -24,8 +25,9 @@ var (
 	ErrMissingBrokers = errors.New("streaming consumer: at least one broker is required")
 	// ErrMissingGroup is returned when Enabled=true but the group id is empty.
 	ErrMissingGroup = errors.New("streaming consumer: consumer group id is required")
-	// ErrMissingTopics is returned when Enabled=true but no topics are set.
-	ErrMissingTopics = errors.New("streaming consumer: at least one topic is required")
+	// ErrMissingTopics is returned when Enabled=true but neither Topics nor
+	// Apps resolves to a subscription.
+	ErrMissingTopics = errors.New("streaming consumer: at least one topic or app is required")
 	// ErrInvalidConfigField is returned for an out-of-range numeric/duration field.
 	ErrInvalidConfigField = errors.New("streaming consumer: invalid config field")
 	// ErrNilHandler is returned when Enabled=true but no handler was wired.
@@ -53,9 +55,25 @@ type ConsumerConfig struct {
 	// Group is the consumer group id. Required when Enabled=true.
 	// STREAMING_CONSUMER_GROUP.
 	Group string
-	// Topics is the subscription list. Required when Enabled=true.
+	// Topics is the RAW subscription list — an escape hatch for topics this
+	// library did not derive (legacy streams, third-party producers).
 	// STREAMING_CONSUMER_TOPICS (csv).
+	//
+	// Either Topics or Apps must be non-empty when Enabled=true; they compose.
 	Topics []string
+	// Apps names the PRODUCING APPLICATIONS to subscribe to, by ce-source.
+	// Each resolves to that application's one topic
+	// ("lerian.streaming.<app>"), so a consumer never hardcodes the topic
+	// derivation. STREAMING_CONSUMER_APPS (csv).
+	//
+	// Naming apps here also feeds the consumer's built-in source
+	// verification: the builder wires them as the Dispatcher's expected
+	// producers, so an event carrying a foreign ce-source is quarantined
+	// instead of dispatched. Each entry is held to the same strict source
+	// contract the producer enforces (contract.ValidateSource) — a name no
+	// producer could legally publish under would otherwise subscribe to a
+	// topic that stays empty forever while the consumer reports healthy.
+	Apps []string
 	// ClientID is the Kafka client.id for broker-side diagnostics.
 	// STREAMING_CONSUMER_CLIENT_ID.
 	ClientID string
@@ -168,6 +186,7 @@ func LoadConsumerConfig() (ConsumerConfig, []string, error) {
 		Brokers:             splitCSV(commons.GetenvOrDefault("STREAMING_CONSUMER_BROKERS", "")),
 		Group:               commons.GetenvOrDefault("STREAMING_CONSUMER_GROUP", ""),
 		Topics:              splitCSV(commons.GetenvOrDefault("STREAMING_CONSUMER_TOPICS", "")),
+		Apps:                splitCSV(commons.GetenvOrDefault("STREAMING_CONSUMER_APPS", "")),
 		ClientID:            commons.GetenvOrDefault("STREAMING_CONSUMER_CLIENT_ID", ""),
 		RetryBudget:         int(commons.GetenvIntOrDefault("STREAMING_CONSUMER_RETRY_BUDGET", defaultRetryBudget)),
 		RetryBackoffInitial: getenvMsOrDefault("STREAMING_CONSUMER_RETRY_BACKOFF_INITIAL_MS", defaultRetryBackoffInitial),
@@ -213,7 +232,13 @@ func (c ConsumerConfig) Validate() error {
 		return ErrMissingGroup
 	}
 
-	if len(c.Topics) == 0 {
+	for _, app := range c.Apps {
+		if err := contract.ValidateSource(app); err != nil {
+			return fmt.Errorf("%w: app %q: %w", ErrInvalidConfigField, app, err)
+		}
+	}
+
+	if len(c.ResolvedTopics()) == 0 {
 		return ErrMissingTopics
 	}
 
@@ -316,4 +341,38 @@ func (c ConsumerConfig) WithSASL(m sasl.Mechanism) ConsumerConfig {
 func (c ConsumerConfig) WithAllowPlaintextSASL() ConsumerConfig {
 	c.allowPlaintextSASL = true
 	return c
+}
+
+// ResolvedTopics returns the full subscription list: the raw Topics followed
+// by one derived topic per entry in Apps, deduplicated while preserving
+// first-seen order so the franz-go subscription is deterministic.
+//
+// This is the single place Apps becomes topics; both Validate and the group
+// client read it, so the two cannot disagree about what is subscribed.
+func (c ConsumerConfig) ResolvedTopics() []string {
+	topics := make([]string, 0, len(c.Topics)+len(c.Apps))
+	seen := make(map[string]struct{}, len(c.Topics)+len(c.Apps))
+
+	add := func(topic string) {
+		if topic == "" {
+			return
+		}
+
+		if _, dup := seen[topic]; dup {
+			return
+		}
+
+		seen[topic] = struct{}{}
+		topics = append(topics, topic)
+	}
+
+	for _, topic := range c.Topics {
+		add(topic)
+	}
+
+	for _, app := range c.Apps {
+		add(contract.AppTopic(app))
+	}
+
+	return topics
 }
