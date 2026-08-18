@@ -294,6 +294,31 @@ func (d *Dispatcher) EventKeys() []string {
 	return slices.Sorted(maps.Keys(seen))
 }
 
+// Handles reports whether a handler is registered for (app, eventKey), using
+// the same two-step lookup Handle performs: the exact (app, key) pair first,
+// then the wildcard registration a bare On(...) leaves behind when source
+// verification is off.
+//
+// The runtime asks it BEFORE dispatching a record from a strict COMMANDS
+// queue. Asking here rather than reading Handle's return keeps the strict
+// verdict distinguishable from a handler that legitimately returned
+// ErrUnhandledEvent of its own, and keeps the unmatched-fact metering — which
+// counts records that were skipped and committed — from claiming a record that
+// was quarantined instead.
+func (d *Dispatcher) Handles(app, eventKey string) bool {
+	if d == nil {
+		return false
+	}
+
+	if handler, ok := d.handlers[dispatchKey{app: app, eventKey: eventKey}]; ok && handler != nil {
+		return true
+	}
+
+	handler, ok := d.handlers[dispatchKey{app: anyApp, eventKey: eventKey}]
+
+	return ok && handler != nil
+}
+
 // Handle routes the event to the handler registered for its producing
 // application and event key, falling back to a wildcard registration when
 // source verification is off.

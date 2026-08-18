@@ -25,9 +25,9 @@ var (
 	ErrMissingBrokers = errors.New("streaming consumer: at least one broker is required")
 	// ErrMissingGroup is returned when Enabled=true but the group id is empty.
 	ErrMissingGroup = errors.New("streaming consumer: consumer group id is required")
-	// ErrMissingTopics is returned when Enabled=true but neither Topics nor
-	// Apps resolves to a subscription.
-	ErrMissingTopics = errors.New("streaming consumer: at least one topic or app is required")
+	// ErrMissingTopics is returned when Enabled=true but none of Topics, Apps,
+	// or Commands resolves to a subscription.
+	ErrMissingTopics = errors.New("streaming consumer: at least one topic, app, or commanding app is required")
 	// ErrInvalidConfigField is returned for an out-of-range numeric/duration field.
 	ErrInvalidConfigField = errors.New("streaming consumer: invalid config field")
 	// ErrNilHandler is returned when Enabled=true but no handler was wired.
@@ -98,6 +98,17 @@ var (
 	// consumer quarantines 100% of its stream while reporting healthy.
 	ErrInvalidExpectSource = errors.New(
 		"streaming consumer: ExpectSources(...) entry is not a legal ce-source")
+
+	// ErrHandlerAndCommandsBothSet is returned when a whole-stream Handler is
+	// combined with Commands. A commands subscription carries STRICT unmatched
+	// semantics — an unregistered key quarantines — and strictness is decided
+	// by asking the dispatcher whether a key has a handler. A raw Handler
+	// receives every record and selects for itself, so there is no registry to
+	// ask and no way to honour the guarantee the commands queue exists to
+	// provide. Silently downgrading it would leave an operator believing
+	// undelivered commands are being quarantined when nothing is.
+	ErrHandlerAndCommandsBothSet = errors.New(
+		"streaming consumer: Commands(...) requires On(...)/OnFrom(...) dispatch — a whole-stream Handler(...) has no handler registry, so the strict unmatched-command quarantine cannot be honoured")
 )
 
 // ConsumerConfig is the full runtime configuration for a Consumer. It is the
@@ -154,6 +165,28 @@ type ConsumerConfig struct {
 	// producer could legally publish under would otherwise subscribe to a
 	// topic that stays empty forever while the consumer reports healthy.
 	Apps []string
+	// Commands names the applications whose COMMANDS this consumer takes, by
+	// ce-source. Each resolves to that application's commands queue
+	// ("lerian.streaming.<app>.commands"). STREAMING_CONSUMER_COMMANDS (csv).
+	//
+	// It composes with Apps: naming lender in BOTH subscribes to lender's fact
+	// topic AND lender's commands queue, which is the normal shape for a
+	// service that watches a producer's facts and is also commanded by it. Like
+	// Apps, every entry feeds the ce-source allowlist and is held to the strict
+	// source contract.
+	//
+	// What separates it from Apps is the UNMATCHED VERDICT, and that is the
+	// whole reason the field exists. On a fact topic an event with no
+	// registered handler is skipped and committed — a consumer receives
+	// everything its producer emits and cares about a handful. On a commands
+	// queue it is QUARANTINED: a command is work addressed to THIS consumer, so
+	// a key it has no handler for is undelivered work, not noise. That
+	// strictness is NOT configurable; UnmatchedPolicy governs fact streams only.
+	//
+	// Without it, a producer shipping a new command key before its consumer
+	// deploys the handler loses every one of those commands, forever, with
+	// green dashboards on both sides.
+	Commands []string
 	// ExpectSources is the RESOLVED ce-source allowlist the runtime verifies
 	// every record against, before either handler mode is invoked. An empty
 	// list means verification is off (the raw Topics escape hatch, whose
@@ -275,6 +308,7 @@ func LoadConsumerConfig() (ConsumerConfig, []string, error) {
 		Source:              commons.GetenvOrDefault("STREAMING_CLOUDEVENTS_SOURCE", ""),
 		Topics:              splitCSV(commons.GetenvOrDefault("STREAMING_CONSUMER_TOPICS", "")),
 		Apps:                splitCSV(commons.GetenvOrDefault("STREAMING_CONSUMER_APPS", "")),
+		Commands:            splitCSV(commons.GetenvOrDefault("STREAMING_CONSUMER_COMMANDS", "")),
 		ExpectSources:       splitCSV(commons.GetenvOrDefault("STREAMING_CONSUMER_EXPECT_SOURCES", "")),
 		ClientID:            commons.GetenvOrDefault("STREAMING_CONSUMER_CLIENT_ID", ""),
 		RetryBudget:         int(commons.GetenvIntOrDefault("STREAMING_CONSUMER_RETRY_BUDGET", defaultRetryBudget)),
@@ -372,11 +406,12 @@ func (c ConsumerConfig) Validate() error {
 // contract the producer enforces: this consumer's own identity, the apps it
 // subscribes to, and the explicit allowlist.
 //
-// One rule for all three, deliberately. A hyphen/underscore typo in any of them
+// One rule for all four, deliberately. A hyphen/underscore typo in any of them
 // is silent in a different way — a bad Source derives a DLQ topic nothing
-// grants, a bad app subscribes to a topic that stays empty forever, and a bad
-// allowlist entry quarantines 100% of a stream — and all three report healthy
-// while doing it.
+// grants, a bad app (fact or commanding) subscribes to a topic that stays empty
+// forever, and a bad allowlist entry quarantines 100% of a stream — and all of
+// them report healthy while doing it. On a commands queue "empty forever" is
+// undelivered money-path work.
 func (c ConsumerConfig) validateSources() error {
 	// The consumer's own identity gates Build unconditionally: every enabled
 	// consumer has a DLQ path, and the DLQ topic is derived from it.
@@ -390,6 +425,7 @@ func (c ConsumerConfig) validateSources() error {
 	}{
 		{"source", []string{c.Source}},
 		{"app", c.Apps},
+		{"commanding app", c.Commands},
 		{"expect source", c.ExpectSources},
 	} {
 		for _, value := range field.values {
@@ -447,15 +483,22 @@ func (c ConsumerConfig) WithAllowPlaintextSASL() ConsumerConfig {
 	return c
 }
 
-// ResolvedTopics returns the full subscription list: the raw Topics followed
-// by one derived topic per entry in Apps, deduplicated while preserving
-// first-seen order so the franz-go subscription is deterministic.
+// ResolvedTopics returns the full subscription list: the raw Topics, then one
+// fact topic per entry in Apps, then one commands queue per entry in Commands,
+// deduplicated while preserving first-seen order so the franz-go subscription
+// is deterministic.
 //
-// This is the single place Apps becomes topics; both Validate and the group
-// client read it, so the two cannot disagree about what is subscribed.
+// Apps and Commands compose rather than compete: naming the same application in
+// both yields TWO subscriptions, its fact topic and its commands queue, which
+// is the normal shape for a service that watches a producer AND is commanded by
+// it.
+//
+// This is the single place Apps and Commands become topics; both Validate and
+// the group client read it, so the two cannot disagree about what is subscribed.
 func (c ConsumerConfig) ResolvedTopics() []string {
-	topics := make([]string, 0, len(c.Topics)+len(c.Apps))
-	seen := make(map[string]struct{}, len(c.Topics)+len(c.Apps))
+	size := len(c.Topics) + len(c.Apps) + len(c.Commands)
+	topics := make([]string, 0, size)
+	seen := make(map[string]struct{}, size)
 
 	add := func(topic string) {
 		if topic == "" {
@@ -478,5 +521,35 @@ func (c ConsumerConfig) ResolvedTopics() []string {
 		add(contract.AppTopic(app))
 	}
 
+	for _, app := range c.Commands {
+		add(contract.AppCommandsTopic(app))
+	}
+
 	return topics
+}
+
+// CommandTopics returns the set of subscribed topics that carry STRICT
+// unmatched semantics: an event key with no registered handler quarantines
+// instead of being skipped and committed.
+//
+// It is derived from Commands ONLY. A raw Topics(...) entry that happens to
+// spell a ".commands" name is deliberately NOT promoted: the escape hatch
+// exists for streams this library did not derive, its producers were never
+// named, and inferring strictness from a string suffix would quarantine on a
+// guess. Naming the app in Commands(...) is how a consumer opts in.
+//
+// The runtime reads it per record, keyed on kgo.Record.Topic, which is what
+// makes the policy PER TOPIC: one consumer can take lender's commands strictly
+// while still ignoring the unmatched majority of lender's fact stream.
+func (c ConsumerConfig) CommandTopics() map[string]struct{} {
+	if len(c.Commands) == 0 {
+		return nil
+	}
+
+	strict := make(map[string]struct{}, len(c.Commands))
+	for _, app := range c.Commands {
+		strict[contract.AppCommandsTopic(app)] = struct{}{}
+	}
+
+	return strict
 }

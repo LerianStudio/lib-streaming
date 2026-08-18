@@ -128,6 +128,10 @@ var (
 	// ErrExpectSourcesMissingApp is returned by ConsumerBuilder.Build when an
 	// explicit ExpectSources(...) list omits an app named in Apps(...).
 	ErrExpectSourcesMissingApp = consumer.ErrExpectSourcesMissingApp
+	// ErrHandlerAndCommandsBothSet is returned by ConsumerBuilder.Build when a
+	// whole-stream Handler is combined with Commands: that mode has no handler
+	// registry, so the strict unmatched-command quarantine cannot be honoured.
+	ErrHandlerAndCommandsBothSet = consumer.ErrHandlerAndCommandsBothSet
 	// ErrInvalidExpectSource is returned by ConsumerBuilder.Build when an
 	// ExpectSources(...) entry is not a legal ce-source.
 	ErrInvalidExpectSource = consumer.ErrInvalidExpectSource

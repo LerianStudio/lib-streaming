@@ -243,6 +243,11 @@ type consumerRuntime struct {
 	// observeUnmatched rebound to the LAST consumer, and the first consumer
 	// then meters nothing. Build one Dispatcher per consumer.
 	dispatcher *Dispatcher
+
+	// commandTopics is the set of subscribed topics carrying STRICT unmatched
+	// semantics, resolved once from cfg.Commands. Read per record on the guard
+	// chain, which is why it is a set rather than a slice scan.
+	commandTopics map[string]struct{}
 }
 
 // New constructs the real consumer runtime from validated config and resolved
@@ -267,13 +272,14 @@ func New(cfg ConsumerConfig, client GroupClient, handler Handler, opts ...Option
 	}
 
 	c := &consumerRuntime{
-		cfg:         cfg,
-		client:      client,
-		handler:     handler,
-		codec:       defaultCodec,
-		logger:      log.NewNop(),
-		stop:        make(chan struct{}),
-		haltStreaks: make(map[topicPartition]haltStreak),
+		cfg:           cfg,
+		client:        client,
+		handler:       handler,
+		codec:         defaultCodec,
+		logger:        log.NewNop(),
+		stop:          make(chan struct{}),
+		haltStreaks:   make(map[topicPartition]haltStreak),
+		commandTopics: cfg.CommandTopics(),
 	}
 
 	for _, opt := range opts {
@@ -750,6 +756,23 @@ func (c *consumerRuntime) handleRecord(ctx context.Context, rec *kgo.Record) (di
 	// downstream — a multi-tenant handler that needs a tenant fails closed via
 	// its OWN seeder, returning a terminal error that THEN routes to DLQ as the
 	// handler's verdict (sourceHandler), never a lib blanket rule.
+	// STRICT unmatched semantics on a commands queue, ahead of dispatch.
+	//
+	// A command is work addressed to THIS consumer, so a key it has no handler
+	// for is undelivered work — not the ignorable majority of a producer's fact
+	// firehose. Skipping and committing it is the failure this queue exists to
+	// prevent: a producer shipping a new command key before its consumer
+	// deploys the handler would lose every one of them, forever, while both
+	// sides report healthy.
+	//
+	// It runs here, not in the Dispatcher, because the verdict is a property of
+	// the TOPIC the record arrived on and Handler.Handle never sees the topic.
+	// That is also what makes the policy per-topic: the same consumer stays
+	// lenient on the fact streams it also subscribes to.
+	if err := c.unhandledCommand(rec, ev); err != nil {
+		return dispositionDLQ, 0, quarantineCause{kind: dlqCauseUnhandledKey, err: err}
+	}
+
 	if ev.SystemEvent {
 		// Observability only (no longer control flow): a system event is just an
 		// empty-tenant dispatch with a label. Cheap counter, kept.
@@ -757,6 +780,33 @@ func (c *consumerRuntime) handleRecord(ctx context.Context, rec *kgo.Record) (di
 	}
 
 	return c.handleWithRetry(ctx, rec, ev)
+}
+
+// unhandledCommand returns an ErrUnhandledEvent-wrapped error when rec arrived
+// on a STRICT commands queue carrying an event key this consumer registered no
+// handler for, and nil in every other case.
+//
+// Nil when the record is not from a commands queue (fact streams keep the
+// lenient UnmatchedPolicy verdict) and nil when there is no dispatcher — a
+// whole-stream Handler has no registry to ask, which is exactly why combining
+// Handler(...) with Commands(...) is refused at Build (ErrHandlerAndCommandsBothSet)
+// rather than silently downgraded here.
+func (c *consumerRuntime) unhandledCommand(rec *kgo.Record, ev contract.Event) error {
+	if len(c.commandTopics) == 0 || c.dispatcher == nil {
+		return nil
+	}
+
+	if _, strict := c.commandTopics[rec.Topic]; !strict {
+		return nil
+	}
+
+	key := contract.EventKey(ev.ResourceType, ev.EventType)
+	if c.dispatcher.Handles(ev.Source, key) {
+		return nil
+	}
+
+	return fmt.Errorf("%w: %q from %q on the commands queue %q — a command with no handler is undelivered work, never skipped",
+		ErrUnhandledEvent, key, ev.Source, rec.Topic)
 }
 
 // handleWithRetry dispatches the record to Handle and, on a transient handler

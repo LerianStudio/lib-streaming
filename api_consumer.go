@@ -158,15 +158,24 @@ func WithConsumerTracer(t trace.Tracer) ConsumerOption { return consumer.WithTra
 // — and a bare On under SEVERAL apps fails the build rather than binding to
 // whichever record happens to arrive.
 //
-// Every other event on those streams is skipped and committed
+// Every other event on those FACT streams is skipped and committed
 // (UnmatchedIgnore); call UnmatchedPolicy(streaming.UnmatchedError) to
 // quarantine unknown keys instead. A record whose ce-source is not one of the
 // named Apps never reaches a handler — that check used to be hand-rolled in
 // every consuming repo.
 //
+// Commands(...) subscribes to the applications that COMMAND this consumer,
+// on their "lerian.streaming.<app>.commands" queues. It composes with Apps,
+// and it is the one place the unmatched verdict flips: an unregistered key on
+// a commands queue is QUARANTINED, never skipped, because a command is work
+// addressed to this consumer. That is not configurable — UnmatchedPolicy
+// governs fact streams only.
+//
 // Handler(...) remains for consumers that want the raw stream: it takes the
 // whole record set itself and does its own selection, and gets the same
-// ce-source verification. Handler and On/OnFrom are mutually exclusive.
+// ce-source verification. Handler and On/OnFrom are mutually exclusive, and
+// Handler cannot be combined with Commands(...) — with no handler registry
+// there is nothing to ask whether a command key is handled.
 //
 // There is deliberately no DLQ(emitter) knob: the DLQ must not flow through the
 // public Emitter (its catalog/payload/header gates reject the very poison it
@@ -327,6 +336,45 @@ func (b *ConsumerBuilder) Apps(apps ...string) *ConsumerBuilder {
 	return b
 }
 
+// Commands subscribes to the applications that COMMAND this consumer, by
+// ce-source. Each resolves to that application's commands queue,
+// "lerian.streaming.<app>.commands".
+//
+//	streaming.NewConsumer().
+//	    Source("br-consignado-gw").
+//	    Commands("lender").                                 // -> lerian.streaming.lender.commands
+//	    OnFrom("lender", "margin.reserve", onReserve).
+//
+// It composes with Apps: naming lender in BOTH subscribes to lender's fact
+// topic AND its commands queue, which is the ordinary shape for a service that
+// watches a producer and is also commanded by it. Like Apps, it feeds the
+// ce-source allowlist and every entry is held to the strict source rule.
+//
+// What it changes is the UNMATCHED VERDICT, and that is the only reason it
+// exists. On a fact stream an event with no registered handler is skipped and
+// committed. On a commands queue it is QUARANTINED to this consumer's own DLQ
+// with cause kind "unhandled_key" — because a command is work addressed to this
+// consumer, so a key it cannot handle is undelivered work, not noise.
+//
+// That strictness is NOT configurable: UnmatchedPolicy governs fact streams
+// only, and a knob that could switch it off would recreate the exact failure
+// the queue exists to prevent — a producer shipping a new command key before
+// its consumer deploys the handler, losing every one of them behind green
+// dashboards.
+//
+// Commands requires On/OnFrom dispatch. Combining it with a whole-stream
+// Handler(...) fails the build (ErrHandlerAndCommandsBothSet): that mode has no
+// handler registry to ask, so the guarantee cannot be honoured.
+func (b *ConsumerBuilder) Commands(apps ...string) *ConsumerBuilder {
+	if b == nil {
+		return b
+	}
+
+	b.cfg.Commands = append([]string(nil), apps...)
+
+	return b
+}
+
 // On registers a handler for one event key, "<resourceType>.<eventType>" — the
 // pair the producer's catalog spells and its manifest advertises. Snake_case
 // resource types travel verbatim; there is no '_'->'-' translation in v3.
@@ -419,15 +467,17 @@ func (b *ConsumerBuilder) UnmatchedPolicy(policy UnmatchedPolicy) *ConsumerBuild
 //   - Every entry is validated at Build against the same strict source rule
 //     the producer enforces. A hyphen/underscore typo matches no real producer
 //     and would quarantine 100% of the stream, so it fails the build instead.
-//   - The list must COVER every app named in Apps(...). Subscribing to an
-//     app's topic while refusing its ce-source is a bug, not a filter — use
-//     On(...) to select events, not this.
-//   - With no explicit list and only Apps(...), the Apps become the allowlist.
+//   - The list must COVER every app named in Apps(...) or Commands(...).
+//     Subscribing to an app's topic while refusing its ce-source is a bug, not
+//     a filter — use On(...) to select events, not this.
+//   - With no explicit list and only Apps(...) / Commands(...), those
+//     applications become the allowlist. Commands counts exactly like Apps
+//     here: both name a producing application whose ce-source must be accepted.
 //   - With no explicit list and only raw Topics(...), verification is off and
 //     any ce-source dispatches.
-//   - With no explicit list and BOTH Apps and Topics, Build FAILS: neither
-//     defaulting to Apps (which would DLQ the whole raw stream) nor skipping
-//     the check is a defensible guess.
+//   - With no explicit list and BOTH a named application and Topics, Build
+//     FAILS: neither defaulting to the named apps (which would DLQ the whole
+//     raw stream) nor skipping the check is a defensible guess.
 //
 // Verification runs in the RUNTIME, ahead of either handler mode, so this
 // applies to a whole-stream Handler(...) exactly as it does to On(...) dispatch
@@ -615,6 +665,10 @@ func (b *ConsumerBuilder) resolveHandler() (Handler, error) {
 			return nil, consumer.ErrHandlerAndUnmatchedPolicyBothSet
 		}
 
+		if len(b.cfg.Commands) > 0 {
+			return nil, consumer.ErrHandlerAndCommandsBothSet
+		}
+
 		if err := b.resolveExpectedSources(); err != nil {
 			return nil, err
 		}
@@ -652,17 +706,18 @@ func (b *ConsumerBuilder) resolveHandler() (Handler, error) {
 //
 // Three shapes, three outcomes:
 //
-//   - Explicit ExpectSources: REPLACES anything Apps would have implied. Every
-//     entry is validated with the same strict source rule the producer
-//     enforces (a hyphen/underscore typo would otherwise quarantine 100% of a
-//     stream while the consumer reported healthy), and the list must cover
-//     every app named in Apps — subscribing to an app's topic while refusing
-//     its source is always a bug, never a filter.
-//   - Apps only: the Apps list becomes the allowlist, verification for free.
-//   - Apps AND raw Topics with no explicit list: REFUSED. Defaulting to Apps
-//     would DLQ every record from the raw topics, whose producers were never
-//     named; skipping verification would silently drop the check the Apps
-//     subscription paid for. Neither is a defensible guess.
+//   - Explicit ExpectSources: REPLACES anything Apps/Commands would have
+//     implied. Every entry is validated with the same strict source rule the
+//     producer enforces (a hyphen/underscore typo would otherwise quarantine
+//     100% of a stream while the consumer reported healthy), and the list must
+//     cover every app named in Apps or Commands — subscribing to an app's topic
+//     while refusing its source is always a bug, never a filter.
+//   - Apps/Commands only: those applications become the allowlist,
+//     verification for free. An app named in both appears once.
+//   - A named application AND raw Topics with no explicit list: REFUSED.
+//     Defaulting to the named apps would DLQ every record from the raw topics,
+//     whose producers were never named; skipping verification would silently
+//     drop the check the subscription paid for. Neither is a defensible guess.
 //
 // STREAMING_CONSUMER_EXPECT_SOURCES (adopted via FromConfig) counts as an
 // explicit list — it is the env-only way out of the Apps+Topics refusal — and a
@@ -676,13 +731,18 @@ func (b *ConsumerBuilder) resolveExpectedSources() error {
 		explicit, origin = b.cfg.ExpectSources, "STREAMING_CONSUMER_EXPECT_SOURCES"
 	}
 
+	// Commands counts exactly like Apps here: both name a producing
+	// application whose ce-source this consumer must accept, and the
+	// allowlist is a set, so an app named in both appears once.
+	subscribed := dedupSources(append(append([]string(nil), b.cfg.Apps...), b.cfg.Commands...))
+
 	if len(explicit) == 0 {
-		if len(b.cfg.Apps) > 0 && len(b.cfg.Topics) > 0 {
-			return fmt.Errorf("%w: apps=%v topics=%v — set ExpectSources(...) or STREAMING_CONSUMER_EXPECT_SOURCES",
-				consumer.ErrAmbiguousSourceVerification, b.cfg.Apps, b.cfg.Topics)
+		if len(subscribed) > 0 && len(b.cfg.Topics) > 0 {
+			return fmt.Errorf("%w: apps=%v commands=%v topics=%v — set ExpectSources(...) or STREAMING_CONSUMER_EXPECT_SOURCES",
+				consumer.ErrAmbiguousSourceVerification, b.cfg.Apps, b.cfg.Commands, b.cfg.Topics)
 		}
 
-		b.cfg.ExpectSources = dedupSources(b.cfg.Apps)
+		b.cfg.ExpectSources = subscribed
 
 		return nil
 	}
@@ -697,7 +757,7 @@ func (b *ConsumerBuilder) resolveExpectedSources() error {
 		allowed[source] = struct{}{}
 	}
 
-	for _, app := range b.cfg.Apps {
+	for _, app := range subscribed {
 		if _, ok := allowed[app]; !ok {
 			return fmt.Errorf("%w: app %q is subscribed but not in %s %v",
 				consumer.ErrExpectSourcesMissingApp, app, origin, explicit)
