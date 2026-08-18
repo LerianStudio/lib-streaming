@@ -205,17 +205,21 @@ type fakeDLQ struct {
 	mu sync.Mutex
 
 	calls      []*kgo.Record
+	causes     []error
+	causeKinds []string
 	failNext   bool
 	failErr    error
 	closeCalls int
 	closeErr   error
 }
 
-func (d *fakeDLQ) PublishDLQ(_ context.Context, rec *kgo.Record, _ error, _ int) error {
+func (d *fakeDLQ) PublishDLQ(_ context.Context, rec *kgo.Record, cause error, causeKind string, _ int) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
 	d.calls = append(d.calls, rec)
+	d.causes = append(d.causes, cause)
+	d.causeKinds = append(d.causeKinds, causeKind)
 
 	if d.failNext {
 		if d.failErr == nil {
@@ -242,6 +246,18 @@ func (d *fakeDLQ) count() int {
 	defer d.mu.Unlock()
 
 	return len(d.calls)
+}
+
+// lastCause returns the cause and cause kind of the most recent quarantine.
+func (d *fakeDLQ) lastCause() (error, string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if len(d.causes) == 0 {
+		return nil, ""
+	}
+
+	return d.causes[len(d.causes)-1], d.causeKinds[len(d.causeKinds)-1]
 }
 
 func (d *fakeDLQ) closeCount() int {

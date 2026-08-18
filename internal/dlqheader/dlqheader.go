@@ -34,4 +34,11 @@ const (
 const (
 	SourcePartition = "x-lerian-dlq-source-partition"
 	SourceOffset    = "x-lerian-dlq-source-offset"
+	// CauseKind names WHICH gate quarantined the record: "codec",
+	// "handler", "source_mismatch", or "unhandled_key". The
+	// x-lerian-dlq-error-message header carries the sanitized underlying
+	// error; this one is the low-cardinality bucket an operator filters and
+	// alerts on. A DLQ where every entry says the same thing tells nobody
+	// what broke.
+	CauseKind = "x-lerian-dlq-cause-kind"
 )

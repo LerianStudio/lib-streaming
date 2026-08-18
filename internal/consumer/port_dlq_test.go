@@ -31,7 +31,7 @@ func TestPublishDLQ_PreservesKey(t *testing.T) {
 		Headers:   []kgo.RecordHeader{{Key: "ce-id", Value: []byte("evt-1")}},
 	}
 
-	if err := pub.PublishDLQ(context.Background(), source, errTerminalQuarantine, 0); err != nil {
+	if err := pub.PublishDLQ(context.Background(), source, errTerminalQuarantine, dlqCauseHandler, 0); err != nil {
 		t.Fatalf("PublishDLQ: %v", err)
 	}
 

@@ -303,7 +303,7 @@ func TestPublishDLQ_StampsForensicHeaders(t *testing.T) {
 	}
 
 	cause := errors.New("handler said no")
-	if err := pub.PublishDLQ(context.Background(), source, cause, 2); err != nil {
+	if err := pub.PublishDLQ(context.Background(), source, cause, dlqCauseHandler, 2); err != nil {
 		t.Fatalf("PublishDLQ = %v; want nil", err)
 	}
 
@@ -370,7 +370,7 @@ func TestPublishDLQ_NilGuards(t *testing.T) {
 
 	// Nil adapter.
 	none := &transportDLQPublisher{adapter: nil, suffix: ".dlq", groupID: "g"}
-	if err := none.PublishDLQ(context.Background(), &kgo.Record{Topic: "t"}, nil, 0); !errors.Is(err, contract.ErrNilProducer) {
+	if err := none.PublishDLQ(context.Background(), &kgo.Record{Topic: "t"}, nil, dlqCauseHandler, 0); !errors.Is(err, contract.ErrNilProducer) {
 		t.Errorf("PublishDLQ(nil adapter) = %v; want ErrNilProducer", err)
 	}
 
@@ -383,7 +383,7 @@ func TestPublishDLQ_NilGuards(t *testing.T) {
 	adapter := fake.NewAdapter(contract.TransportKafkaLike)
 	pub := &transportDLQPublisher{adapter: adapter, suffix: ".dlq", groupID: "g"}
 
-	if err := pub.PublishDLQ(context.Background(), nil, nil, 0); !errors.Is(err, contract.ErrNilProducer) {
+	if err := pub.PublishDLQ(context.Background(), nil, nil, dlqCauseHandler, 0); !errors.Is(err, contract.ErrNilProducer) {
 		t.Errorf("PublishDLQ(nil rec) = %v; want ErrNilProducer", err)
 	}
 }

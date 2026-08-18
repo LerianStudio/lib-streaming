@@ -107,7 +107,7 @@ type dlqPublisher interface {
 	// metadata headers. It must be synchronous and return only after the DLQ
 	// record is acknowledged, so the source offset is committed strictly
 	// after the quarantine copy is durable.
-	PublishDLQ(ctx context.Context, rec *kgo.Record, cause error, retryCount int) error
+	PublishDLQ(ctx context.Context, rec *kgo.Record, cause error, causeKind string, retryCount int) error
 	// Close flushes and shuts the underlying publisher (its own produce-side
 	// client). The runtime calls it from consumerRuntime.Close so the DLQ client
 	// and any buffered quarantine writes are not leaked/stranded. Idempotent.
@@ -141,7 +141,7 @@ type transportDLQPublisher struct {
 // through the seam — the stamp then reflects quarantine time, lagging the first
 // failure. This is forensic metadata only (never a routing decision), so the skew
 // on the retry-then-terminal path is accepted, not threaded as a captured time.
-func (p *transportDLQPublisher) PublishDLQ(ctx context.Context, rec *kgo.Record, cause error, retryCount int) error {
+func (p *transportDLQPublisher) PublishDLQ(ctx context.Context, rec *kgo.Record, cause error, causeKind string, retryCount int) error {
 	if p == nil || transport.IsNilInterface(p.adapter) {
 		return contract.ErrNilProducer
 	}
@@ -161,10 +161,10 @@ func (p *transportDLQPublisher) PublishDLQ(ctx context.Context, rec *kgo.Record,
 		causeMessage = contract.SanitizeBrokerURL(cause.Error())
 	}
 
-	// Preserve the original CloudEvents headers verbatim, then append the eight
+	// Preserve the original CloudEvents headers verbatim, then append the nine
 	// forensic headers. The ce-* headers carry ce-tenantid, so tenant identity
 	// travels with the quarantined record without a duplicate dlqheader key.
-	headers := make([]transport.Header, 0, len(rec.Headers)+8)
+	headers := make([]transport.Header, 0, len(rec.Headers)+9)
 	for _, h := range rec.Headers {
 		headers = append(headers, transport.Header{Key: h.Key, Value: h.Value})
 	}
@@ -178,6 +178,7 @@ func (p *transportDLQPublisher) PublishDLQ(ctx context.Context, rec *kgo.Record,
 		transport.Header{Key: dlqheader.ProducerID, Value: []byte(p.groupID)},
 		transport.Header{Key: dlqheader.SourcePartition, Value: []byte(strconv.FormatInt(int64(rec.Partition), 10))},
 		transport.Header{Key: dlqheader.SourceOffset, Value: []byte(strconv.FormatInt(rec.Offset, 10))},
+		transport.Header{Key: dlqheader.CauseKind, Value: []byte(causeKind)},
 	)
 
 	message := transport.TransportMessage{

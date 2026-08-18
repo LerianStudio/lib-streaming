@@ -20,11 +20,60 @@ import (
 	"github.com/LerianStudio/lib-streaming/v3/internal/transport/kafka"
 )
 
-// errTerminalQuarantine is the stable cause stamped on a DLQ forensic header
-// when a record is quarantined. The routing decision is made upstream by
-// classify-by-source; the DLQ error-class/message headers are metadata only, so
-// a single marker keeps the publisher seam free of the original error value.
+// errTerminalQuarantine is the fallback cause stamped on a DLQ forensic header
+// when a record is quarantined with no underlying error to report (a defensive
+// case — every real quarantine path carries one).
 var errTerminalQuarantine = errors.New("streaming consumer: record quarantined to DLQ (terminal/poison)")
+
+// DLQ cause kinds, stamped on x-lerian-dlq-cause-kind. Low-cardinality by
+// design: an operator filters and alerts on this, then reads the sanitized
+// underlying error from x-lerian-dlq-error-message.
+//
+// They exist because every DLQ entry used to carry the SAME message. A
+// consumer's DLQ filling up told an operator that something was terminal, and
+// nothing else — a codec fault (the producer's wire format drifted), a source
+// mismatch (a foreign write, or a misconfigured allowlist), an unhandled key
+// (this consumer's registrations drifted behind the producer's catalog) and a
+// genuine business rejection were indistinguishable, and they have four
+// different owners and four different fixes.
+const (
+	// dlqCauseCodec: the CloudEvents headers would not decode. The record is
+	// poison and can never parse; the producer's wire format is the suspect.
+	dlqCauseCodec = "codec"
+	// dlqCauseHandler: the service handler returned a terminal error. The
+	// business rejection is the suspect.
+	dlqCauseHandler = "handler"
+	// dlqCauseSourceMismatch: the event's ce-source was not an expected
+	// producer. Either a foreign write to the topic, or an ExpectSources
+	// allowlist that drifted from what actually publishes there.
+	dlqCauseSourceMismatch = "source_mismatch"
+	// dlqCauseUnhandledKey: no handler registered for the event key, under the
+	// opt-in UnmatchedError policy. This consumer's On(...) registrations have
+	// drifted behind the producer's catalog.
+	dlqCauseUnhandledKey = "unhandled_key"
+)
+
+// quarantineCause carries WHY a record is going to the DLQ, from the gate that
+// decided it down to the publisher that stamps the forensic headers.
+type quarantineCause struct {
+	kind string
+	err  error
+}
+
+// handlerQuarantineCause buckets a handler-return error into its cause kind.
+// The dispatcher's two structural rejections (source mismatch, unhandled key)
+// arrive as handler errors but are NOT business rejections, and lumping them
+// under "handler" would point an operator at the wrong owner.
+func handlerQuarantineCause(err error) quarantineCause {
+	switch {
+	case errors.Is(err, ErrUnexpectedSource):
+		return quarantineCause{kind: dlqCauseSourceMismatch, err: err}
+	case errors.Is(err, ErrUnhandledEvent):
+		return quarantineCause{kind: dlqCauseUnhandledKey, err: err}
+	default:
+		return quarantineCause{kind: dlqCauseHandler, err: err}
+	}
+}
 
 // Consumer metric names (free-form labels kept off to bound cardinality; see
 // docs/design/consumer.md §6). Recorded best-effort — a metrics factory is
@@ -446,13 +495,13 @@ func (c *consumerRuntime) processFetches(ctx context.Context, fetches kgo.Fetche
 				break
 			}
 
-			disp, retryCount := c.handleRecord(ctx, rec)
+			disp, retryCount, cause := c.handleRecord(ctx, rec)
 
 			switch disp {
 			case dispositionCommit:
 				stageWatermark(staged, tp, rec)
 			case dispositionDLQ:
-				if c.routeDLQ(ctx, rec, retryCount) {
+				if c.routeDLQ(ctx, rec, retryCount, cause) {
 					// Commit ONLY AFTER the DLQ publish is acknowledged: the
 					// quarantine copy is durable before the original is dropped.
 					stageWatermark(staged, tp, rec)
@@ -487,12 +536,12 @@ func (c *consumerRuntime) processFetches(ctx context.Context, fetches kgo.Fetche
 // returns the single disposition plus the in-loop retry count consumed (for the
 // DLQ retry-count header). Guards run UPSTREAM of classify; only records that
 // actually reach Handle are classified sourceHandler.
-func (c *consumerRuntime) handleRecord(ctx context.Context, rec *kgo.Record) (disposition, int) {
+func (c *consumerRuntime) handleRecord(ctx context.Context, rec *kgo.Record) (disposition, int, quarantineCause) {
 	ev, err := c.codec(rec.Headers)
 	if err != nil {
 		// Codec decode fault: malformed CloudEvent, can never parse, not
 		// reclassifiable -> always terminal -> DLQ.
-		return c.classify(err, sourceCodec), 0
+		return c.classify(err, sourceCodec), 0, quarantineCause{kind: dlqCauseCodec, err: err}
 	}
 
 	// Empty tenant is NOT a DLQ reason. Mirroring the producer (v1.6.2
@@ -520,7 +569,7 @@ func (c *consumerRuntime) handleRecord(ctx context.Context, rec *kgo.Record) (di
 // is exhausted (a SUSTAINED transient -> seek-back + halt upstream; NEVER DLQ),
 // dispositionDLQ on a terminal handler/codec error, or dispositionStop on
 // shutdown. The second return value is the number of in-loop retries consumed.
-func (c *consumerRuntime) handleWithRetry(ctx context.Context, rec *kgo.Record, ev contract.Event) (disposition, int) {
+func (c *consumerRuntime) handleWithRetry(ctx context.Context, rec *kgo.Record, ev contract.Event) (disposition, int, quarantineCause) {
 	deadline := time.Now().Add(c.cfg.RetryInLoopMaxDwell)
 	backoff := c.cfg.RetryBackoffInitial
 
@@ -537,19 +586,19 @@ func (c *consumerRuntime) handleWithRetry(ctx context.Context, rec *kgo.Record, 
 		// the explicit Canceled/DeadlineExceeded cover a freshly-wrapped one.
 		if err != nil && ctx.Err() != nil &&
 			(errors.Is(err, ctx.Err()) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
-			return dispositionStop, attempt
+			return dispositionStop, attempt, quarantineCause{}
 		}
 
 		disp := c.classify(err, sourceHandler)
 		if disp != dispositionRetry {
-			return disp, attempt
+			return disp, attempt, handlerQuarantineCause(err)
 		}
 
 		// Transient handler error. Stop retrying in-loop if the budget or the
 		// aggregate dwell cap is reached, or if shutting down — the partition is
 		// then seeked back and re-delivered fresh on the next poll.
 		if attempt >= c.cfg.RetryBudget || ctx.Err() != nil {
-			return dispositionRetry, attempt
+			return dispositionRetry, attempt, quarantineCause{}
 		}
 
 		wait := backoff
@@ -559,11 +608,11 @@ func (c *consumerRuntime) handleWithRetry(ctx context.Context, rec *kgo.Record, 
 
 		if wait <= 0 {
 			// Aggregate dwell cap hit: defer to the cross-poll halt path.
-			return dispositionRetry, attempt
+			return dispositionRetry, attempt, quarantineCause{}
 		}
 
 		if !c.sleep(ctx, wait) {
-			return dispositionStop, attempt
+			return dispositionStop, attempt, quarantineCause{}
 		}
 
 		if backoff < c.cfg.RetryBackoffMax {
@@ -599,12 +648,28 @@ func (c *consumerRuntime) dispatch(ctx context.Context, rec *kgo.Record, ev cont
 // in-session cursor does not advance past the un-quarantined record) and the
 // caller halts the partition + skips the commit, so the record is re-attempted
 // on the next poll. A poison record never silently drops.
-func (c *consumerRuntime) routeDLQ(ctx context.Context, rec *kgo.Record, retryCount int) (published bool) {
-	// The original handler/codec error is not threaded into the publisher (the
-	// disposition already consumed it); a stable terminal marker populates the
-	// DLQ error-class/message forensic headers. The routing decision was made
-	// upstream by classify-by-source — the DLQ error class is metadata only.
-	if err := c.dlq.PublishDLQ(ctx, rec, errTerminalQuarantine, retryCount); err != nil {
+func (c *consumerRuntime) routeDLQ(ctx context.Context, rec *kgo.Record, retryCount int, cause quarantineCause) (published bool) {
+	// The underlying error and its cause kind BOTH travel to the publisher.
+	// Stamping one stable marker on every entry made a filling DLQ say only
+	// "something was terminal" — a codec fault, a foreign write, a drifted
+	// event-key registration and a genuine business rejection have four
+	// different owners, and an operator could not tell them apart.
+	//
+	// The error travels UNWRAPPED-BUT-INTACT: PublishDLQ sanitizes it (broker
+	// credentials stripped) at the point it becomes a header value, which is
+	// also where the adapter classifies it. Flattening it here would strip the
+	// sentinel chain both of them read.
+	underlying := cause.err
+	if underlying == nil {
+		underlying = errTerminalQuarantine
+	}
+
+	kind := cause.kind
+	if kind == "" {
+		kind = dlqCauseHandler
+	}
+
+	if err := c.dlq.PublishDLQ(ctx, rec, underlying, kind, retryCount); err != nil {
 		c.seekBack(rec)
 		c.logger.Log(ctx, log.LevelError, "streaming consumer: DLQ publish failed",
 			log.String("topic", rec.Topic),
@@ -616,7 +681,7 @@ func (c *consumerRuntime) routeDLQ(ctx context.Context, rec *kgo.Record, retryCo
 		return false
 	}
 
-	c.recordMetric(ctx, metricDLQTotal)
+	c.recordMetricWithLabels(ctx, metricDLQTotal, map[string]string{"cause_kind": kind})
 
 	return true
 }
