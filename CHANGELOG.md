@@ -131,6 +131,22 @@ from the broker into the consumer. Three additions cover it:
 themselves; wiring both `Handler` and `On` returns
 `ErrHandlerAndDispatchBothSet` rather than silently dropping one.
 
+### BREAKING: `OutboxEnvelopeVersion` is 2
+
+The persisted envelope struct is byte-identical in shape, but the MEANING of
+its `Destination` field changed with the topic collapse: a version-1 row holds
+a per-event topic (`midaz-ledger.transaction.created`), a version-2 row holds
+the application topic (`lerian.streaming.midaz-ledger`).
+
+A v3 relay draining a version-1 row would publish it verbatim to a topic no
+consumer subscribes to any more — a green dashboard over zero delivery. Envelope
+validation uses strict version equality, so version-1 rows are now rejected with
+`ErrInvalidOutboxEnvelope` and the failure is operator-visible.
+
+**Migration:** drain the streaming outbox to empty on the v2 build before
+deploying v3. Any version-1 row still in the table when v3 starts will fail
+replay rather than publish to a dead topic.
+
 ### BREAKING: manifest 2.0.0
 
 `ManifestEvent.topic` is REMOVED and replaced by `eventKey`
@@ -143,9 +159,8 @@ pair moves to the document level, where a one-topic-per-app fact belongs.
 
 - The outbox flow and the stable DB-only `lerian.streaming.publish` outbox
   `EventType`, which never appears on the wire.
-- `OutboxEnvelope` shape. `OutboxEnvelopeVersion` stays at **1**: only the
-  persisted `Destination` VALUE changes (it now holds the app topic); no field
-  was added, removed, or retyped, so persisted rows stay readable.
+- `OutboxEnvelope` shape — no field added, removed, or retyped. (The version
+  constant still bumps; see below.)
 - `PartitionKey` = `TenantID`, or `"system:" + EventType` for system events.
 - Tenant identity travels only in `ce-tenantid`, never in topology; the
   `containsTenantTopologyToken` guards on routes, destinations, and attributes

@@ -137,8 +137,11 @@ func TestOutboxEnvelope_Validate_RejectsInvalidShape(t *testing.T) {
 			wantSub: ErrInvalidOutboxEnvelope, // T7 wraps ErrInvalidOutboxEnvelope; previously a bare fmt.Errorf.
 		},
 		{
-			name:    "version two (future)",
-			mutate:  func(e *OutboxEnvelope) { e.Version = 2 },
+			// The v2-era envelope. Shape-compatible, but its Destination
+			// holds a per-event topic that no longer exists, so replaying
+			// it would publish into the void. Reject, loudly.
+			name:    "version one (v2-era, dead destination)",
+			mutate:  func(e *OutboxEnvelope) { e.Version = 1 },
 			wantSub: ErrInvalidOutboxEnvelope,
 		},
 		{

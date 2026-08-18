@@ -5,8 +5,11 @@ package producer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
+
+	"github.com/google/uuid"
 
 	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
 )
@@ -46,19 +49,52 @@ func TestUnchanged_OutboxEventTypeIsStableAndDBOnly(t *testing.T) {
 	}
 }
 
-// TestUnchanged_OutboxEnvelopeVersionStaysOne pins the deliberate decision NOT
-// to bump the persisted envelope version for v3.
+// TestChanged_OutboxEnvelopeVersionIsTwo pins the v3 envelope-version bump and
+// the rejection of version-1 rows.
 //
-// Only the persisted Destination VALUE changed (it now holds the app topic
-// rather than a per-event topic); no field was added, removed, or retyped. A
-// version bump would have rejected every row written by a v2 replica mid-deploy
-// for no schema reason, so the constant stays at 1 and rows stay readable.
-func TestUnchanged_OutboxEnvelopeVersionStaysOne(t *testing.T) {
+// The SHAPE did not change — no field was added, removed, or retyped — but the
+// MEANING of the persisted Destination did: a v2 row holds a per-event topic
+// ("midaz-ledger.transaction.created"), a v3 row holds the app topic. A v3
+// relay draining a v2 row would publish it verbatim to a topic no consumer
+// subscribes to any more: green dashboards, zero delivery. Strict version
+// equality turns that into a loud decode failure instead.
+func TestChanged_OutboxEnvelopeVersionIsTwo(t *testing.T) {
 	t.Parallel()
 
-	if contract.OutboxEnvelopeVersion != 1 {
-		t.Fatalf("OutboxEnvelopeVersion = %d; want 1 (the persisted SHAPE did not change in v3)",
+	if contract.OutboxEnvelopeVersion != 2 {
+		t.Fatalf("OutboxEnvelopeVersion = %d; want 2 (the persisted Destination MEANING changed in v3)",
 			contract.OutboxEnvelopeVersion)
+	}
+
+	v1 := validOutboxEnvelope()
+	v1.Version = 1
+
+	if err := v1.ValidateShape(); !errors.Is(err, contract.ErrInvalidOutboxEnvelope) {
+		t.Fatalf("ValidateShape() on a version-1 envelope error = %v; want ErrInvalidOutboxEnvelope", err)
+	}
+}
+
+// validOutboxEnvelope returns an envelope that passes ValidateShape, so a test
+// can flip exactly one field and attribute the failure to it.
+func validOutboxEnvelope() contract.OutboxEnvelope {
+	return contract.OutboxEnvelope{
+		Version:       contract.OutboxEnvelopeVersion,
+		RouteKey:      "primary.kafka",
+		DefinitionKey: "transaction.created",
+		Target:        "primary",
+		Transport:     contract.TransportKafkaLike,
+		Destination:   contract.Destination{Kind: contract.TransportKafkaLike, Name: contract.AppTopic("midaz-ledger")},
+		AggregateID:   uuid.New(),
+		Requirement:   contract.RouteRequired,
+		Policy:        contract.DefaultDeliveryPolicy(),
+		Event: contract.Event{
+			TenantID:      "t-1",
+			ResourceType:  "transaction",
+			EventType:     "created",
+			EventID:       "evt-1",
+			SchemaVersion: "1.0.0",
+			Source:        "midaz-ledger",
+		},
 	}
 }
 
