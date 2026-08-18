@@ -43,6 +43,17 @@ type ManifestEvent struct {
 	// registers a handler under. It replaced the per-event "topic" field:
 	// there is no per-definition topic in v3, only this selector inside the
 	// application's single stream.
+	//
+	// EventKey is NOT unique across a manifest. A catalog may deliberately
+	// hold two definitions that share (ResourceType, EventType) and differ
+	// only in schemaVersion major — that is how a producer ships v1 and v2 of
+	// the same fact through a migration window without minting a second event
+	// name. Their catalog "key" values differ; their "eventKey" values do not.
+	//
+	// Consumers of this manifest MUST therefore treat eventKey as a
+	// many-to-one selector and branch on schemaVersion. A handler registered
+	// for such a key receives BOTH majors, and a v2 payload parsed as v1 is
+	// silent data corruption, not a decode error.
 	EventKey        string `json:"eventKey"`
 	SchemaVersion   string `json:"schemaVersion"`
 	DataContentType string `json:"dataContentType"`
