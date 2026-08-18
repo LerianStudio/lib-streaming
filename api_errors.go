@@ -131,6 +131,11 @@ var (
 	// ErrInvalidExpectSource is returned by ConsumerBuilder.Build when an
 	// ExpectSources(...) entry is not a legal ce-source.
 	ErrInvalidExpectSource = consumer.ErrInvalidExpectSource
+	// ErrConsumerPartitionHalted is returned by Consumer.Healthy when a
+	// partition has been halted across consecutive poll cycles — a wedge, not a
+	// blip. Wire it into readiness so a consumer that polls cleanly while
+	// processing nothing leaves the load balancer.
+	ErrConsumerPartitionHalted = consumer.ErrPartitionHalted
 )
 
 // IsCallerError reports whether err is caller-correctable rather than infrastructure-caused.

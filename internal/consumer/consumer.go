@@ -229,6 +229,14 @@ type consumerRuntime struct {
 	// exactly the unbounded growth the label cap exists to prevent.
 	unmatchedOverflowLogAt atomic.Int64
 
+	// haltMu guards haltStreaks, which the poll goroutine writes once per cycle
+	// and Healthy reads from whatever goroutine serves readiness.
+	haltMu sync.Mutex
+	// haltStreaks counts CONSECUTIVE halted cycles per partition. It is bounded
+	// by the consumer's own assignment, and a partition drops out the moment it
+	// makes progress.
+	haltStreaks map[topicPartition]haltStreak
+
 	// dispatcher is the handler when it is a *Dispatcher, resolved once at
 	// construction. New binds this runtime's unmatched recorder onto it —
 	// which means a Dispatcher REUSED across two Build calls has its
@@ -259,12 +267,13 @@ func New(cfg ConsumerConfig, client GroupClient, handler Handler, opts ...Option
 	}
 
 	c := &consumerRuntime{
-		cfg:     cfg,
-		client:  client,
-		handler: handler,
-		codec:   defaultCodec,
-		logger:  log.NewNop(),
-		stop:    make(chan struct{}),
+		cfg:         cfg,
+		client:      client,
+		handler:     handler,
+		codec:       defaultCodec,
+		logger:      log.NewNop(),
+		stop:        make(chan struct{}),
+		haltStreaks: make(map[topicPartition]haltStreak),
 	}
 
 	for _, opt := range opts {
@@ -521,7 +530,7 @@ func (c *consumerRuntime) Run(ctx context.Context) error {
 // processFetches, so it still runs strictly after every seek-back is staged
 // (Req 3). The deferred call pairs with EVERY PollFetches and runs exactly once
 // per poll.
-func (c *consumerRuntime) pollCycle(ctx context.Context) (stop bool, halted map[topicPartition]struct{}) {
+func (c *consumerRuntime) pollCycle(ctx context.Context) (stop bool, halted map[topicPartition]string) {
 	fetches := c.client.PollFetches(ctx)
 
 	// Req 3: release the rebalance frozen by BlockRebalanceOnPoll exactly once
@@ -541,6 +550,12 @@ func (c *consumerRuntime) pollCycle(ctx context.Context) (stop bool, halted map[
 	}
 
 	halted = c.processFetches(ctx, fetches)
+
+	// Fold this cycle's halts into the consecutive-cycle streaks Healthy reads.
+	// It runs on the normal path only: the stop path returned above, and a
+	// shutdown must not be recorded as a wedge.
+	c.trackHalts(halted)
+
 	// A fetch-error cycle (auth / data-loss / other non-shutdown error) must leave
 	// Healthy() reporting NOT-ok — the group is not cleanly fetching. A clean cycle
 	// marks the consumer healthy.
@@ -578,6 +593,51 @@ type topicPartition struct {
 	partition int32
 }
 
+// Halt reasons. Low-cardinality by design: they label the partition-halted
+// metric and name the cause in the readiness error, and they have different
+// owners — a stuck downstream, a broken DLQ path, and a shutdown are three
+// different pages.
+const (
+	// haltReasonSustainedTransient: the in-loop retry budget was exhausted on a
+	// reclassified transient. The partition seeks back and blocks head-of-line
+	// ("block beats lose"); the downstream is the suspect.
+	haltReasonSustainedTransient = "sustained_transient"
+	// haltReasonDLQPublishFailed: a terminal record could not be quarantined.
+	// Fail-closed, so the record is re-attempted rather than committed past —
+	// which means this one wedges until the DLQ path is fixed.
+	haltReasonDLQPublishFailed = "dlq_publish_failed"
+	// haltReasonShutdown: ctx-cancel landed mid-handle. Not a wedge; Run
+	// returns on the same signal, so it can never accumulate a streak.
+	haltReasonShutdown = "shutdown"
+)
+
+// haltedCyclesUnhealthy is how many CONSECUTIVE poll cycles a partition must
+// stay halted before Healthy reports it.
+//
+// One is too eager: a single sustained-transient cycle is an ordinary
+// downstream hiccup, and failing readiness on it would flap the pod out of the
+// load balancer for a blip that resolves itself. Three cycles (each separated
+// by HaltBackoff) means the partition made no progress across the whole
+// recovery window — a real wedge, not jitter.
+const haltedCyclesUnhealthy = 3
+
+// haltStreak counts consecutive halted cycles for one partition and remembers
+// why it is halted.
+type haltStreak struct {
+	cycles int
+	reason string
+}
+
+// ErrPartitionHalted is returned by Healthy when a partition has been halted
+// across haltedCyclesUnhealthy consecutive poll cycles.
+//
+// It exists because readiness could not see a wedge at all: it was
+// !closed && lastPollOK, and both stay true while a poison record whose DLQ
+// publish keeps failing redelivers forever. The consumer polled cleanly,
+// processed nothing, and reported green — under one topic per app, with the
+// producing application's entire catalog stuck behind it.
+var ErrPartitionHalted = errors.New("streaming consumer: partition halted across consecutive poll cycles (head-of-line blocked)")
+
 // processFetches walks every partition of one poll, applies the per-record
 // disposition state machine in ascending-offset order, stages commit watermarks,
 // performs seek-backs, and commits the staged watermarks at the end of the
@@ -588,8 +648,8 @@ type topicPartition struct {
 // CommitRecords is itself a per-partition watermark, but we compute the max
 // explicitly so a partition that halts mid-batch never stages a watermark past
 // the halted offset (Req 1, within-batch layer).
-func (c *consumerRuntime) processFetches(ctx context.Context, fetches kgo.Fetches) map[topicPartition]struct{} {
-	halted := make(map[topicPartition]struct{})
+func (c *consumerRuntime) processFetches(ctx context.Context, fetches kgo.Fetches) map[topicPartition]string {
+	halted := make(map[topicPartition]string)
 	staged := make(map[topicPartition]*kgo.Record)
 
 	fetches.EachPartition(func(p kgo.FetchTopicPartition) {
@@ -620,7 +680,7 @@ func (c *consumerRuntime) processFetches(ctx context.Context, fetches kgo.Fetche
 				} else {
 					// Fail-closed: DLQ publish failed -> do NOT commit past this
 					// record. Halt the partition so it is re-attempted next poll.
-					halted[tp] = struct{}{}
+					halted[tp] = haltReasonDLQPublishFailed
 				}
 			case dispositionRetry:
 				// Sustained transient (in-loop budget exhausted): seek the
@@ -629,12 +689,12 @@ func (c *consumerRuntime) processFetches(ctx context.Context, fetches kgo.Fetche
 				// halt it for the rest of this cycle (Req 4), and break. NEVER DLQ.
 				c.seekBack(rec)
 
-				halted[tp] = struct{}{}
+				halted[tp] = haltReasonSustainedTransient
 			case dispositionStop:
 				// Shutdown surfaced mid-handle (ctx cancel). Do NOT DLQ; do NOT
 				// stage a watermark past it. Halting the partition this cycle
 				// leaves the offset for re-delivery on a clean restart.
-				halted[tp] = struct{}{}
+				halted[tp] = haltReasonShutdown
 			}
 		}
 	})
@@ -919,10 +979,16 @@ func (c *consumerRuntime) dlqCloseTimeout() time.Duration {
 	return defaultCloseTimeout
 }
 
-// Healthy reports consumer readiness: not closed, and the poll loop has
-// completed at least one cycle (so the group is joined and fetching). A consumer
-// that has never completed a poll is reported not-ready rather than falsely
-// healthy.
+// Healthy reports consumer readiness: not closed, the poll loop has completed
+// at least one cycle (so the group is joined and fetching), and no partition is
+// wedged.
+//
+// The third condition is the one that was missing. Polling cleanly is not the
+// same as making progress: a poison record whose DLQ publish keeps failing, or
+// a downstream outage holding a partition back, leaves !closed && lastPollOK
+// both true forever while nothing is processed. The consumer reported green,
+// the pod stayed in the load balancer, and under one topic per app the
+// producing application's whole catalog sat behind it.
 func (c *consumerRuntime) Healthy(ctx context.Context) error {
 	if c == nil {
 		return ErrNilGroupClient
@@ -938,7 +1004,7 @@ func (c *consumerRuntime) Healthy(ctx context.Context) error {
 		return ErrNotReady
 	}
 
-	return nil
+	return c.wedgedPartition()
 }
 
 // ErrNotReady is returned by Healthy before the first poll cycle completes.
@@ -1059,15 +1125,82 @@ func (c *consumerRuntime) recordSystemEvent(ctx context.Context, ev contract.Eve
 	)
 }
 
-// alertHalted meters + logs that one or more partitions are halted on a
-// sustained transient, so an operator can intervene on a long downstream outage.
-func (c *consumerRuntime) alertHalted(ctx context.Context, halted map[topicPartition]struct{}) {
-	c.recordMetric(ctx, metricPartitionHalted)
+// trackHalts folds one poll cycle's halt set into the per-partition consecutive
+// -cycle streaks Healthy reads.
+//
+// CONSECUTIVE is the whole point: a partition that halts, recovers, and halts
+// again is making progress, and treating that as a wedge would flap readiness
+// on ordinary downstream jitter. So a partition absent from this cycle's set
+// drops out entirely rather than decaying.
+func (c *consumerRuntime) trackHalts(halted map[topicPartition]string) {
+	c.haltMu.Lock()
+	defer c.haltMu.Unlock()
 
-	for tp := range halted {
-		c.logger.Log(ctx, log.LevelWarn, "streaming consumer: partition halted on sustained transient (head-of-line blocked, ALERT)",
+	if c.haltStreaks == nil {
+		c.haltStreaks = make(map[topicPartition]haltStreak)
+	}
+
+	for tp := range c.haltStreaks {
+		if _, still := halted[tp]; !still {
+			delete(c.haltStreaks, tp)
+		}
+	}
+
+	for tp, reason := range halted {
+		streak := c.haltStreaks[tp]
+		streak.cycles++
+		streak.reason = reason
+
+		c.haltStreaks[tp] = streak
+	}
+}
+
+// wedgedPartition returns a readiness error for the first partition (in
+// deterministic order) halted for haltedCyclesUnhealthy consecutive cycles, or
+// nil when none is.
+//
+// It names the topic, the partition, and the cause, because a health check that
+// only says "not ready" sends an operator to read logs for what it already
+// knew.
+func (c *consumerRuntime) wedgedPartition() error {
+	c.haltMu.Lock()
+	defer c.haltMu.Unlock()
+
+	worst, found := topicPartition{}, false
+	streak := haltStreak{}
+
+	for tp, s := range c.haltStreaks {
+		if s.cycles < haltedCyclesUnhealthy {
+			continue
+		}
+
+		// Deterministic pick so repeated probes report the same partition.
+		if !found || tp.topic < worst.topic || (tp.topic == worst.topic && tp.partition < worst.partition) {
+			worst, streak, found = tp, s, true
+		}
+	}
+
+	if !found {
+		return nil
+	}
+
+	return fmt.Errorf("%w: topic=%q partition=%d cause=%s consecutive_cycles=%d",
+		ErrPartitionHalted, worst.topic, worst.partition, streak.reason, streak.cycles)
+}
+
+// alertHalted meters + logs that one or more partitions are halted, so an
+// operator can intervene on a long downstream outage or a broken DLQ path.
+func (c *consumerRuntime) alertHalted(ctx context.Context, halted map[topicPartition]string) {
+	for tp, reason := range halted {
+		// The reason is a closed three-value set, so it is safe as a label and
+		// it is the one thing that routes the page: a stuck downstream, a broken
+		// DLQ path, and a shutdown have three different owners.
+		c.recordMetricWithLabels(ctx, metricPartitionHalted, map[string]string{"reason": reason})
+
+		c.logger.Log(ctx, log.LevelWarn, "streaming consumer: partition halted (head-of-line blocked, ALERT)",
 			log.String("topic", tp.topic),
 			log.Int("partition", int(tp.partition)),
+			log.String("reason", reason),
 		)
 	}
 }
