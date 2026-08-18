@@ -719,8 +719,15 @@ func TestRouteTable_DefinitionsReturnsDefensiveCopies(t *testing.T) {
 func TestRouteTable_OrdersSameDefinitionByRouteKey(t *testing.T) {
 	t.Parallel()
 
+	// Distinct targets: two routes for one definition are legal only when they
+	// fan out to different targets (NewRouteTable rejects a duplicated
+	// (DefinitionKey, Target) pair). Ordering is by (DefinitionKey, Key) and
+	// ignores Target, so this still pins what the test is about.
+	z := routeForTest("transaction.created.z", "transaction.created")
+	z.Target = "secondary"
+
 	table, err := NewRouteTable(
-		routeForTest("transaction.created.z", "transaction.created"),
+		z,
 		routeForTest("transaction.created.a", "transaction.created"),
 	)
 	if err != nil {
@@ -746,6 +753,57 @@ func TestRouteTable_RejectsDuplicateRouteKeys(t *testing.T) {
 	if !errors.Is(err, ErrDuplicateRouteDefinition) {
 		t.Fatalf("NewRouteTable() error = %v; want ErrDuplicateRouteDefinition", err)
 	}
+}
+
+// TestRouteTable_RejectsDuplicateDefinitionTarget pins the uniqueness invariant
+// the rest of the system already assumes: at most ONE route per
+// (DefinitionKey, Target).
+//
+// Deduping by route Key alone is not enough. Two routes with different keys but
+// the same (DefinitionKey, Target) land in the same resolution bucket, and the
+// Emit fan-out publishes every route in the bucket — so the event is delivered
+// TWICE to one destination while Emit returns nil. MergeRouteOverrides resolves
+// override-vs-base precedence by this same pair but never compares base routes
+// against each other, so a hand-written table (or two catch-alls on one target)
+// reaches the runtime undetected.
+func TestRouteTable_RejectsDuplicateDefinitionTarget(t *testing.T) {
+	t.Parallel()
+
+	t.Run("definition scoped", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := NewRouteTable(
+			routeForTest("transaction.created.kafka.a", "transaction.created"),
+			routeForTest("transaction.created.kafka.b", "transaction.created"),
+		)
+		if !errors.Is(err, ErrDuplicateRouteDefinition) {
+			t.Fatalf("NewRouteTable() error = %v; want ErrDuplicateRouteDefinition", err)
+		}
+	})
+
+	t.Run("catch all", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := NewRouteTable(
+			routeForTest("catchall.kafka.a", ""),
+			routeForTest("catchall.kafka.b", ""),
+		)
+		if !errors.Is(err, ErrDuplicateRouteDefinition) {
+			t.Fatalf("NewRouteTable() error = %v; want ErrDuplicateRouteDefinition", err)
+		}
+	})
+
+	t.Run("same definition on distinct targets is legal", func(t *testing.T) {
+		t.Parallel()
+
+		primary := routeForTest("transaction.created.kafka.primary", "transaction.created")
+		shadow := routeForTest("transaction.created.kafka.shadow", "transaction.created")
+		shadow.Target = "shadow"
+
+		if _, err := NewRouteTable(primary, shadow); err != nil {
+			t.Fatalf("NewRouteTable() error = %v; want nil (fan-out across targets is the point)", err)
+		}
+	})
 }
 
 func TestRouteTable_EmptyRoutesReturnsNoRoutesConfigured(t *testing.T) {

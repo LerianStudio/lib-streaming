@@ -171,8 +171,17 @@ type RouteTable struct {
 	catchAll []RouteDefinition
 }
 
-// NewRouteTable validates routes, rejects duplicate route keys, and stores
-// routes in deterministic definition-key/key order.
+// NewRouteTable validates routes, rejects duplicate route keys AND duplicate
+// (DefinitionKey, Target) pairs, and stores routes in deterministic
+// definition-key/key order.
+//
+// The (DefinitionKey, Target) pair is the real identity of a route: resolution
+// buckets by definition and the Emit fan-out publishes EVERY route in the
+// bucket, so two routes sharing the pair deliver the same event twice to one
+// destination while Emit reports success. MergeRouteOverrides resolves
+// override-vs-base precedence by that same pair but never compares base routes
+// against each other, so this is the only place a hand-written table (or a
+// second catch-all on an already-claimed target) is caught.
 func NewRouteTable(routes ...RouteDefinition) (RouteTable, error) {
 	if len(routes) == 0 {
 		return RouteTable{}, ErrNoRoutesConfigured
@@ -180,6 +189,7 @@ func NewRouteTable(routes ...RouteDefinition) (RouteTable, error) {
 
 	ordered := make([]RouteDefinition, 0, len(routes))
 	seenKeys := make(map[string]struct{}, len(routes))
+	seenIdentities := make(map[routeMergeIdentity]string, len(routes))
 	sqsValidationCache := make(map[string]error)
 
 	for _, raw := range routes {
@@ -199,7 +209,22 @@ func NewRouteTable(routes ...RouteDefinition) (RouteTable, error) {
 			return RouteTable{}, fmt.Errorf("%w: key %q", ErrDuplicateRouteDefinition, route.Key)
 		}
 
+		identity := routeMergeIdentity{definitionKey: route.DefinitionKey, target: route.Target}
+		if existing, exists := seenIdentities[identity]; exists {
+			a := newContractAsserter("route_table.new")
+			_ = a.That(context.Background(), false, "route table must not contain two routes for one (DefinitionKey, Target)",
+				"route_key", route.Key,
+				"conflicting_route_key", existing,
+				"definition_key", route.DefinitionKey,
+				"target", route.Target,
+			)
+
+			return RouteTable{}, fmt.Errorf("%w: routes %q and %q both serve definition %q on target %q — both would publish, duplicating every event",
+				ErrDuplicateRouteDefinition, existing, route.Key, route.DefinitionKey, route.Target)
+		}
+
 		seenKeys[route.Key] = struct{}{}
+		seenIdentities[identity] = route.Key
 		ordered = append(ordered, cloneRouteDefinition(route))
 	}
 
