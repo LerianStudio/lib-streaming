@@ -108,7 +108,7 @@ func TestDeriveOutboxAggregateID_FallsBackWhenOverrideReturnsEmpty(t *testing.T)
 
 	p := &Producer{partFn: func(Event) string { return "" }}
 
-	if got, want := p.deriveOutboxAggregateID(first), deriveAggregateID(first); got != want {
+	if got, want := p.deriveOutboxAggregateID(first), defaultAggregateID(first); got != want {
 		t.Errorf("deriveOutboxAggregateID(first) = %s; want the un-overridden %s", got, want)
 	}
 

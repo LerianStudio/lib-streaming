@@ -165,7 +165,7 @@ func captureTraceCarrier(ctx context.Context) contract.TraceCarrier {
 	return carrier
 }
 
-// deriveAggregateID produces a deterministic UUID from the event's
+// deriveOutboxAggregateID produces a deterministic UUID from the event's
 // partition key. Same tenant+aggregate → same AggregateID, which keeps the
 // outbox row stream aligned with the broker partition stream and lets
 // operators correlate the two by hash.
@@ -173,20 +173,11 @@ func captureTraceCarrier(ctx context.Context) contract.TraceCarrier {
 // SystemEvent=true events use a random UUID because their "partition key"
 // ("system:<eventtype>") would otherwise collapse every system event into
 // the same aggregate.
-func deriveAggregateID(event Event) uuid.UUID {
-	if event.SystemEvent {
-		return uuid.New()
-	}
-
-	return uuid.NewSHA1(uuid.NameSpaceDNS, []byte(event.PartitionKey()))
-}
-
-// deriveOutboxAggregateID produces the AggregateID using the same
-// partition-key resolution used by Emit dispatch: when a custom partition
-// function is configured via WithPartitionKey, it takes precedence over the
-// event's default PartitionKey() — unless it yields the empty string, which
-// resolvePartitionKey rejects because it would collapse every row of every
-// tenant onto one aggregate id.
+//
+// It resolves the partition key exactly the way Emit dispatch does: the
+// WithPartitionKey override when one is wired and it yields a non-empty key,
+// otherwise Event.PartitionKey(). An empty override key is rejected there
+// because it would collapse every row of every tenant onto one aggregate id.
 func (p *Producer) deriveOutboxAggregateID(event Event) uuid.UUID {
 	if event.SystemEvent {
 		return uuid.New()

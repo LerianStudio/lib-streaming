@@ -230,8 +230,8 @@ func TestProperty_Topic_Deterministic(t *testing.T) {
 
 // TestProperty_DeriveAggregateID_Deterministic asserts:
 //   - For two non-system events with identical PartitionKey (TenantID),
-//     deriveAggregateID produces the same UUID.
-//   - For system events (SystemEvent=true), deriveAggregateID is
+//     defaultAggregateID produces the same UUID.
+//   - For system events (SystemEvent=true), defaultAggregateID is
 //     non-deterministic (two calls yield different UUIDs).
 //
 // The non-system branch uses uuid.NewSHA1 which is a pure hash — same
@@ -257,8 +257,8 @@ func TestProperty_DeriveAggregateID_Deterministic(t *testing.T) {
 		sibling.EventID = event.EventID + "-sibling"
 		sibling.Subject = "different-subject"
 
-		a := deriveAggregateID(event)
-		b := deriveAggregateID(sibling)
+		a := defaultAggregateID(event)
+		b := defaultAggregateID(sibling)
 
 		return a == b
 	}
@@ -278,8 +278,8 @@ func TestProperty_DeriveAggregateID_Deterministic(t *testing.T) {
 	}
 
 	for i := range 10 {
-		a := deriveAggregateID(sysEvent)
-		b := deriveAggregateID(sysEvent)
+		a := defaultAggregateID(sysEvent)
+		b := defaultAggregateID(sysEvent)
 
 		if a == b {
 			t.Fatalf("iter %d: system event yielded identical UUIDs %v; want non-deterministic", i, a)

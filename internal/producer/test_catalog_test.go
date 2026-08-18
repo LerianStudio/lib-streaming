@@ -89,3 +89,10 @@ func testOutboxEnvelope(event Event, _topic, definitionKey string, policy Delive
 		Event:         event,
 	}
 }
+
+// defaultAggregateID is the outbox AggregateID an event gets with no
+// WithPartitionKey override wired — the baseline several tests compare an
+// overridden derivation against.
+func defaultAggregateID(event Event) uuid.UUID {
+	return (&Producer{}).deriveOutboxAggregateID(event)
+}

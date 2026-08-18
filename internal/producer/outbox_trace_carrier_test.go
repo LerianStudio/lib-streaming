@@ -172,7 +172,7 @@ func TestProducer_DeriveOutboxAggregateIDHonorsCustomPartitionAndSystemEvents(t 
 		t.Fatalf("aggregate id = %s; want the SHA1 of the custom partition key %s", got, want)
 	}
 
-	if got == deriveAggregateID(event) {
+	if got == defaultAggregateID(event) {
 		t.Fatal("custom partition function was ignored — aggregate id matched the default derivation")
 	}
 
