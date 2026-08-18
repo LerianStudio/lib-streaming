@@ -215,6 +215,16 @@ var (
 	// to transport destinations.
 	ErrNoRoutesConfigured = errors.New("streaming: no routes configured")
 
+	// ErrNoRequiredRoute is returned at producer construction when a catalog
+	// definition resolves to routes but NONE of them is RouteRequired.
+	//
+	// It is deliberately distinct from ErrNoRoutesConfigured: "no routes at all"
+	// is a wiring omission, while "routes, all best-effort" is a durability
+	// hole — nothing about that definition's delivery is ever reported to the
+	// caller, so a total outage of those destinations is a silent, durable loss
+	// that Emit returns nil for.
+	ErrNoRequiredRoute = errors.New("streaming: definition resolves to no required route")
+
 	// ErrMissingTarget is returned when a route omits the target identifier that
 	// selects the transport runtime configuration.
 	ErrMissingTarget = errors.New("streaming: route target required")
@@ -440,6 +450,7 @@ var callerErrorSentinels = []error{
 	ErrInvalidDestination,
 	ErrDuplicateRouteDefinition,
 	ErrNoRoutesConfigured,
+	ErrNoRequiredRoute,
 	ErrMissingTarget,
 	ErrMultiTransportRuntimeNotConfigured,
 }
@@ -462,7 +473,7 @@ var callerErrorSentinels = []error{
 //     ErrUnknownEventDefinition, ErrInvalidDeliveryPolicy,
 //     ErrInvalidPublisherDescriptor, ErrInvalidRouteDefinition,
 //     ErrInvalidDestination, ErrDuplicateRouteDefinition,
-//     ErrNoRoutesConfigured, ErrMissingTarget,
+//     ErrNoRoutesConfigured, ErrNoRequiredRoute, ErrMissingTarget,
 //     ErrMultiTransportRuntimeNotConfigured, ErrInvalidTLSConfig,
 //     ErrPlaintextSASLNotAllowed, ErrInvalidSASLMechanism
 //   - An *EmitError whose Class is ClassSerialization, ClassValidation, or

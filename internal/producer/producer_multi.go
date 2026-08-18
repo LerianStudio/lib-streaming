@@ -321,6 +321,15 @@ func validateRoutesAgainstTargets(ctx context.Context, logger log.Logger, routes
 	for _, def := range catalog.Definitions() {
 		resolved := routes.Routes(def.Key)
 
+		if len(resolved) == 0 {
+			a := newAsserterForLogger(logger, "producer_multi.validate_routes_orphan_definition")
+			_ = a.That(ctx, false, "catalog entry must resolve to at least one route",
+				"definition_key", def.Key,
+			)
+
+			return fmt.Errorf("%w: definition %q resolves to no route", contract.ErrNoRoutesConfigured, def.Key)
+		}
+
 		required := 0
 
 		for _, route := range resolved {
@@ -333,14 +342,14 @@ func validateRoutesAgainstTargets(ctx context.Context, logger log.Logger, routes
 			continue
 		}
 
-		a := newAsserterForLogger(logger, "producer_multi.validate_routes_orphan_definition")
+		a := newAsserterForLogger(logger, "producer_multi.validate_routes_all_optional_definition")
 		_ = a.That(ctx, false, "catalog entry must resolve to at least one required route",
 			"definition_key", def.Key,
 			"resolved_routes", len(resolved),
 		)
 
 		return fmt.Errorf("%w: definition %q resolves to %d route(s), none of them required — delivery would not be provable",
-			contract.ErrNoRoutesConfigured, def.Key, len(resolved))
+			contract.ErrNoRequiredRoute, def.Key, len(resolved))
 	}
 
 	return nil

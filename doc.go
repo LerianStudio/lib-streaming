@@ -272,7 +272,7 @@
 //     ErrUnknownEventDefinition, ErrInvalidDeliveryPolicy,
 //     ErrInvalidPublisherDescriptor, ErrInvalidRouteDefinition,
 //     ErrInvalidDestination, ErrDuplicateRouteDefinition,
-//     ErrNoRoutesConfigured, ErrMissingTarget,
+//     ErrNoRoutesConfigured, ErrNoRequiredRoute, ErrMissingTarget,
 //     ErrMultiTransportRuntimeNotConfigured, ErrInvalidTLSConfig,
 //     ErrPlaintextSASLNotAllowed, ErrInvalidSASLMechanism.
 //

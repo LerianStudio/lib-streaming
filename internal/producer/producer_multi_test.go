@@ -519,6 +519,44 @@ func TestNewProducerMulti_RejectsCatalogDefinitionWithNoRoute(t *testing.T) {
 	}
 }
 
+// TestNewProducerMulti_RejectsAllOptionalDefinition pins the "required" half of
+// the durability gate: a definition that resolves to routes, none of them
+// Required, must fail construction.
+//
+// "At least one route" is not the invariant — "at least one route whose failure
+// the caller hears about" is. A definition served only by best-effort routes
+// loses every copy during a total outage of those destinations while Emit
+// returns nil, so the loss is durable, silent, and unattributable.
+//
+// It is reachable without anyone writing an all-optional table by hand: a
+// definition-scoped OPTIONAL route claiming the same Target as a Required
+// catch-all SUPPRESSES that catch-all for the definition (additive-per-target
+// resolution), leaving the definition all-optional.
+func TestNewProducerMulti_RejectsAllOptionalDefinition(t *testing.T) {
+	t.Parallel()
+
+	primary := fake.NewAdapter(TransportKafkaLike)
+	catalog := sampleCatalog(t)
+	routes := mustMultiRouteTable(t,
+		multiTestRoute("transaction.created.kafka.primary", "transaction.created", "primary",
+			"lerian.streaming.transaction.created", contract.RouteOptional),
+	)
+
+	_, err := NewProducerMulti(
+		context.Background(),
+		MultiProducerConfig{Source: "svc-multi-test"},
+		nil,
+		[]TargetSpec{{Name: "primary", Kind: TransportKafkaLike, Adapter: primary}},
+		routes,
+		catalog,
+		WithLogger(log.NewNop()),
+		WithCatalog(catalog),
+	)
+	if !errors.Is(err, contract.ErrNoRequiredRoute) {
+		t.Fatalf("NewProducerMulti() error = %v; want errors.Is(ErrNoRequiredRoute)", err)
+	}
+}
+
 // TestNewProducerMulti_AllOptionalFail_ReturnsNilButRecordsOptional pins
 // the "every Optional route fails — caller still sees nil" contract.
 //

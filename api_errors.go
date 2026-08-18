@@ -49,6 +49,7 @@ var (
 	ErrInvalidDestination                 = contract.ErrInvalidDestination
 	ErrDuplicateRouteDefinition           = contract.ErrDuplicateRouteDefinition
 	ErrNoRoutesConfigured                 = contract.ErrNoRoutesConfigured
+	ErrNoRequiredRoute                    = contract.ErrNoRequiredRoute
 	ErrMissingTarget                      = contract.ErrMissingTarget
 	ErrMultiTransportRuntimeNotConfigured = contract.ErrMultiTransportRuntimeNotConfigured
 	ErrEmitterClosed                      = contract.ErrEmitterClosed
