@@ -70,7 +70,9 @@ Producer-only means this library publishes business facts. It does not consume K
 - **Three-method emitter contract**: `Emit(ctx, EmitRequest) error`, `Close() error`, and `Healthy(ctx) error`.
 - **Immutable catalog**: deterministic definition ordering, duplicate-key rejection, and duplicate contract-tuple rejection.
 - **Policy precedence**: definition default → config override → call override.
-- **Topic derivation**: `{service}.<resource>.<event>` where `service` is the sanitized `ce-source` (e.g. `midaz-ledger.transaction.created`), with `.v<major>` suffix for schema major versions `>=2`.
+- **One topic per producing application**: `lerian.streaming.<source>`. The topic carries no resource type, no event type, and no schema version — every event a service emits rides it, business facts and service-to-service commands alike. DLQ is `lerian.streaming.<source>.dlq`. Kafka ACLs scope a producer to exactly those two names.
+- **Strict `ce-source`**: a single dot-free lowercase segment (`^[a-z0-9][a-z0-9_-]*$`), rejected — never rewritten — at config, Builder, and preflight time.
+- **`ce-type` carries the app**: `studio.lerian.<source>.<resource>.<event>`, so two services' same-named events never collide.
 - **Tenant-aware partitioning**: tenant ID by default; system events use `system:<eventType>` and require explicit opt-in.
 - **Caller-error taxonomy**: `IsCallerError(err)` distinguishes correctable validation/auth/serialization failures from broker/runtime faults.
 - **Lifecycle integration**: `*Producer` implements `commons.App` for Launcher-owned startup and shutdown.
@@ -119,11 +121,8 @@ if err != nil {
     return err
 }
 
-eventTopic := (&streaming.Event{
-    Source:       cfg.CloudEventsSource,
-    ResourceType: "transaction",
-    EventType:    "created",
-}).Topic()
+// ONE topic per producing application: lerian.streaming.<source>.
+appTopic := streaming.AppTopic(cfg.CloudEventsSource)
 
 if !cfg.Enabled {
     emitter := streaming.NewNoopEmitter()
@@ -138,11 +137,12 @@ emitter, err := streaming.NewBuilder().
     Source(cfg.CloudEventsSource).
     Catalog(catalog).
     Routes(streaming.RouteDefinition{
-        Key:           "transaction.created.kafka.primary",
-        DefinitionKey: "transaction.created",
-        Target:        "primary",
-        Destination:   streaming.KafkaTopic(eventTopic),
-        Requirement:   streaming.RouteRequired,
+        // No DefinitionKey: a catch-all route serves the whole catalog.
+        // Under one topic per app there is nothing to fan out per event.
+        Key:         "primary.kafka",
+        Target:      "primary",
+        Destination: streaming.KafkaTopic(appTopic),
+        Requirement: streaming.RouteRequired,
     }).
     Target(streaming.TargetConfig{
         Name:    "primary",
@@ -208,6 +208,51 @@ All environment variables use the `STREAMING_` prefix. The canonical reference l
 
 When `STREAMING_ENABLED=false`, callers should use `streaming.NewNoopEmitter()` instead of constructing a Builder. Do not treat an empty broker list as an intentional production disablement when streaming is required. Fail startup and fix the deployment secret or config instead. Multi-transport wiring (multiple Kafka clusters, SQS / RabbitMQ / EventBridge dispatch) is programmatic — non-Kafka destinations such as SQS queue URLs, RabbitMQ exchanges, and EventBridge bus names are typically already plumbed through the consuming service's own configuration.
 
+## Consuming a Stream
+
+Under one topic per producing application, one subscription delivers that
+application's **entire** stream. Selection moves from the broker to the
+consumer: name the producers you consume, register a handler per event, and
+the library resolves the topics, verifies each event's `ce-source`, and
+dispatches by event key.
+
+```go
+c, err := streaming.NewConsumer().
+    Brokers(cfg.Brokers...).
+    Group("my-service").
+    Apps("lender", "matcher").             // -> lerian.streaming.{lender,matcher}
+    On("loan.disbursed", onLoanDisbursed). // "<resourceType>.<eventType>"
+    On("loan.settled", onLoanSettled).
+    RetryBudget(3).
+    Classifier(isTransient).
+    Build(ctx)
+if err != nil {
+    return err
+}
+
+go func() { _ = c.Run(ctx) }() // runtime.SafeGo in production
+defer c.Close()
+```
+
+| Concern | Behaviour |
+| --- | --- |
+| Subscription | `Apps("lender")` → `lerian.streaming.lender`. `Topics(...)` remains the raw escape hatch and composes with `Apps`. |
+| Dispatch key | `"<resourceType>.<eventType>"` — the same pair the producer's catalog spells and its manifest advertises. Underscores travel verbatim. |
+| Unmatched events | **Ignored** (skipped and committed) by default. `UnmatchedPolicy(streaming.UnmatchedError)` quarantines them instead. |
+| Source verification | An event whose `ce-source` is not one of the named `Apps` is rejected with `ErrUnexpectedSource` and quarantined — it never reaches a handler. `ExpectSources(...)` overrides the default for the raw-topics path. |
+| Whole-stream handler | `Handler(h)` still receives every event for consumers that select themselves. `Handler` and `On` are mutually exclusive. |
+
+`UnmatchedIgnore` is the default because it is the only safe one here: a
+consumer subscribed to a producer's app stream receives every event that
+producer emits and will legitimately care about a handful. Erroring on the
+rest would fail-closed the producer's entire sibling stream into the DLQ.
+Choose `UnmatchedError` only when this consumer genuinely owns every event on
+the stream and an unknown key means the producer's catalog drifted ahead of it.
+
+Tenant filtering remains the handler's responsibility: `event.TenantID` comes
+from the validated `ce-tenantid` header, never from the payload, and a handler
+that skips the tenant check has a cross-tenant leak.
+
 ## Multi-Transport Routing
 
 A single Emit can dispatch to N routes. Route attempts run in deterministic route-table order inside the Emit call. Per-target circuit breakers isolate target failures; when the configured manager supports lib-commons `TenantAwareManager`, non-system events use tenant-scoped breakers for each target so tenant A's outage does not reject tenant B. Required routes drive the aggregate Emit outcome; optional routes are best-effort.
@@ -227,15 +272,19 @@ emitter, err := streaming.NewBuilder().
     Source("midaz-ledger").
     Catalog(catalog).
     Routes(
+        // Catch-all: the whole catalog rides the app topic on the primary target.
         streaming.RouteDefinition{
-            Key:           "transaction.created.kafka.primary",
-            DefinitionKey: "transaction.created",
-            Target:        "kafka-primary",
-            Destination:   streaming.KafkaTopic("midaz-ledger.transaction.created"),
-            Requirement:   streaming.RouteRequired,
+            Key:         "kafka_primary.all",
+            Target:      "kafka-primary",
+            Destination: streaming.KafkaTopic(streaming.AppTopic("midaz-ledger")),
+            Requirement: streaming.RouteRequired,
         },
+        // Definition-scoped: shadow ONE event to SQS. A route naming a
+        // definition wins over the catch-all for that definition, so this
+        // event is not double-published — set the DefinitionKey on both
+        // routes if you want it on Kafka too.
         streaming.RouteDefinition{
-            Key:           "transaction.created.sqs.shadow",
+            Key:           "transaction_created.sqs.shadow",
             DefinitionKey: "transaction.created",
             Target:        "sqs-shadow",
             Destination:   streaming.SQSQueueURL("https://sqs.us-east-1.amazonaws.com/123/q"),
@@ -379,7 +428,7 @@ Capacity-plan accordingly: counter volume scales with route count, not Emit coun
 increase(streaming_dlq_publish_failed_total[5m]) > 0
 ```
 
-Non-Kafka routes need explicit DLQ destinations. Kafka-like routes can derive `<source>.dlq`; SQS, RabbitMQ, EventBridge, and custom routes skip DLQ delivery unless `RouteDefinition.DLQ` is set. The DLQ destination kind must match the source route destination kind because lib-streaming publishes the DLQ message through the same target adapter.
+Non-Kafka routes need explicit DLQ destinations. Kafka-like routes derive `<destination topic>.dlq` — for the default route that is `lerian.streaming.<source>.dlq`, one DLQ per application; SQS, RabbitMQ, EventBridge, and custom routes skip DLQ delivery unless `RouteDefinition.DLQ` is set. The DLQ destination kind must match the source route destination kind because lib-streaming publishes the DLQ message through the same target adapter.
 
 For production routes where quarantine is mandatory, make `DLQ` part of the route review checklist. Optional routes that are business-critical should also declare a DLQ and have separate optional-route failure alerts, because optional route failures do not fail the caller's Emit.
 
@@ -455,6 +504,8 @@ Key public API areas:
 
 - **Builder** — `NewBuilder`, `Source`, `Catalog`, `Routes`, `Target`, `TargetExtra`, `RegisterTransport`, `CBFailureRatio`, `CBMinRequests`, `CBTimeout`, `CloseTimeout`, `Logger`, `MetricsFactory`, `Tracer`, `CircuitBreakerManager`, `OutboxRepository`, `OutboxWriter`, `TLSConfig`, `SASL`, `AllowPlaintextSASL`, `AllowSystemEvents`, `PartitionKey`, `SQSTarget`, `RabbitMQTarget`, `EventBridgeTarget`, `Build`.
 - **Routes & destinations** — `TargetConfig`, `RouteDefinition`, `RouteTable`, `Destination`, `TransportKind`, `RouteRequirement`, `KafkaTopic`, `SQSQueueURL`, `RabbitMQRoute`, `EventBridgeBus`.
+- **Topic naming** — `AppTopic`, `AppDLQTopic`, `ValidateSource`, `TopicPrefix`, `DLQTopicSuffix`, `MaxKafkaTopicNameBytes`.
+- **Consumer dispatch** — `NewConsumer().Apps(...)`, `.On("<resourceType>.<eventType>", handler)`, `.UnmatchedPolicy(...)`, `.ExpectSources(...)`, `HandlerFunc`, `UnmatchedIgnore`, `UnmatchedError`, `ErrUnhandledEvent`, `ErrUnexpectedSource`.
 - **Transport port** — `TransportAdapter`, `TransportMessage`, `TransportHeader`, `TransportAdapterOptions`, `TransportAdapterFactory`, `PartitionKeyFunc`, plus the built-in client interfaces (`SQSPublisherClient`, `RabbitMQPublisher`, `EventBridgePutEventsClient`).
 - **Emitters** — `Emitter`, `Producer` (including `Descriptor`, `RegisterOutboxRelay`, `Run`, `RunContext`, `CloseContext`), `NoopEmitter`, and `streamingtest.MockEmitter`.
 - **Catalogs** — `Catalog`, `EventDefinition`, `NewCatalog`, `NewEventDefinition`, and duplicate-contract validation.

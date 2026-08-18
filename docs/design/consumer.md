@@ -456,8 +456,10 @@ those are shutdown, not poison.
 
 ### 7b. Tenant filter + system-event handling
 
-Topics are shared across tenants; the topic name derives from
-`<resource>.<event>` only. `ce-tenantid` → `Event.TenantID` is parsed by the
+Topics are shared across tenants AND across every event a producer emits: the
+topic name is `lerian.streaming.<ce-source>` and carries no tenant, no resource
+type, and no event type. Per-event selection therefore happens in the consumer
+(`Dispatcher`, keyed on `<resourceType>.<eventType>`), not in the subscription. `ce-tenantid` → `Event.TenantID` is parsed by the
 library via the existing `ParseCloudEventsHeaders` codec
 (`api_codec.go:34` → `internal/cloudevents/cloudevents.go:178`; tenant at `:232`)
 **before** `Handle` is invoked — never from the payload body. The tenant id is

@@ -99,8 +99,10 @@ Architectural constraints and design decisions for the `lib-streaming` codebase.
 - `Event` represents the CloudEvents 1.0 binary-mode envelope plus raw JSON payload.
 - Required CloudEvents fields include tenant, resource type, event type, event ID, schema version, timestamp, source, data content type, and payload rules as documented by the contract package.
 - `ApplyDefaults()` fills missing event ID, timestamp, schema version, and data content type on a local copy.
-- Topic derivation is `lerian.streaming.<resource>.<event>`.
-- Add `.v<major>` to the topic only when the schema version major is `>=2`.
+- Topic derivation is `lerian.streaming.<source>` — ONE topic per producing application. The topic carries no resource type, no event type, and no schema version.
+- `ce-source` must be a single dot-free lowercase segment (`^[a-z0-9][a-z0-9_-]*$`) short enough that the derived `.dlq` topic fits Kafka's 249-byte limit. Invalid sources are rejected, never rewritten.
+- `ce-type` is `studio.lerian.<source>.<resource>.<event>`.
+- Never encode the schema version in a topic name; `ce-schemaversion` is the only version carrier.
 - Default partition key is `TenantID`.
 - System-event partition key is `system:<eventType>`.
 - System events require `WithAllowSystemEvents`; they must not be accidentally publishable by regular service code.

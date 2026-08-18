@@ -1,5 +1,141 @@
 # Lib-streaming Changelog
 
+## [Unreleased] — v3.0.0 (event-streaming contract redesign)
+
+Module path is now `github.com/LerianStudio/lib-streaming/v3`.
+
+This is a full break with the v2 wire contract. Update every import path, and
+read the migration notes below before deploying: v3 producers and v2 consumers
+cannot interoperate.
+
+### BREAKING: one topic per producing application
+
+`Event.Topic()` is now `"lerian.streaming." + Source` and carries nothing else.
+The resource type, the event type, and the `.v<major>` schema-version suffix are
+all gone from the topic name. Every event a service emits rides its single app
+topic — business facts and service-to-service commands alike. The DLQ topic is
+`"lerian.streaming." + Source + ".dlq"`, so there is effectively one DLQ per
+application; per-topic DLQ derivation semantics are otherwise unchanged.
+
+Kafka ACLs now scope a producer to exactly two names (its topic and its `.dlq`)
+instead of an open per-event namespace. `streaming.AppTopic(source)` and
+`streaming.AppDLQTopic(source)` are exported so provisioning and ACL tooling
+derive the same names the runtime does.
+
+**Migration:** provision `lerian.streaming.<source>` and
+`lerian.streaming.<source>.dlq` per producing service, and repoint every
+consumer subscription at them. Per-event topics are no longer written to.
+
+### BREAKING: `ce-source` is strict
+
+A source must be a single dot-free lowercase segment matching
+`^[a-z0-9][a-z0-9_-]*$`, and at most 231 bytes so the derived DLQ topic fits
+Kafka's 249-byte limit. `contract.ValidateSource` (exported as
+`streaming.ValidateSource`) is applied at `LoadConfig`, `Builder.Build`,
+`NewPublisherDescriptor`, and producer preflight.
+
+v3 REJECTS an invalid source with `ErrInvalidSource`; it never rewrites one. The
+v2 lossy `sanitizeSourceSegment` normalization is DELETED — it could fold two
+distinct services onto one topic namespace and one ACL scope with neither owner
+noticing. The `//lerian.midaz/<service>` URI shape is no longer accepted.
+
+**Migration:** change `STREAMING_CLOUDEVENTS_SOURCE` from the URI shape to a
+plain app name — `//lerian.midaz/transaction-service` becomes e.g.
+`midaz-transaction-service`. A malformed value now fails startup instead of
+being silently normalized.
+
+### BREAKING: `ce-type` carries the producing application
+
+`ce-type` is now `"studio.lerian." + Source + "." + ResourceType + "." +
+EventType`. v2's source-blind `studio.lerian.<resource>.<event>` let two
+services emit byte-identical `ce-type` values for same-named events, a homonym
+collision a consumer reading only `ce-type` could not detect — and one the topic
+collapse makes reachable in practice. Every other `ce-*` header is unchanged:
+binary content mode, `ce-tenantid`, `ce-resourcetype`, `ce-eventtype`,
+`ce-schemaversion`, `ce-systemevent`.
+
+### BREAKING: schema version left the topic
+
+The `.v<major>` topic suffix logic is removed entirely. `ce-schemaversion` is now
+the only version carrier on the wire; semver is still validated at
+`NewEventDefinition` time. `EventDefinition.Topic(source)` is DELETED — a
+definition has no topic of its own. `EventDefinition.EventKey()` returns the
+`"<resourceType>.<eventType>"` dispatch selector that replaced it. The exported
+`ParseMajorVersion` and `SanitizeSourceSegment` helpers are gone.
+
+### BREAKING: route model simplification
+
+`RouteDefinition.DefinitionKey` is now OPTIONAL. Empty means CATCH-ALL: the
+route serves every definition in the catalog. A definition-scoped route WINS
+over a catch-all for its own definition, so "shadow only THESE events to SQS"
+stays expressible without double-publishing everything else.
+
+The single-Kafka `NewProducer` path now synthesizes exactly ONE catch-all route
+to the app topic on the `"primary"` target; v2's route-per-catalog-entry fanout
+is deleted, since under topic collapse it produced N rows with one identical
+destination. The multi-target Builder, `RouteOverrides`, and explicit
+`KafkaTopic(...)` destinations are unchanged.
+
+### BREAKING: route keys allow underscores
+
+The canonical route-key pattern is now
+`^[a-z0-9][a-z0-9_-]*(\.[a-z0-9][a-z0-9_-]*)+$`. v2 forbade underscores, which
+forced every consuming repo (midaz, matcher, lender, br-consignado-gw) to carry
+`_`→`-` translation machinery because ResourceTypes are snake_case — one repo
+already shipped a latent bug from the two forms drifting. That machinery can be
+deleted; the producer's own `canonicalRouteKey` translator already has been.
+
+### Consumer: subscribe by app, dispatch by event, verify the source
+
+One subscription now delivers a producer's entire stream, so selection moved
+from the broker into the consumer. Three additions cover it:
+
+- `Apps("lender", "matcher")` subscribes by producing-application name,
+  resolving to each app's one topic. Raw `Topics(...)` survives as the escape
+  hatch for streams this library did not derive, and the two compose.
+  `STREAMING_CONSUMER_APPS` is the env equivalent.
+- `On("<resourceType>.<eventType>", handler)` registers one handler per event.
+  Unmatched events are IGNORED (skipped and committed) by default;
+  `UnmatchedPolicy(streaming.UnmatchedError)` quarantines them via
+  `ErrUnhandledEvent`. Ignore is the default because a consumer of an app stream
+  receives every event that producer emits and cares about a handful — erroring
+  would fail-closed the sibling stream into the DLQ.
+- Source verification is built in: an event whose `ce-source` is not an expected
+  producer is quarantined with `ErrUnexpectedSource` before any handler runs.
+  `Apps(...)` populates the allowlist automatically; `ExpectSources(...)`
+  overrides it for the raw-topics path. Consumers can delete their hand-rolled
+  `ce-source` checks.
+
+`Handler(...)` still takes the whole stream for consumers that select
+themselves; wiring both `Handler` and `On` returns
+`ErrHandlerAndDispatchBothSet` rather than silently dropping one.
+
+### BREAKING: manifest 2.0.0
+
+`ManifestEvent.topic` is REMOVED and replaced by `eventKey`
+(`"<resourceType>.<eventType>"`). The application's single `topic` / `dlqTopic`
+pair moves to the document level, where a one-topic-per-app fact belongs.
+`PublisherDescriptor.SourceBase` is renamed `Source` (JSON `sourceBase` →
+`source`) and is now validated by `ValidateSource` rather than merely trimmed.
+
+### Unchanged (verified by tests)
+
+- The outbox flow and the stable DB-only `lerian.streaming.publish` outbox
+  `EventType`, which never appears on the wire.
+- `OutboxEnvelope` shape. `OutboxEnvelopeVersion` stays at **1**: only the
+  persisted `Destination` VALUE changes (it now holds the app topic); no field
+  was added, removed, or retyped, so persisted rows stay readable.
+- `PartitionKey` = `TenantID`, or `"system:" + EventType` for system events.
+- Tenant identity travels only in `ce-tenantid`, never in topology; the
+  `containsTenantTopologyToken` guards on routes, destinations, and attributes
+  are intact.
+- Circuit breaker behaviour and tuning, TLS/SASL wiring, and every producer
+  `STREAMING_*` environment variable.
+
+[Compare changes](https://github.com/LerianStudio/lib-streaming/compare/v2.1.0...HEAD)
+
+---
+
 ## [2.1.0](https://github.com/LerianStudio/lib-streaming/releases/tag/v2.1.0)
 
 Features:

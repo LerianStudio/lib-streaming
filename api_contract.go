@@ -111,7 +111,47 @@ func NewRouteTable(routes ...RouteDefinition) (RouteTable, error) {
 	return contract.NewRouteTable(routes...)
 }
 
-// KafkaTopic returns a Kafka-like destination for topic.
+// Topic-name constants. Exposed so operators and provisioning code derive the
+// same names the runtime does, rather than re-implementing the concatenation.
+const (
+	// TopicPrefix is the fixed namespace on every lib-streaming topic.
+	TopicPrefix = contract.TopicPrefix
+	// DLQTopicSuffix is appended to a topic to derive its dead-letter topic.
+	DLQTopicSuffix = contract.DLQTopicSuffix
+	// MaxKafkaTopicNameBytes is Kafka's protocol-level topic-name limit.
+	MaxKafkaTopicNameBytes = contract.MaxKafkaTopicNameBytes
+)
+
+// AppTopic returns the ONE topic a producing application publishes to:
+// "lerian.streaming." + source.
+//
+// Every event that application emits — business fact or service-to-service
+// command, every resource type, every event type, every schema version —
+// rides this topic. Use it when provisioning topics, writing Kafka ACLs, or
+// naming an explicit Kafka destination.
+func AppTopic(source string) string {
+	return contract.AppTopic(source)
+}
+
+// AppDLQTopic returns the dead-letter topic for an application's stream.
+func AppDLQTopic(source string) string {
+	return contract.AppDLQTopic(source)
+}
+
+// ValidateSource reports whether source is a legal ce-source: a single
+// dot-free lowercase segment matching ^[a-z0-9][a-z0-9_-]*$, short enough that
+// the derived topic plus ".dlq" fits Kafka's 249-byte limit.
+//
+// LoadConfig, Builder.Build, NewPublisherDescriptor, and producer preflight all
+// apply it; it is exported so a service can validate its own configuration
+// before constructing anything. Returns ErrMissingSource for empty and an
+// ErrInvalidSource-wrapped error for malformed.
+func ValidateSource(source string) error {
+	return contract.ValidateSource(source)
+}
+
+// KafkaTopic returns a Kafka-like destination for topic. For the default
+// destination of a lib-streaming producer, pass AppTopic(source).
 func KafkaTopic(topic string) Destination {
 	return Destination{Kind: TransportKafkaLike, Name: topic}
 }

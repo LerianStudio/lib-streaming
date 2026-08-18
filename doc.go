@@ -42,11 +42,9 @@
 //	    EventType:    "created",
 //	})
 //	if err != nil { return err }
-//	eventTopic := (&streaming.Event{
-//	    Source:       cfg.CloudEventsSource,
-//	    ResourceType: "transaction",
-//	    EventType:    "created",
-//	}).Topic()
+//	// ONE topic per producing application. Every event this service emits
+//	// rides it; consumers select by ce-resourcetype / ce-eventtype.
+//	appTopic := streaming.AppTopic(cfg.CloudEventsSource) // lerian.streaming.<source>
 //	// Consuming services wire panic + assertion metrics once at bootstrap
 //	// after telemetry is initialized. lib-streaming uses lib-observability/assert
 //	// internally for post-construction invariant checks; without this call
@@ -70,11 +68,12 @@
 //	    Source(cfg.CloudEventsSource).
 //	    Catalog(catalog).
 //	    Routes(streaming.RouteDefinition{
-//	        Key:           "transaction.created.kafka.primary",
-//	        DefinitionKey: "transaction.created",
-//	        Target:        "primary",
-//	        Destination:   streaming.KafkaTopic(eventTopic),
-//	        Requirement:   streaming.RouteRequired,
+//	        // No DefinitionKey: a catch-all route serves the whole catalog.
+//	        // Under one topic per app there is nothing to fan out per event.
+//	        Key:         "primary.kafka",
+//	        Target:      "primary",
+//	        Destination: streaming.KafkaTopic(appTopic),
+//	        Requirement: streaming.RouteRequired,
 //	    }).
 //	    Target(streaming.TargetConfig{
 //	        Name:    "primary",
@@ -350,14 +349,18 @@
 //
 // # Consumer responsibilities
 //
-// Topics are SHARED across tenants. The topic name derives from
-// {service}.<resource>.<event> — where {service} is the sanitized ce-source,
-// with a ".v<major>" suffix when the SchemaVersion major is >= 2 — and NEVER
-// from the tenant. The producing service IS the topic namespace (so Kafka ACLs
-// can scope a producer to "{service}.*"); it is NOT a fixed "lerian.streaming."
-// prefix and NOT derived from <resource>.<event> alone. Partition keys give
-// per-tenant FIFO ordering within a topic but do NOT isolate tenants at the
-// topic level.
+// Topics are SHARED across tenants AND across every event a producer emits.
+// The topic name is "lerian.streaming." + ce-source and carries nothing else —
+// no resource type, no event type, no schema version, and NEVER a tenant.
+// Kafka ACLs scope a producer to exactly two names, its topic and its ".dlq".
+// Partition keys give per-tenant FIFO ordering within a topic but do NOT
+// isolate tenants at the topic level.
+//
+// Because one subscription delivers a producer's whole stream, a consumer
+// selects per event by the ce-resourcetype / ce-eventtype headers. Use the
+// consumer's built-in dispatch — NewConsumer().Apps(...).On("<resourceType>.
+// <eventType>", handler) — which also verifies each event's ce-source against
+// the producers you named.
 //
 // Every consumer MUST filter events by ce-tenantid (or Event.TenantID after
 // parsing) before dispatching to tenant-scoped business logic. A consumer
