@@ -719,11 +719,11 @@ Key public API areas:
 
 - **Builder** — `NewBuilder`, `Source`, `Catalog`, `Routes`, `Target`, `TargetExtra`, `RegisterTransport`, `CBFailureRatio`, `CBMinRequests`, `CBTimeout`, `CloseTimeout`, `Logger`, `MetricsFactory`, `Tracer`, `CircuitBreakerManager`, `OutboxRepository`, `OutboxWriter`, `TLSConfig`, `SASL`, `AllowPlaintextSASL`, `AllowSystemEvents`, `PartitionKey`, `SQSTarget`, `RabbitMQTarget`, `EventBridgeTarget`, `Build`.
 - **Routes & destinations** — `TargetConfig`, `RouteDefinition`, `RouteTable`, `Destination`, `TransportKind`, `RouteRequirement`, `KafkaTopic`, `SQSQueueURL`, `RabbitMQRoute`, `EventBridgeBus`.
-- **Topic naming** — `AppTopic`, `AppDLQTopic`, `ValidateSource`, `TopicPrefix`, `DLQTopicSuffix`, `MaxKafkaTopicNameBytes`.
-- **Consumer dispatch** — `NewConsumer().Source(...)`, `.Apps(...)`, `.OnFrom(app, "<resourceType>.<eventType>", handler)`, `.On(...)` (single-app shorthand), `.UnmatchedPolicy(...)`, `.ExpectSources(...)`, `HandlerFunc`, `UnmatchedIgnore`, `UnmatchedError`, `ErrUnhandledEvent`, `ErrUnexpectedSource`, `ErrBareOnWithMultipleApps`, `ErrUnknownDispatchApp`, `ErrConsumerMissingSource`, `ErrConsumerPartitionHalted`.
+- **Topic naming** — `AppTopic`, `AppDLQTopic`, `AppCommandsTopic`, `ValidateSource`, `TopicPrefix`, `DLQTopicSuffix`, `CommandsTopicSuffix`, `MaxKafkaTopicNameBytes`.
+- **Consumer dispatch** — `NewConsumer().Source(...)`, `.Apps(...)`, `.Commands(...)`, `.OnFrom(app, "<resourceType>.<eventType>", handler)`, `.On(...)` (single-app shorthand), `.UnmatchedPolicy(...)`, `.ExpectSources(...)`, `HandlerFunc`, `UnmatchedIgnore`, `UnmatchedError`, `ErrUnhandledEvent`, `ErrUnexpectedSource`, `ErrBareOnWithMultipleApps`, `ErrUnknownDispatchApp`, `ErrConsumerMissingSource`, `ErrConsumerPartitionHalted`, `ErrHandlerAndCommandsBothSet`.
 - **Transport port** — `TransportAdapter`, `TransportMessage`, `TransportHeader`, `TransportAdapterOptions`, `TransportAdapterFactory`, `PartitionKeyFunc`, plus the built-in client interfaces (`SQSPublisherClient`, `RabbitMQPublisher`, `EventBridgePutEventsClient`).
 - **Emitters** — `Emitter`, `Producer` (including `Descriptor`, `RegisterOutboxRelay`, `Run`, `RunContext`, `CloseContext`), `NoopEmitter`, and `streamingtest.MockEmitter`.
-- **Catalogs** — `Catalog`, `EventDefinition`, `NewCatalog`, `NewEventDefinition`, and duplicate-contract validation.
+- **Catalogs** — `Catalog`, `EventDefinition`, `NewCatalog`, `NewEventDefinition`, `EventClass`, `ClassFact`, `ClassCommand`, and duplicate-contract validation.
 - **Requests** — `EmitRequest`, `NewEmitRequest`, payload rules, tenant/subject metadata.
 - **Delivery Policies** — `DefaultDeliveryPolicy`, `ResolveDeliveryPolicy`, `DirectMode`, `OutboxMode`, `DLQMode`, `DeliveryPolicy`, `DeliveryPolicyOverride`.
 - **Outbox** — `OutboxEnvelope` (with `Validate` / `ValidateShape`), `OutboxWriter`, `WithOutboxTx`, `StreamingOutboxEventType`, transactional writer support, relay registration.
