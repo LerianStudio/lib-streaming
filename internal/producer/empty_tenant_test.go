@@ -37,7 +37,7 @@ func TestProducer_EmitEmptyTenant_DirectPath(t *testing.T) {
 		t.Fatalf("Emit empty tenant err = %v; want nil", err)
 	}
 
-	consumer := newConsumer(t, cluster, "test.transaction.created")
+	consumer := newConsumer(t, cluster, "lerian.streaming.test")
 	fetchCtx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
@@ -129,19 +129,31 @@ func TestProducer_EmitEmptyTenant_OutboxPath(t *testing.T) {
 	}
 }
 
-// TestProducer_EmitEmptyTenant_PartitionKeyUnchanged is a regression guard:
-// accepting an empty tenant must NOT alter partition-key derivation. A
-// non-system event still partitions by TenantID (empty here), and a system
-// event still uses the "system:" prefix.
-func TestProducer_EmitEmptyTenant_PartitionKeyUnchanged(t *testing.T) {
+// TestProducer_EmitEmptyTenant_PartitionKeyFallsBackToSubject guards the
+// single-tenant partition-key path: an empty tenant must never produce an
+// empty key, because an empty key pins the whole app topic to one partition
+// under franz-go's sticky-key partitioner. The event's Subject (aggregate id)
+// takes over, so per-aggregate ordering survives. System events are unaffected.
+func TestProducer_EmitEmptyTenant_PartitionKeyFallsBackToSubject(t *testing.T) {
 	t.Parallel()
 
 	nonSystem := sampleEvent()
 	nonSystem.TenantID = ""
-
 	nonSystem.SystemEvent = false
-	if got := nonSystem.PartitionKey(); got != "" {
-		t.Errorf("non-system empty-tenant PartitionKey() = %q; want \"\"", got)
+
+	if nonSystem.Subject == "" {
+		t.Fatal("sampleEvent() has no Subject; the fallback under test would be untestable")
+	}
+
+	if got := nonSystem.PartitionKey(); got != nonSystem.Subject {
+		t.Errorf("non-system empty-tenant PartitionKey() = %q; want the subject %q", got, nonSystem.Subject)
+	}
+
+	subjectless := nonSystem
+	subjectless.Subject = ""
+
+	if got := subjectless.PartitionKey(); got != subjectless.EventID {
+		t.Errorf("subject-less empty-tenant PartitionKey() = %q; want the event id %q", got, subjectless.EventID)
 	}
 
 	system := sampleEvent()

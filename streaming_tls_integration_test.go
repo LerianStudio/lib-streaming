@@ -32,15 +32,26 @@ import (
 	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kgo"
 
-	streaming "github.com/LerianStudio/lib-streaming/v2"
-	"github.com/LerianStudio/lib-streaming/v2/internal/config"
+	streaming "github.com/LerianStudio/lib-streaming/v3"
+	"github.com/LerianStudio/lib-streaming/v3/internal/config"
 )
 
 const (
 	tlsRedpandaImage = "docker.redpanda.com/redpandadata/redpanda:v24.2.18"
-	tlsIntegSource   = "//lerian.test/streaming-tls-integration"
-	tlsIntegTopic    = "streaming.tls.transaction.created"
+	tlsIntegSource   = "lerian-test-streaming-tls-integration"
 )
+
+// tlsIntegTopic is the app topic derived from tlsIntegSource, so the suite
+// exercises the v3 one-topic-per-application contract instead of a
+// hand-written per-event name.
+var tlsIntegTopic = func() string {
+	topic, err := streaming.AppTopic(tlsIntegSource)
+	if err != nil {
+		panic(err)
+	}
+
+	return topic
+}()
 
 // skipIfNoDockerTLS converts a testcontainers startup error into t.Skip when
 // Docker is unavailable, mirroring the internal producer suite's heuristic so

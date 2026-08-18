@@ -10,9 +10,9 @@ import (
 
 	"github.com/LerianStudio/lib-commons/v6/commons/circuitbreaker"
 	"github.com/LerianStudio/lib-observability/v2/log"
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport/kafka"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport/kafka"
 )
 
 // TargetSpec is the per-target wiring fed to NewProducerMulti. The
@@ -71,6 +71,18 @@ func NewProducerMulti(
 		return nil, contract.ErrNoRoutesConfigured
 	}
 
+	// The ce-source is validated ONCE, here, and is immutable for the life of
+	// the Producer. Everything downstream — Event.Topic(), the DLQ name, the
+	// manifest's advertised topic — is derived from it, so validating at
+	// construction is what makes "validate before you derive" true by
+	// construction rather than by luck on every Emit.
+	//
+	// The Builder applies the same gate earlier; this closes the direct-
+	// NewProducerMulti path, which custom bootstrap code reaches without it.
+	if err := contract.ValidateSource(mpc.Source); err != nil {
+		return nil, err
+	}
+
 	resolvedOpts := resolveEmitterOptions(opts)
 	logger := resolvedOpts.logger
 
@@ -87,7 +99,7 @@ func NewProducerMulti(
 		return nil, err
 	}
 
-	if err := validateRoutesAgainstTargets(ctx, logger, routes, targets, resolvedOpts.catalog); err != nil {
+	if err := validateRoutesAgainstTargets(ctx, logger, routes, targets, resolvedOpts.catalog, mpc.Source); err != nil {
 		return nil, err
 	}
 
@@ -248,12 +260,15 @@ func NewProducerMulti(
 //
 // Each branch fires under a distinct operation label so dashboards can
 // distinguish "unknown target", "unknown definition", "kind mismatch",
-// and "orphan definition" without parsing wrapped sentinels.
-func validateRoutesAgainstTargets(ctx context.Context, logger log.Logger, routes contract.RouteTable, targets []TargetSpec, catalog contract.Catalog) error {
+// "commands queue named by hand", and "orphan definition" without parsing
+// wrapped sentinels.
+func validateRoutesAgainstTargets(ctx context.Context, logger log.Logger, routes contract.RouteTable, targets []TargetSpec, catalog contract.Catalog, source string) error {
 	targetByName := make(map[string]contract.TransportKind, len(targets))
 	for _, spec := range targets {
 		targetByName[spec.Name] = spec.Kind
 	}
+
+	commandsTopic := contract.AppCommandsTopic(source)
 
 	for _, route := range routes.Definitions() {
 		kind, ok := targetByName[route.Target]
@@ -280,6 +295,45 @@ func validateRoutesAgainstTargets(ctx context.Context, logger log.Logger, routes
 				contract.ErrInvalidRouteDefinition, route.Key, route.Destination.Kind, route.Target, kind)
 		}
 
+		// The commands queue is reachable exactly ONE way: Class:
+		// ClassCommand on the event definition. A route that names it by hand
+		// is always the wrong instrument, whichever class it carries:
+		//
+		//   - A COMMAND routed there never reaches commandRoute's rewrite
+		//     (that only moves a destination equal to AppTopic), so its DLQ is
+		//     derived as "<app>.commands.dlq" — the fourth topic name the
+		//     design forbids: nothing provisions it and no ACL grants it, so
+		//     the quarantine copy of a failed command publish silently never
+		//     exists and the evidence of a lost command is lost too.
+		//   - A FACT routed there lands on the strict queue, where an
+		//     unmatched key is quarantined rather than skipped. A fact stream
+		//     is a firehose a consumer legitimately ignores most of; putting
+		//     one on the commands queue turns ordinary disinterest into
+		//     manufactured poison messages.
+		//
+		// Both are silent at emit time and only visible in production, so the
+		// refusal belongs here, at construction, where the caller still has a
+		// stack trace and a startup log.
+		if names, field := destinationNamesCommandsTopic(route, commandsTopic); names {
+			a := newAsserterForLogger(logger, "producer_multi.validate_routes_commands_topic_named")
+			_ = a.That(ctx, false, "route must not name the application commands queue directly",
+				"route_key", route.Key,
+				"target", route.Target,
+				"field", field,
+			)
+
+			return fmt.Errorf(
+				"%w: route %q %s names the commands queue %q directly; set Class: ClassCommand on the event definition instead — the producer moves command traffic onto that queue itself and pins the failed-publish DLQ to %q",
+				contract.ErrInvalidRouteDefinition, route.Key, field, commandsTopic, contract.AppDLQTopic(source))
+		}
+
+		// A catch-all route (empty DefinitionKey) serves every definition, so
+		// there is no single catalog entry to check it against. Only a
+		// definition-scoped route must name a key the catalog actually holds.
+		if route.DefinitionKey == "" {
+			continue
+		}
+
 		if _, err := catalog.Require(route.DefinitionKey); err != nil {
 			a := newAsserterForLogger(logger, "producer_multi.validate_routes_unknown_definition")
 			_ = a.That(ctx, false, "route DefinitionKey must reference a catalog entry",
@@ -292,21 +346,67 @@ func validateRoutesAgainstTargets(ctx context.Context, logger log.Logger, routes
 		}
 	}
 
-	// Every catalog entry MUST have at least one route, otherwise
-	// emit-time would surface ErrNoRoutesConfigured for any caller using
-	// that key. Catching at construction is far better.
+	// Every catalog entry MUST resolve to at least one REQUIRED route.
+	//
+	// "At least one route" is not enough: a definition served only by
+	// optional routes has no route whose failure the caller ever hears
+	// about, so a total outage of those destinations is a silent, durable
+	// loss reported as a successful Emit. Durability has to be provable at
+	// construction, not discovered at emit.
 	for _, def := range catalog.Definitions() {
-		if len(routes.Routes(def.Key)) == 0 {
+		resolved := routes.Routes(def.Key)
+
+		if len(resolved) == 0 {
 			a := newAsserterForLogger(logger, "producer_multi.validate_routes_orphan_definition")
-			_ = a.That(ctx, false, "catalog entry must have at least one route",
+			_ = a.That(ctx, false, "catalog entry must resolve to at least one route",
 				"definition_key", def.Key,
 			)
 
-			return fmt.Errorf("%w: definition %q has no routes", contract.ErrNoRoutesConfigured, def.Key)
+			return fmt.Errorf("%w: definition %q resolves to no route", contract.ErrNoRoutesConfigured, def.Key)
 		}
+
+		required := 0
+
+		for _, route := range resolved {
+			if route.Requirement == contract.RouteRequired {
+				required++
+			}
+		}
+
+		if required > 0 {
+			continue
+		}
+
+		a := newAsserterForLogger(logger, "producer_multi.validate_routes_all_optional_definition")
+		_ = a.That(ctx, false, "catalog entry must resolve to at least one required route",
+			"definition_key", def.Key,
+			"resolved_routes", len(resolved),
+		)
+
+		return fmt.Errorf("%w: definition %q resolves to %d route(s), none of them required — delivery would not be provable",
+			contract.ErrNoRequiredRoute, def.Key, len(resolved))
 	}
 
 	return nil
+}
+
+// destinationNamesCommandsTopic reports whether a route points either of its
+// Kafka-like destinations — the publish target or the explicit DLQ — at the
+// application's commands queue, and which field did it.
+//
+// Non-Kafka destinations are ignored: the commands split is a Kafka topic
+// convention, and an SQS queue that happens to share the string is a different
+// namespace entirely.
+func destinationNamesCommandsTopic(route contract.RouteDefinition, commandsTopic string) (bool, string) {
+	if route.Destination.Kind == contract.TransportKafkaLike && route.Destination.Name == commandsTopic {
+		return true, "destination"
+	}
+
+	if route.DLQ != nil && route.DLQ.Kind == contract.TransportKafkaLike && route.DLQ.Name == commandsTopic {
+		return true, "DLQ"
+	}
+
+	return false, ""
 }
 
 // buildCBConfigFromMulti maps the MultiProducerConfig knobs onto the same

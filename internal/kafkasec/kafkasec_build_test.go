@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
 )
 
 // selfSignedCertPEMBase64 mints a throwaway self-signed certificate and returns

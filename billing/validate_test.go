@@ -11,7 +11,7 @@ import (
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/LerianStudio/lib-streaming/v2/billing"
+	"github.com/LerianStudio/lib-streaming/v3/billing"
 )
 
 func TestValidate(t *testing.T) {

@@ -5,8 +5,8 @@ package billing_test
 import (
 	"testing"
 
-	streaming "github.com/LerianStudio/lib-streaming/v2"
-	"github.com/LerianStudio/lib-streaming/v2/billing"
+	streaming "github.com/LerianStudio/lib-streaming/v3"
+	"github.com/LerianStudio/lib-streaming/v3/billing"
 )
 
 func TestBilling_Topic(t *testing.T) {

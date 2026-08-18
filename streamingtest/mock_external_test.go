@@ -6,8 +6,8 @@ import (
 	"context"
 	"testing"
 
-	streaming "github.com/LerianStudio/lib-streaming/v2"
-	"github.com/LerianStudio/lib-streaming/v2/streamingtest"
+	streaming "github.com/LerianStudio/lib-streaming/v3"
+	"github.com/LerianStudio/lib-streaming/v3/streamingtest"
 )
 
 func TestMockEmitterImplementsStreamingEmitter(t *testing.T) {

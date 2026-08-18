@@ -10,8 +10,8 @@ import (
 
 	"github.com/LerianStudio/lib-commons/v6/commons/circuitbreaker"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
 )
 
 // targetRuntime is the per-target slice of Producer state. One

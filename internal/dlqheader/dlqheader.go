@@ -13,6 +13,12 @@
 // data across header namespaces would widen the wire contract beyond the
 // documented six DLQ headers and force every consumer to reconcile two
 // sources of truth.
+//
+// The package also owns the two size rules every DLQ writer obeys —
+// MaxErrorMessageBytes / TruncateErrorMessage for the one unbounded header
+// value, and IsSizeError plus the PayloadOmitted / PayloadBytes markers for the
+// payload-omitted retry — because a DLQ record is strictly larger than the
+// record it quarantines and must still fit. See budget.go.
 package dlqheader
 
 // The six DLQ forensic header keys (TRD §C8). Every DLQ message carries all
@@ -34,4 +40,11 @@ const (
 const (
 	SourcePartition = "x-lerian-dlq-source-partition"
 	SourceOffset    = "x-lerian-dlq-source-offset"
+	// CauseKind names WHICH gate quarantined the record: "codec",
+	// "handler", "source_mismatch", or "unhandled_key". The
+	// x-lerian-dlq-error-message header carries the sanitized underlying
+	// error; this one is the low-cardinality bucket an operator filters and
+	// alerts on. A DLQ where every entry says the same thing tells nobody
+	// what broke.
+	CauseKind = "x-lerian-dlq-cause-kind"
 )

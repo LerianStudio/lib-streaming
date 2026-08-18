@@ -11,8 +11,8 @@ import (
 
 	"github.com/LerianStudio/lib-observability/v2/log"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport/fake"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport/fake"
 )
 
 type singleEnvelopeTransactionalWriter struct {
@@ -42,7 +42,7 @@ func TestProducer_EmitBatch_PersistsAllRoutesInDeterministicOrder(t *testing.T) 
 
 	p, err := NewProducerMulti(
 		context.Background(),
-		MultiProducerConfig{Source: "svc://batch-test"},
+		MultiProducerConfig{Source: "svc-batch-test"},
 		nil,
 		[]TargetSpec{
 			{Name: "primary", Kind: TransportKafkaLike, Adapter: primary},
@@ -382,7 +382,7 @@ func newBatchTestProducer(
 
 	p, err := NewProducerMulti(
 		context.Background(),
-		MultiProducerConfig{Source: "svc://batch-test"},
+		MultiProducerConfig{Source: "svc-batch-test"},
 		nil,
 		[]TargetSpec{
 			{Name: "primary", Kind: TransportKafkaLike, Adapter: fake.NewAdapter(TransportKafkaLike)},

@@ -14,9 +14,9 @@ import (
 	"github.com/twmb/franz-go/pkg/kfake"
 
 	"github.com/LerianStudio/lib-observability/v2/log"
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport/fake"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport/kafka"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport/fake"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport/kafka"
 )
 
 // --- GROUP G: streaming benchmarks. ---
@@ -67,7 +67,7 @@ func kfakeBenchConfig(tb testing.TB) (Config, *kfake.Cluster) {
 		CBMinRequests:         10,
 		CBTimeout:             5 * time.Second,
 		CloseTimeout:          5 * time.Second,
-		CloudEventsSource:     "//bench",
+		CloudEventsSource:     "bench",
 	}, cluster
 }
 
@@ -105,7 +105,7 @@ func kfakeBenchDLQConfig(tb testing.TB) (Config, *kfake.Cluster) {
 		CBMinRequests:         1_000_000,
 		CBTimeout:             5 * time.Second,
 		CloseTimeout:          5 * time.Second,
-		CloudEventsSource:     "//bench",
+		CloudEventsSource:     "bench",
 	}, cluster
 }
 
@@ -266,7 +266,7 @@ func BenchmarkApplyDefaults(b *testing.B) {
 		e := Event{
 			ResourceType: "transaction",
 			EventType:    "created",
-			Source:       "//bench",
+			Source:       "bench",
 		}
 		e.ApplyDefaults()
 	}
@@ -475,7 +475,7 @@ func multiTargetFanoutSetup(tb testing.TB, routeCount int) (*Producer, EmitReque
 
 	p, err := NewProducerMulti(
 		context.Background(),
-		MultiProducerConfig{Source: "//bench/multi"},
+		MultiProducerConfig{Source: "bench-multi"},
 		nil, // policy overrides
 		specs,
 		routes,

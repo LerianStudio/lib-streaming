@@ -124,10 +124,16 @@ var (
 	// ce-type header.
 	ErrInvalidEventType = errors.New("streaming: Event.EventType contains control chars or exceeds 128 bytes")
 
-	// ErrInvalidSource is returned when Event.Source contains control
-	// characters or exceeds 2048 bytes. Distinct from ErrMissingSource
-	// (empty): this sentinel fires on a populated but malformed value.
-	ErrInvalidSource = errors.New("streaming: Event.Source contains control chars or exceeds 2048 bytes")
+	// ErrInvalidSource is returned when Event.Source is populated but is
+	// not a legal v3 ce-source: it must be a single dot-free lowercase
+	// segment matching ^[a-z0-9][a-z0-9_-]*$, short enough that
+	// "lerian.streaming.<source>.dlq" fits Kafka's 249-byte topic-name
+	// limit. Distinct from ErrMissingSource (empty).
+	//
+	// v3 REJECTS rather than rewrites. v2 folded a malformed source through
+	// a lossy sanitizer, so two distinct services could silently collapse
+	// onto one topic namespace and one Kafka ACL scope.
+	ErrInvalidSource = errors.New("streaming: Event.Source must be a single dot-free lowercase segment [a-z0-9][a-z0-9_-]* that fits the derived topic name")
 
 	// ErrInvalidSubject is returned when Event.Subject contains control
 	// characters or exceeds 1024 bytes. Subject is an optional CloudEvents
@@ -142,8 +148,8 @@ var (
 
 	// ErrInvalidSchemaVersion is returned when Event.SchemaVersion exceeds
 	// MaxSchemaVersionBytes or contains control characters. SchemaVersion
-	// travels as ce-schemaversion and is used by major-version topic
-	// suffixing in Topic().
+	// travels as ce-schemaversion, which is its ONLY carrier — v2's
+	// major-version topic suffix is gone, and Topic() no longer reads it.
 	ErrInvalidSchemaVersion = errors.New("streaming: Event.SchemaVersion contains control chars or exceeds 64 bytes")
 
 	// ErrInvalidDataContentType is returned when Event.DataContentType
@@ -208,6 +214,16 @@ var (
 	// routes. Runtime builders need at least one route to map catalog definitions
 	// to transport destinations.
 	ErrNoRoutesConfigured = errors.New("streaming: no routes configured")
+
+	// ErrNoRequiredRoute is returned at producer construction when a catalog
+	// definition resolves to routes but NONE of them is RouteRequired.
+	//
+	// It is deliberately distinct from ErrNoRoutesConfigured: "no routes at all"
+	// is a wiring omission, while "routes, all best-effort" is a durability
+	// hole — nothing about that definition's delivery is ever reported to the
+	// caller, so a total outage of those destinations is a silent, durable loss
+	// that Emit returns nil for.
+	ErrNoRequiredRoute = errors.New("streaming: definition resolves to no required route")
 
 	// ErrMissingTarget is returned when a route omits the target identifier that
 	// selects the transport runtime configuration.
@@ -434,6 +450,7 @@ var callerErrorSentinels = []error{
 	ErrInvalidDestination,
 	ErrDuplicateRouteDefinition,
 	ErrNoRoutesConfigured,
+	ErrNoRequiredRoute,
 	ErrMissingTarget,
 	ErrMultiTransportRuntimeNotConfigured,
 }
@@ -456,7 +473,7 @@ var callerErrorSentinels = []error{
 //     ErrUnknownEventDefinition, ErrInvalidDeliveryPolicy,
 //     ErrInvalidPublisherDescriptor, ErrInvalidRouteDefinition,
 //     ErrInvalidDestination, ErrDuplicateRouteDefinition,
-//     ErrNoRoutesConfigured, ErrMissingTarget,
+//     ErrNoRoutesConfigured, ErrNoRequiredRoute, ErrMissingTarget,
 //     ErrMultiTransportRuntimeNotConfigured, ErrInvalidTLSConfig,
 //     ErrPlaintextSASLNotAllowed, ErrInvalidSASLMechanism
 //   - An *EmitError whose Class is ClassSerialization, ClassValidation, or

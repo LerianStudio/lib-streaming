@@ -50,7 +50,7 @@ func TestProducer_Emit_OutboxAlwaysPolicySkipsDirectPublish(t *testing.T) {
 		t.Fatalf("row.EventType = %q; want %q", row.EventType, StreamingOutboxEventType)
 	}
 
-	consumer := newConsumer(t, cluster, "test.transaction.created")
+	consumer := newConsumer(t, cluster, "lerian.streaming.test")
 	fetchCtx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
@@ -117,8 +117,8 @@ func TestProducer_Emit_OutboxNeverPolicyReturnsCircuitOpenWhenBreakerOpen(t *tes
 
 func TestProducer_Emit_DLQNeverPolicySkipsDLQRoute(t *testing.T) {
 	cfg, cluster := kfakeDLQConfig(t)
-	sourceTopic := "test.transaction.created"
-	injectProduceError(cluster, sourceTopic, kerr.MessageTooLarge.Code)
+	appTopic := "lerian.streaming.test"
+	injectProduceError(cluster, appTopic, kerr.MessageTooLarge.Code)
 
 	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 	if err != nil {
@@ -134,7 +134,7 @@ func TestProducer_Emit_DLQNeverPolicySkipsDLQRoute(t *testing.T) {
 		t.Fatal("Emit err = nil; want source publish error")
 	}
 
-	if record := readDLQRecord(t, cluster, dlqTopic(sourceTopic), 500*time.Millisecond); record != nil {
+	if record := readDLQRecord(t, cluster, dlqTopic(appTopic), 500*time.Millisecond); record != nil {
 		t.Fatalf("DLQ record was written despite dlq=never")
 	}
 }

@@ -10,8 +10,8 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
 )
 
 // routeOutcome captures the terminal state of one route's publish attempt.
@@ -124,7 +124,8 @@ func (p *Producer) emitMulti(ctx context.Context, request contract.EmitRequest) 
 
 	headers := buildTransportHeaders(ctx, event)
 	for i := range routes {
-		outcomes = append(outcomes, p.dispatchRoute(ctx, span, event, topic, resolved.DefinitionKey, policy, headers, routes[i]))
+		route := commandRoute(routes[i], event.Source, resolved.Class)
+		outcomes = append(outcomes, p.dispatchRoute(ctx, span, event, topic, resolved.DefinitionKey, policy, headers, route))
 	}
 
 	return p.aggregateRouteOutcomes(span, resolved, outcomes)
@@ -187,6 +188,60 @@ func (p *Producer) enforceRoutePayloadCap(ctx context.Context, event Event, topi
 		Class:        contract.ClassValidation,
 		Cause:        contract.ErrPayloadTooLarge,
 	}
+}
+
+// commandRoute redirects an APP-TOPIC Kafka route onto the application's
+// ".commands" queue when the definition being emitted is a command, and pins
+// the route's DLQ to the application's own ".dlq" so the redirect does not
+// invent a ".commands.dlq".
+//
+// The test is TEXTUAL, not provenance-based: a destination that EQUALS
+// AppTopic(source) moves, however it was named — synthesized by the
+// convenience constructor or spelled out by hand in a caller's route table.
+// Any OTHER destination is left exactly where it was pointed: a legacy mirror
+// or a migration window names a concrete stream, and silently relocating it
+// would be the library overruling an explicit instruction.
+//
+// The one destination a caller cannot name at all is AppCommandsTopic(source);
+// validateRoutesAgainstTargets refuses that route at construction, so this
+// function never sees a route already sitting on the commands queue and the
+// rewrite below is the only way one gets there.
+//
+// The rewrite lands here rather than in the route table because the route
+// table is per-DEFINITION-KEY-or-catch-all, and the catch-all serves facts and
+// commands alike. Rewriting the table would need one catch-all per class;
+// rewriting the dispatch destination needs one function.
+//
+// Non-Kafka transports (SQS, RabbitMQ, EventBridge) are untouched: they have no
+// app-topic convention to derive from, so a command routed to one of them goes
+// exactly where the route says.
+func commandRoute(route contract.RouteDefinition, source string, class contract.EventClass) contract.RouteDefinition {
+	if class != contract.ClassCommand ||
+		route.Destination.Kind != contract.TransportKafkaLike ||
+		route.Destination.Name != contract.AppTopic(source) {
+		return route
+	}
+
+	route.Destination.Name = contract.AppCommandsTopic(source)
+
+	// A failed command publish quarantines into the PRODUCER's own DLQ — the
+	// name every application already writes and every ACL already grants.
+	// Without this pin, resolveRouteDLQDestination would derive
+	// "<app>.commands.dlq" from the rewritten destination: a fourth topic
+	// nobody provisioned, so the quarantine silently fails and the evidence
+	// of a lost command is lost too. An explicit route.DLQ still wins.
+	//
+	// The rewrite is the ONLY way a route reaches the commands queue — a route
+	// that named it directly never got past construction — so pinning here
+	// covers every command that rides it.
+	if route.DLQ == nil {
+		route.DLQ = &contract.Destination{
+			Kind: contract.TransportKafkaLike,
+			Name: contract.AppDLQTopic(source),
+		}
+	}
+
+	return route
 }
 
 // dispatchRoute resolves the per-route policy, builds the transport message,
@@ -359,10 +414,7 @@ func (p *Producer) dispatchRoute(
 	// The route message is built once and cloned only at the adapter boundary.
 	// That keeps route fan-out allocation bounded while preventing a mutating
 	// adapter from leaking changes into sibling routes or DLQ/replay paths.
-	partKey := event.PartitionKey()
-	if p.partFn != nil {
-		partKey = p.partFn(event)
-	}
+	partKey := p.resolvePartitionKey(event)
 
 	destination := route.Destination.Normalize()
 	message := transport.TransportMessage{

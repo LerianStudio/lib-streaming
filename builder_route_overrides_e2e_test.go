@@ -14,8 +14,8 @@ import (
 	"github.com/twmb/franz-go/pkg/sr/srfake"
 	"google.golang.org/protobuf/proto"
 
-	streaming "github.com/LerianStudio/lib-streaming/v2"
-	"github.com/LerianStudio/lib-streaming/v2/billing"
+	streaming "github.com/LerianStudio/lib-streaming/v3"
+	"github.com/LerianStudio/lib-streaming/v3/billing"
 	"github.com/twmb/franz-go/pkg/kfake"
 	"github.com/twmb/franz-go/pkg/kgo"
 )
@@ -219,7 +219,7 @@ func buildWithOverrides(t *testing.T, target streaming.TargetConfig) streaming.E
 	t.Helper()
 
 	emitter, err := streaming.NewBuilder().
-		Source("//route-overrides-e2e").
+		Source("route-overrides-e2e").
 		Catalog(overrideE2ECatalog(t)).
 		Routes(
 			overrideDomainRoute("transaction.created", "transaction-created.kafka.primary", "lerian.streaming.transaction.created"),
@@ -301,7 +301,7 @@ func TestRouteOverrides_ReplacesSameDefinitionKey(t *testing.T) {
 	target, cluster := overrideKfakeTarget(t)
 
 	emitter, err := streaming.NewBuilder().
-		Source("//route-overrides-replace").
+		Source("route-overrides-replace").
 		Catalog(builderCatalog(t)).
 		// Base route sends transaction.created to the .created topic...
 		Routes(overrideDomainRoute("transaction.created", "transaction-created.kafka.primary", "lerian.streaming.transaction.created")).
@@ -348,7 +348,7 @@ func TestRouteOverrides_EmptySlice(t *testing.T) {
 	target, cluster := overrideKfakeTarget(t)
 
 	emitter, err := streaming.NewBuilder().
-		Source("//route-overrides-empty").
+		Source("route-overrides-empty").
 		Catalog(builderCatalog(t)).
 		Routes(overrideDomainRoute("transaction.created", "transaction-created.kafka.primary", "lerian.streaming.transaction.created")).
 		RouteOverrides().

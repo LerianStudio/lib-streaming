@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	streaming "github.com/LerianStudio/lib-streaming/v2"
+	streaming "github.com/LerianStudio/lib-streaming/v3"
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
@@ -74,7 +74,7 @@ func TestFacade_BuilderDescriptorAndClose(t *testing.T) {
 	}
 
 	emitter, err := streaming.NewBuilder().
-		Source("//test/source").
+		Source("test-source").
 		Catalog(catalog).
 		Routes(streaming.RouteDefinition{
 			Key:           "transaction.created.kafka.primary",
@@ -107,7 +107,7 @@ func TestFacade_BuilderDescriptorAndClose(t *testing.T) {
 
 	descriptor, err := producer.Descriptor(streaming.PublisherDescriptor{
 		ServiceName: "svc",
-		SourceBase:  "//test/source",
+		Source:      "test-source",
 	})
 	if err != nil {
 		t.Fatalf("Descriptor() error = %v", err)
@@ -153,7 +153,7 @@ func TestFacade_ManifestAndCloudEventsWrappers(t *testing.T) {
 
 	manifest, err := streaming.BuildManifest(streaming.PublisherDescriptor{
 		ServiceName: "svc",
-		SourceBase:  "//svc",
+		Source:      "svc",
 	}, catalog, streaming.RouteTable{})
 	if err != nil {
 		t.Fatalf("BuildManifest() error = %v", err)
@@ -164,7 +164,7 @@ func TestFacade_ManifestAndCloudEventsWrappers(t *testing.T) {
 
 	headers := streaming.BuildCloudEventsHeaders(streaming.Event{
 		EventID:       "event-1",
-		Source:        "//svc",
+		Source:        "svc",
 		Timestamp:     time.Unix(0, 0).UTC(),
 		ResourceType:  "transaction",
 		EventType:     "created",
@@ -177,14 +177,14 @@ func TestFacade_ManifestAndCloudEventsWrappers(t *testing.T) {
 	parsed, err := streaming.ParseCloudEventsHeaders([]kgo.RecordHeader{
 		{Key: "ce-specversion", Value: []byte("1.0")},
 		{Key: "ce-id", Value: []byte("event-1")},
-		{Key: "ce-source", Value: []byte("//svc")},
-		{Key: "ce-type", Value: []byte("studio.lerian.transaction.created")},
+		{Key: "ce-source", Value: []byte("svc")},
+		{Key: "ce-type", Value: []byte("studio.lerian.svc.transaction.created")},
 		{Key: "ce-time", Value: []byte(time.Unix(0, 0).UTC().Format(time.RFC3339Nano))},
 	})
 	if err != nil {
 		t.Fatalf("ParseCloudEventsHeaders() error = %v", err)
 	}
-	if parsed.EventID != "event-1" || parsed.Source != "//svc" {
+	if parsed.EventID != "event-1" || parsed.Source != "svc" {
 		t.Fatalf("parsed event = %+v", parsed)
 	}
 }
@@ -209,7 +209,7 @@ func handlerOptionsCatalogFixture(t *testing.T) streaming.Catalog {
 func handlerOptionsDescriptorFixture() streaming.PublisherDescriptor {
 	return streaming.PublisherDescriptor{
 		ServiceName: "svc",
-		SourceBase:  "//svc",
+		Source:      "svc",
 	}
 }
 

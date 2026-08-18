@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	streaming "github.com/LerianStudio/lib-streaming/v2"
+	streaming "github.com/LerianStudio/lib-streaming/v3"
 )
 
 var _ streaming.TransactionalBatchEmitter = (*streaming.Producer)(nil)
@@ -32,7 +32,7 @@ func TestIsCallerError(t *testing.T) {
 		{"ErrPayloadTooLarge", streaming.ErrPayloadTooLarge},
 		{"ErrNotJSON", streaming.ErrNotJSON},
 		{"ErrEventDisabled", streaming.ErrEventDisabled},
-		{"ErrMissingBrokers", streaming.ErrMissingBrokers},
+		{"ErrProducerMissingBrokers", streaming.ErrProducerMissingBrokers},
 		{"ErrInvalidCompression", streaming.ErrInvalidCompression},
 		{"ErrInvalidAcks", streaming.ErrInvalidAcks},
 		{"ErrInvalidEventDefinition", streaming.ErrInvalidEventDefinition},
@@ -44,6 +44,12 @@ func TestIsCallerError(t *testing.T) {
 		{"ErrInvalidDestination", streaming.ErrInvalidDestination},
 		{"ErrDuplicateRouteDefinition", streaming.ErrDuplicateRouteDefinition},
 		{"ErrNoRoutesConfigured", streaming.ErrNoRoutesConfigured},
+		// ErrNoRequiredRoute sits in callerErrorSentinels and was unpinned. It
+		// fires when a definition resolves only to optional routes — every copy
+		// can be lost while Emit returns nil — which is exactly a caller
+		// misconfiguration and must classify as one, so an outbox relay moves
+		// the row to INVALID instead of retrying it forever.
+		{"ErrNoRequiredRoute", streaming.ErrNoRequiredRoute},
 		{"ErrMissingTarget", streaming.ErrMissingTarget},
 		{"ErrMultiTransportRuntimeNotConfigured", streaming.ErrMultiTransportRuntimeNotConfigured},
 		{"ErrInvalidTLSConfig", streaming.ErrInvalidTLSConfig},
@@ -218,7 +224,7 @@ func TestSentinelErrors_IsMatches(t *testing.T) {
 		streaming.ErrEventDisabled,
 		streaming.ErrPayloadTooLarge,
 		streaming.ErrNotJSON,
-		streaming.ErrMissingBrokers,
+		streaming.ErrProducerMissingBrokers,
 		streaming.ErrInvalidCompression,
 		streaming.ErrInvalidAcks,
 		streaming.ErrInvalidEventDefinition,

@@ -11,8 +11,8 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport/fake"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport/fake"
 )
 
 // TestDispatchRoute_BranchMatrix exercises every documented terminal-state
@@ -330,7 +330,7 @@ func TestDispatchRoute_BranchMatrix(t *testing.T) {
 
 			p, err := NewProducerMulti(
 				ctx,
-				MultiProducerConfig{Source: "svc://dispatch-route-test"},
+				MultiProducerConfig{Source: "svc-dispatch-route-test"},
 				nil,
 				[]TargetSpec{{Name: "primary", Kind: TransportKafkaLike, Adapter: primary}},
 				baseRoutes,
@@ -401,7 +401,7 @@ func TestDispatchRoute_NilAdapterReturnsErrNilProducer(t *testing.T) {
 
 	p, err := NewProducerMulti(
 		context.Background(),
-		MultiProducerConfig{Source: "svc://nil-adapter"},
+		MultiProducerConfig{Source: "svc-nil-adapter"},
 		nil,
 		[]TargetSpec{{Name: "primary", Kind: TransportKafkaLike, Adapter: primary}},
 		routes,
@@ -468,7 +468,7 @@ func TestDispatchRoute_NilCBReturnsErrNilProducer(t *testing.T) {
 
 	p, err := NewProducerMulti(
 		context.Background(),
-		MultiProducerConfig{Source: "svc://nil-cb"},
+		MultiProducerConfig{Source: "svc-nil-cb"},
 		nil,
 		[]TargetSpec{{Name: "primary", Kind: TransportKafkaLike, Adapter: primary}},
 		routes,

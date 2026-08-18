@@ -1,6 +1,10 @@
 package producer
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+)
 
 // resolvedEvent is the internal output of resolving an EmitRequest against the
 // producer catalog and policy overrides.
@@ -14,6 +18,10 @@ type resolvedEvent struct {
 	Event         Event
 	Topic         string
 	Policy        DeliveryPolicy
+	// Class is the definition's event class. It is the ONLY input that moves
+	// an app-topic destination onto the ".commands" queue, so it travels with
+	// the resolved event rather than being re-looked-up per route.
+	Class contract.EventClass
 }
 
 func (p *Producer) resolveEventAllowDisabled(request EmitRequest) (resolvedEvent, error) {
@@ -73,6 +81,16 @@ func (p *Producer) resolveEventWithPolicy(request EmitRequest, rejectDisabled bo
 		SystemEvent:     definition.SystemEvent,
 		Payload:         request.Payload,
 	}
+	// A system event is platform-level, not tenant-scoped: the contract says
+	// it omits ce-tenantid entirely. The header builder emits ce-tenantid
+	// whenever TenantID is non-empty, so a caller passing a tenant on a system
+	// definition would have shipped one — and a consumer filtering on
+	// ce-tenantid would have routed a platform event into one tenant's
+	// processing. Drop it here, at the single place the wire event is built.
+	if event.SystemEvent {
+		event.TenantID = ""
+	}
+
 	// ApplyDefaults fills Timestamp from time.Now().UTC() when zero, along
 	// with EventID / SchemaVersion / DataContentType. No pre-fill needed.
 	(&event).ApplyDefaults()
@@ -85,21 +103,32 @@ func (p *Producer) resolveEventWithPolicy(request EmitRequest, rejectDisabled bo
 	// before it could emit — a streaming-level tenant guard would be redundant
 	// and would only block legitimate single-tenant emits.
 
-	if event.Source == "" {
-		return resolvedEvent{}, ErrMissingSource
-	}
-
-	// Event.Topic() returns "" only on a nil receiver; here we operate on
-	// a value-type Event that already passed tenant/source validation, so
-	// the empty-topic case is unreachable. (Previously a defensive guard
-	// lived here — Wave 2 confirmed it was dead code.)
+	// Validate-before-derive is satisfied by CONSTRUCTION, not per Emit:
+	// event.Source is p.cloudEventsSource, which NewProducerMulti validated
+	// with ValidateSource and which is immutable thereafter. Re-running the
+	// regex here would pay a per-Emit cost to re-prove a construction-time
+	// fact about a constant.
+	//
+	// The outbox REPLAY path is different — its Event.Source comes from
+	// persisted bytes, not from this Producer — and is validated on every
+	// replay by preFlightWithPayload, which is the gate that path goes
+	// through.
+	// A COMMAND rides the app's ".commands" queue instead of its fact topic.
+	// The wire record is identical either way — the queue IS the class — so
+	// this is the single place the split is decided, and every downstream
+	// consumer of resolvedEvent.Topic (metrics label, span attribute, DLQ
+	// forensic header) reports the queue the record actually went to.
 	topic := event.Topic()
+	if definition.Class == contract.ClassCommand {
+		topic = contract.AppCommandsTopic(event.Source)
+	}
 
 	return resolvedEvent{
 		DefinitionKey: request.DefinitionKey,
 		Event:         event,
 		Topic:         topic,
 		Policy:        policy,
+		Class:         definition.Class,
 	}, nil
 }
 

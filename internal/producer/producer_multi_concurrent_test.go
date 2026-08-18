@@ -13,8 +13,8 @@ import (
 
 	"github.com/LerianStudio/lib-observability/v2/log"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport/fake"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport/fake"
 )
 
 // TestProducerMulti_ConcurrentEmitDuringClose stresses the multi-target
@@ -56,7 +56,7 @@ func TestProducerMulti_ConcurrentEmitDuringClose(t *testing.T) {
 
 	p, err := NewProducerMulti(
 		ctx,
-		MultiProducerConfig{Source: "svc://concurrent-test"},
+		MultiProducerConfig{Source: "svc-concurrent-test"},
 		nil,
 		[]TargetSpec{
 			{Name: "primary", Kind: TransportKafkaLike, Adapter: primary},

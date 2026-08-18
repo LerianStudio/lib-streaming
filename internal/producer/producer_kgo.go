@@ -5,7 +5,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/kafkasec"
+	"github.com/LerianStudio/lib-streaming/v3/internal/kafkasec"
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -15,16 +16,74 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport/kafka"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport/kafka"
 )
 
-// errTerminalQuarantine is the stable cause stamped on a DLQ forensic header
-// when a record is quarantined. The routing decision is made upstream by
-// classify-by-source; the DLQ error-class/message headers are metadata only, so
-// a single marker keeps the publisher seam free of the original error value.
-var errTerminalQuarantine = errors.New("streaming consumer: record quarantined to DLQ (terminal/poison)")
+// DLQ cause kinds, stamped on x-lerian-dlq-cause-kind. Low-cardinality by
+// design: an operator filters and alerts on this, then reads the sanitized
+// underlying error from x-lerian-dlq-error-message.
+//
+// They exist because every DLQ entry used to carry the SAME message. A
+// consumer's DLQ filling up told an operator that something was terminal, and
+// nothing else — a codec fault (the producer's wire format drifted), a source
+// mismatch (a foreign write, or a misconfigured allowlist), an unhandled key
+// (this consumer's registrations drifted behind the producer's catalog) and a
+// genuine business rejection were indistinguishable, and they have four
+// different owners and four different fixes.
+const (
+	// dlqCauseCodec: the CloudEvents headers would not decode. The record is
+	// poison and can never parse; the producer's wire format is the suspect.
+	dlqCauseCodec = "codec"
+	// dlqCauseHandler: the service handler returned a terminal error. The
+	// business rejection is the suspect.
+	dlqCauseHandler = "handler"
+	// dlqCauseSourceMismatch: the event's ce-source was not an expected
+	// producer. Either a foreign write to the topic, or an ExpectSources
+	// allowlist that drifted from what actually publishes there.
+	dlqCauseSourceMismatch = "source_mismatch"
+	// dlqCauseUnhandledKey: no handler registered for the event key. Fires on
+	// EVERY unmatched key from a COMMANDS queue (always strict — a command is
+	// work addressed to this consumer), and on a fact stream only under the
+	// opt-in UnmatchedError policy. Either way this consumer's On(...)
+	// registrations have drifted behind the producer's catalog.
+	dlqCauseUnhandledKey = "unhandled_key"
+)
+
+// ErrUnexpectedSource is returned when a record's ce-source is not one of the
+// consumer's expected producers. It means either a producer misconfiguration or
+// a foreign write to a topic this consumer reads, so it quarantines rather than
+// dispatching.
+//
+// The check lives in the RUNTIME, ahead of the handler, not in the Dispatcher.
+// It used to be dispatch-only, which left a whole-stream Handler(...) — the
+// mode most exposed on a shared-ACL topic, since it sees every record — with no
+// verification at all, and made ExpectSources a build error in that mode with
+// no in-API opt-out for a fleet-wide env var.
+var ErrUnexpectedSource = errors.New("streaming consumer: event ce-source is not an expected producer")
+
+// quarantineCause carries WHY a record is going to the DLQ, from the gate that
+// decided it down to the publisher that stamps the forensic headers.
+type quarantineCause struct {
+	kind string
+	err  error
+}
+
+// handlerQuarantineCause buckets a handler-return error into its cause kind.
+// The dispatcher's two structural rejections (source mismatch, unhandled key)
+// arrive as handler errors but are NOT business rejections, and lumping them
+// under "handler" would point an operator at the wrong owner.
+func handlerQuarantineCause(err error) quarantineCause {
+	switch {
+	case errors.Is(err, ErrUnexpectedSource):
+		return quarantineCause{kind: dlqCauseSourceMismatch, err: err}
+	case errors.Is(err, ErrUnhandledEvent):
+		return quarantineCause{kind: dlqCauseUnhandledKey, err: err}
+	default:
+		return quarantineCause{kind: dlqCauseHandler, err: err}
+	}
+}
 
 // Consumer metric names (free-form labels kept off to bound cardinality; see
 // docs/design/consumer.md §6). Recorded best-effort — a metrics factory is
@@ -36,7 +95,50 @@ const (
 	metricFetchErrorDataLoss = "streaming_consumer_fetch_error_data_loss_total"
 	metricSystemEvent        = "streaming_consumer_system_event_total"
 	metricPartitionHalted    = "streaming_consumer_partition_halted_total"
+	metricUnmatchedTotal     = "streaming_consumer_unmatched_total"
 )
+
+// maxUnmatchedEventKeyLabels bounds the distinct event_key label values on
+// streaming_consumer_unmatched_total. The keys a consumer legitimately sees are
+// bounded by its producers' catalogs, but the topic is writable by anything the
+// ce-source allowlist admits, so the label is capped and the overflow folds
+// into "other". An unbounded label here would be a metrics-backend hazard
+// dressed up as observability.
+const maxUnmatchedEventKeyLabels = 64
+
+// unmatchedEventKeyOverflow is the label used once maxUnmatchedEventKeyLabels
+// distinct keys have been metered.
+const unmatchedEventKeyOverflow = "other"
+
+// The two unmatched-event log lines, as constants so a test can pin the exact
+// string rather than a substring that drifts.
+const (
+	// unmatchedNoHandlerMessage fires once per distinct unmatched key.
+	unmatchedNoHandlerMessage = "streaming consumer: no handler registered for event key — records are being skipped and committed"
+	// unmatchedLabelOverflowMessage fires ONCE, at the boundary where the
+	// event_key label stops naming keys. Without it the "other" bucket
+	// silently swallows every later drift and the metric looks like it just
+	// went quiet.
+	unmatchedLabelOverflowMessage = `streaming consumer: unmatched event-key label overflow; further keys metered as "other"`
+	// unmatchedOverflowKeyMessage names an unmatched key seen PAST the label
+	// cap, rate-limited by unmatchedOverflowLogInterval.
+	//
+	// It exists because the per-key warning used to live inside the below-cap
+	// branch: once 64 distinct keys had been seen, every new one metered as
+	// "other" and was named NOWHERE. The real fleet carries 143 event keys
+	// across the four launch producers, so any two-app consumer burns the cap in
+	// minutes — and a producer shipping a new event on day 30 was then invisible
+	// in both signals at once.
+	unmatchedOverflowKeyMessage = "streaming consumer: unmatched event key seen past the metric label cap (named here because the metric can no longer name it)"
+)
+
+// unmatchedOverflowLogInterval bounds unmatchedOverflowKeyMessage globally.
+//
+// The cap protects the metrics backend's cardinality budget; this protects the
+// log from the same pressure. One line per window is enough to notice drift and
+// far too few to flood — and rate-limiting on a timestamp means no unbounded
+// set of seen keys has to be retained just to decide what is "new".
+const unmatchedOverflowLogInterval = 30 * time.Second
 
 // tenantContextKey is the unexported context key under which the validated
 // tenant id is seeded onto the handler ctx. A tenant-aware downstream repo reads
@@ -114,6 +216,40 @@ type consumerRuntime struct {
 	closed    atomic.Bool
 	// lastPollOK records the most recent poll-cycle completion for Healthy.
 	lastPollOK atomic.Bool
+
+	// unmatchedSeen records the event keys already metered/logged as
+	// unmatched, so the log fires once per key rather than once per record,
+	// and so the metric's event_key label stays bounded.
+	unmatchedSeen  sync.Map
+	unmatchedCount atomic.Int64
+	// unmatchedOverflowOnce guards the single boundary warning fired when the
+	// event_key label cap is first exceeded.
+	unmatchedOverflowOnce sync.Once
+	// unmatchedOverflowLogAt is the UnixNano of the last past-the-cap key line,
+	// which rate-limits that line globally. A timestamp rather than a seen-set:
+	// retaining every overflow key to decide "new" would reintroduce, in memory,
+	// exactly the unbounded growth the label cap exists to prevent.
+	unmatchedOverflowLogAt atomic.Int64
+
+	// haltMu guards haltStreaks, which the poll goroutine writes once per cycle
+	// and Healthy reads from whatever goroutine serves readiness.
+	haltMu sync.Mutex
+	// haltStreaks counts CONSECUTIVE halted cycles per partition. It is bounded
+	// by the consumer's own assignment, and a partition drops out the moment it
+	// makes progress.
+	haltStreaks map[topicPartition]haltStreak
+
+	// dispatcher is the handler when it is a *Dispatcher, resolved once at
+	// construction. New binds this runtime's unmatched recorder onto it —
+	// which means a Dispatcher REUSED across two Build calls has its
+	// observeUnmatched rebound to the LAST consumer, and the first consumer
+	// then meters nothing. Build one Dispatcher per consumer.
+	dispatcher *Dispatcher
+
+	// commandTopics is the set of subscribed topics carrying STRICT unmatched
+	// semantics, resolved once from cfg.Commands. Read per record on the guard
+	// chain, which is why it is a set rather than a slice scan.
+	commandTopics map[string]struct{}
 }
 
 // New constructs the real consumer runtime from validated config and resolved
@@ -138,12 +274,14 @@ func New(cfg ConsumerConfig, client GroupClient, handler Handler, opts ...Option
 	}
 
 	c := &consumerRuntime{
-		cfg:     cfg,
-		client:  client,
-		handler: handler,
-		codec:   defaultCodec,
-		logger:  log.NewNop(),
-		stop:    make(chan struct{}),
+		cfg:           cfg,
+		client:        client,
+		handler:       handler,
+		codec:         defaultCodec,
+		logger:        log.NewNop(),
+		stop:          make(chan struct{}),
+		haltStreaks:   make(map[topicPartition]haltStreak),
+		commandTopics: cfg.CommandTopics(),
 	}
 
 	for _, opt := range opts {
@@ -159,7 +297,105 @@ func New(cfg ConsumerConfig, client GroupClient, handler Handler, opts ...Option
 		return nil, ErrNilDLQPublisher
 	}
 
+	// Give the dispatcher a voice for the events it drops. UnmatchedIgnore is
+	// the right default and stays the default; what changes is that it stops
+	// being invisible. A typo'd On("loan.disbursd") otherwise builds clean,
+	// commits every record, reports Healthy, and processes nothing forever.
+	//
+	// This MUTATES the caller-owned Dispatcher. Reusing one Dispatcher across
+	// two Build calls rebinds observeUnmatched to the last consumer, leaving
+	// the first one metering nothing — build one Dispatcher per consumer.
+	if d, ok := handler.(*Dispatcher); ok {
+		c.dispatcher = d
+
+		d.ObserveUnmatched(c.recordUnmatched)
+	}
+
 	return c, nil
+}
+
+// recordUnmatched meters and logs one event the dispatcher had no handler for.
+//
+// The metric carries the event key so an operator can see WHICH stream is going
+// unread, bounded by maxUnmatchedEventKeyLabels. The log fires once per key —
+// per record would drown the log in exactly the high-volume case that makes the
+// signal matter.
+func (c *consumerRuntime) recordUnmatched(ctx context.Context, eventKey string) {
+	label := eventKey
+
+	if _, seen := c.unmatchedSeen.Load(eventKey); !seen {
+		if c.unmatchedCount.Load() >= maxUnmatchedEventKeyLabels {
+			label = unmatchedEventKeyOverflow
+
+			c.unmatchedOverflowOnce.Do(func() {
+				c.logger.Log(ctx, log.LevelWarn, unmatchedLabelOverflowMessage,
+					log.Int("distinct_event_keys", maxUnmatchedEventKeyLabels),
+				)
+			})
+
+			// The metric can no longer name this key, so the log must. The two
+			// signals are decoupled deliberately: the cap protects the metrics
+			// backend's cardinality budget, and going blind on key NAMES was
+			// never part of that bargain.
+			c.logOverflowKey(ctx, eventKey)
+		} else if _, loaded := c.unmatchedSeen.LoadOrStore(eventKey, struct{}{}); !loaded {
+			c.unmatchedCount.Add(1)
+
+			c.logger.Log(ctx, log.LevelWarn, unmatchedNoHandlerMessage,
+				log.String("event_key", eventKey),
+				log.String("policy", string(c.unmatchedPolicy())),
+			)
+		}
+	}
+
+	c.recordMetricWithLabels(ctx, metricUnmatchedTotal, map[string]string{"event_key": label})
+}
+
+// sourceAccepted reports whether source is one of the producing applications
+// this consumer accepts. An EMPTY allowlist accepts everything: verification
+// stays opt-in for the raw Topics(...) escape hatch, whose producers were never
+// named. Subscribing by Apps(...) fills the allowlist automatically, so the
+// ergonomic path gets verification for free.
+func (c *consumerRuntime) sourceAccepted(source string) bool {
+	if len(c.cfg.ExpectSources) == 0 {
+		return true
+	}
+
+	return slices.Contains(c.cfg.ExpectSources, source)
+}
+
+// logOverflowKey names one unmatched key seen past the label cap, at most once
+// per unmatchedOverflowLogInterval across the whole consumer.
+//
+// The CAS makes the window a real global bound under concurrent partitions: a
+// loser of the race skips its line rather than queueing behind it.
+func (c *consumerRuntime) logOverflowKey(ctx context.Context, eventKey string) {
+	now := time.Now().UnixNano()
+
+	last := c.unmatchedOverflowLogAt.Load()
+	if last != 0 && now-last < int64(unmatchedOverflowLogInterval) {
+		return
+	}
+
+	if !c.unmatchedOverflowLogAt.CompareAndSwap(last, now) {
+		return
+	}
+
+	c.logger.Log(ctx, log.LevelWarn, unmatchedOverflowKeyMessage,
+		log.String("event_key", eventKey),
+		log.String("policy", string(c.unmatchedPolicy())),
+		log.Int("distinct_event_keys_capped_at", maxUnmatchedEventKeyLabels),
+	)
+}
+
+// unmatchedPolicy reports the dispatcher's unmatched policy for logging, or
+// the ignore default when the handler is not a dispatcher.
+func (c *consumerRuntime) unmatchedPolicy() UnmatchedPolicy {
+	if c.dispatcher != nil {
+		return c.dispatcher.unmatched
+	}
+
+	return UnmatchedIgnore
 }
 
 // Consumer runtime sentinels surfaced by New when a collaborator is missing.
@@ -184,14 +420,6 @@ var (
 func Build(ctx context.Context, cfg ConsumerConfig, handler Handler, opts ...Option) (Runner, error) {
 	if !cfg.Enabled {
 		return NewNoop(), nil
-	}
-
-	// Normalize a blank suffix to the safe default before validation/wiring so a
-	// directly-constructed ConsumerConfig (not via NewConsumer/LoadConsumerConfig)
-	// never derives <topic><""> == the source topic. A whitespace-only suffix is
-	// rejected by Validate below.
-	if cfg.DLQTopicSuffix == "" {
-		cfg.DLQTopicSuffix = DefaultDLQTopicSuffix
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -225,10 +453,15 @@ func Build(ctx context.Context, cfg ConsumerConfig, handler Handler, opts ...Opt
 		return nil, fmt.Errorf("streaming consumer: DLQ adapter init: %s", contract.SanitizeBrokerURL(err.Error()))
 	}
 
+	// The quarantine target is THIS consumer's own DLQ, derived from its own
+	// ce-source (cfg.Validate proved it legal above). It is deliberately NOT
+	// derived per-record from the producer's topic: a consumer writing into a
+	// producer's DLQ needs a write grant on every producer it reads, and lands
+	// its failures on someone else's operational surface.
 	dlq := &transportDLQPublisher{
-		adapter: dlqAdapter,
-		suffix:  cfg.DLQTopicSuffix,
-		groupID: cfg.Group,
+		adapter:  dlqAdapter,
+		dlqTopic: contract.AppDLQTopic(cfg.Source),
+		groupID:  cfg.Group,
 	}
 
 	// The internal DLQ seam is authoritative: it is applied LAST so Build's
@@ -305,7 +538,7 @@ func (c *consumerRuntime) Run(ctx context.Context) error {
 // processFetches, so it still runs strictly after every seek-back is staged
 // (Req 3). The deferred call pairs with EVERY PollFetches and runs exactly once
 // per poll.
-func (c *consumerRuntime) pollCycle(ctx context.Context) (stop bool, halted map[topicPartition]struct{}) {
+func (c *consumerRuntime) pollCycle(ctx context.Context) (stop bool, halted map[topicPartition]string) {
 	fetches := c.client.PollFetches(ctx)
 
 	// Req 3: release the rebalance frozen by BlockRebalanceOnPoll exactly once
@@ -324,7 +557,14 @@ func (c *consumerRuntime) pollCycle(ctx context.Context) (stop bool, halted map[
 		return true, nil
 	}
 
-	halted = c.processFetches(ctx, fetches)
+	halted, seen := c.processFetches(ctx, fetches)
+
+	// Fold this cycle's halts into the consecutive-cycle streaks Healthy reads.
+	// The drainFetchErrors stop path returned above without touching them, and a
+	// mid-handle shutdown halt cannot accumulate a streak either — Run exits on
+	// the same signal that produced it, so it never gets a second cycle.
+	c.trackHalts(seen, halted)
+
 	// A fetch-error cycle (auth / data-loss / other non-shutdown error) must leave
 	// Healthy() reporting NOT-ok — the group is not cleanly fetching. A clean cycle
 	// marks the consumer healthy.
@@ -362,22 +602,78 @@ type topicPartition struct {
 	partition int32
 }
 
+// Halt reasons. Low-cardinality by design: they label the partition-halted
+// metric and name the cause in the readiness error, and they have different
+// owners — a stuck downstream, a broken DLQ path, and a shutdown are three
+// different pages.
+const (
+	// haltReasonSustainedTransient: the in-loop retry budget was exhausted on a
+	// reclassified transient. The partition seeks back and blocks head-of-line
+	// ("block beats lose"); the downstream is the suspect.
+	haltReasonSustainedTransient = "sustained_transient"
+	// haltReasonDLQPublishFailed: a terminal record could not be quarantined.
+	// Fail-closed, so the record is re-attempted rather than committed past —
+	// which means this one wedges until the DLQ path is fixed.
+	haltReasonDLQPublishFailed = "dlq_publish_failed"
+	// haltReasonShutdown: ctx-cancel landed mid-handle. Not a wedge; Run
+	// returns on the same signal, so it can never accumulate a streak.
+	haltReasonShutdown = "shutdown"
+)
+
+// haltedCyclesUnhealthy is how many CONSECUTIVE poll cycles a partition must
+// stay halted before Healthy reports it.
+//
+// One is too eager: a single sustained-transient cycle is an ordinary
+// downstream hiccup, and failing readiness on it would flap the pod out of the
+// load balancer for a blip that resolves itself. Three cycles (each separated
+// by HaltBackoff) means the partition made no progress across the whole
+// recovery window — a real wedge, not jitter.
+const haltedCyclesUnhealthy = 3
+
+// haltStreak counts consecutive halted cycles for one partition and remembers
+// why it is halted.
+type haltStreak struct {
+	cycles int
+	reason string
+}
+
+// ErrPartitionHalted is returned by Healthy when a partition has been halted
+// across haltedCyclesUnhealthy consecutive poll cycles.
+//
+// It exists because readiness could not see a wedge at all: it was
+// !closed && lastPollOK, and both stay true while a poison record whose DLQ
+// publish keeps failing redelivers forever. The consumer polled cleanly,
+// processed nothing, and reported green — under one topic per app, with the
+// producing application's entire catalog stuck behind it.
+var ErrPartitionHalted = errors.New("streaming consumer: partition halted across consecutive poll cycles (head-of-line blocked)")
+
 // processFetches walks every partition of one poll, applies the per-record
 // disposition state machine in ascending-offset order, stages commit watermarks,
 // performs seek-backs, and commits the staged watermarks at the end of the
 // cycle. It returns the set of partitions halted this cycle (sustained
-// transients) so Run can apply the cross-poll backoff.
+// transients) so Run can apply the cross-poll backoff, plus the set of
+// partitions this poll actually delivered records for — trackHalts needs both,
+// because a partition MISSING from the batch has made no progress and its halt
+// streak must survive.
 //
 // staged holds the per-partition MAX commit watermark (rec.Offset+1). franz-go's
 // CommitRecords is itself a per-partition watermark, but we compute the max
 // explicitly so a partition that halts mid-batch never stages a watermark past
 // the halted offset (Req 1, within-batch layer).
-func (c *consumerRuntime) processFetches(ctx context.Context, fetches kgo.Fetches) map[topicPartition]struct{} {
-	halted := make(map[topicPartition]struct{})
+func (c *consumerRuntime) processFetches(ctx context.Context, fetches kgo.Fetches) (map[topicPartition]string, map[topicPartition]struct{}) {
+	halted := make(map[topicPartition]string)
+	seen := make(map[topicPartition]struct{})
 	staged := make(map[topicPartition]*kgo.Record)
 
 	fetches.EachPartition(func(p kgo.FetchTopicPartition) {
 		tp := topicPartition{topic: p.Topic, partition: p.Partition}
+
+		// Delivered records is the only evidence of a fetch round-trip for this
+		// partition. An entry with none proves nothing happened, so it must not
+		// count as progress against a halt streak.
+		if len(p.Records) > 0 {
+			seen[tp] = struct{}{}
+		}
 
 		// Req 4: EachPartition may visit one partition multiple times per poll.
 		// Once halted (seek-back staged), skip every later record of it this
@@ -391,20 +687,20 @@ func (c *consumerRuntime) processFetches(ctx context.Context, fetches kgo.Fetche
 				break
 			}
 
-			disp, retryCount := c.handleRecord(ctx, rec)
+			disp, retryCount, cause := c.handleRecord(ctx, rec)
 
 			switch disp {
 			case dispositionCommit:
 				stageWatermark(staged, tp, rec)
 			case dispositionDLQ:
-				if c.routeDLQ(ctx, rec, retryCount) {
+				if c.routeDLQ(ctx, rec, retryCount, cause) {
 					// Commit ONLY AFTER the DLQ publish is acknowledged: the
 					// quarantine copy is durable before the original is dropped.
 					stageWatermark(staged, tp, rec)
 				} else {
 					// Fail-closed: DLQ publish failed -> do NOT commit past this
 					// record. Halt the partition so it is re-attempted next poll.
-					halted[tp] = struct{}{}
+					halted[tp] = haltReasonDLQPublishFailed
 				}
 			case dispositionRetry:
 				// Sustained transient (in-loop budget exhausted): seek the
@@ -413,31 +709,45 @@ func (c *consumerRuntime) processFetches(ctx context.Context, fetches kgo.Fetche
 				// halt it for the rest of this cycle (Req 4), and break. NEVER DLQ.
 				c.seekBack(rec)
 
-				halted[tp] = struct{}{}
+				halted[tp] = haltReasonSustainedTransient
 			case dispositionStop:
 				// Shutdown surfaced mid-handle (ctx cancel). Do NOT DLQ; do NOT
 				// stage a watermark past it. Halting the partition this cycle
 				// leaves the offset for re-delivery on a clean restart.
-				halted[tp] = struct{}{}
+				halted[tp] = haltReasonShutdown
 			}
 		}
 	})
 
 	c.commitStaged(ctx, staged)
 
-	return halted
+	return halted, seen
 }
 
 // handleRecord runs the per-record guard chain (docs/design/consumer.md §7b) and
 // returns the single disposition plus the in-loop retry count consumed (for the
 // DLQ retry-count header). Guards run UPSTREAM of classify; only records that
 // actually reach Handle are classified sourceHandler.
-func (c *consumerRuntime) handleRecord(ctx context.Context, rec *kgo.Record) (disposition, int) {
+func (c *consumerRuntime) handleRecord(ctx context.Context, rec *kgo.Record) (disposition, int, quarantineCause) {
 	ev, err := c.codec(rec.Headers)
 	if err != nil {
 		// Codec decode fault: malformed CloudEvent, can never parse, not
 		// reclassifiable -> always terminal -> DLQ.
-		return c.classify(err, sourceCodec), 0
+		return c.classify(err, sourceCodec), 0, quarantineCause{kind: dlqCauseCodec, err: err}
+	}
+
+	// Source verification, ahead of BOTH handler modes. A record whose
+	// ce-source is not an accepted producer is either a foreign write to a
+	// topic this consumer reads or an allowlist that drifted from what actually
+	// publishes there — never something to hand a business handler.
+	//
+	// It runs here rather than inside the Dispatcher so a whole-stream
+	// Handler(...) gets the same guarantee. That mode needs it MOST: it
+	// receives every record on a topic whose write ACL it does not control.
+	if !c.sourceAccepted(ev.Source) {
+		err := fmt.Errorf("%w: got %q, want one of %v", ErrUnexpectedSource, ev.Source, c.cfg.ExpectSources)
+
+		return dispositionDLQ, 0, quarantineCause{kind: dlqCauseSourceMismatch, err: err}
 	}
 
 	// Empty tenant is NOT a DLQ reason. Mirroring the producer (v1.6.2
@@ -448,6 +758,23 @@ func (c *consumerRuntime) handleRecord(ctx context.Context, rec *kgo.Record) (di
 	// downstream — a multi-tenant handler that needs a tenant fails closed via
 	// its OWN seeder, returning a terminal error that THEN routes to DLQ as the
 	// handler's verdict (sourceHandler), never a lib blanket rule.
+	// STRICT unmatched semantics on a commands queue, ahead of dispatch.
+	//
+	// A command is work addressed to THIS consumer, so a key it has no handler
+	// for is undelivered work — not the ignorable majority of a producer's fact
+	// firehose. Skipping and committing it is the failure this queue exists to
+	// prevent: a producer shipping a new command key before its consumer
+	// deploys the handler would lose every one of them, forever, while both
+	// sides report healthy.
+	//
+	// It runs here, not in the Dispatcher, because the verdict is a property of
+	// the TOPIC the record arrived on and Handler.Handle never sees the topic.
+	// That is also what makes the policy per-topic: the same consumer stays
+	// lenient on the fact streams it also subscribes to.
+	if err := c.unhandledCommand(rec, ev); err != nil {
+		return dispositionDLQ, 0, quarantineCause{kind: dlqCauseUnhandledKey, err: err}
+	}
+
 	if ev.SystemEvent {
 		// Observability only (no longer control flow): a system event is just an
 		// empty-tenant dispatch with a label. Cheap counter, kept.
@@ -455,6 +782,33 @@ func (c *consumerRuntime) handleRecord(ctx context.Context, rec *kgo.Record) (di
 	}
 
 	return c.handleWithRetry(ctx, rec, ev)
+}
+
+// unhandledCommand returns an ErrUnhandledEvent-wrapped error when rec arrived
+// on a STRICT commands queue carrying an event key this consumer registered no
+// handler for, and nil in every other case.
+//
+// Nil when the record is not from a commands queue (fact streams keep the
+// lenient UnmatchedPolicy verdict) and nil when there is no dispatcher — a
+// whole-stream Handler has no registry to ask, which is exactly why combining
+// Handler(...) with Commands(...) is refused at Build (ErrHandlerAndCommandsBothSet)
+// rather than silently downgraded here.
+func (c *consumerRuntime) unhandledCommand(rec *kgo.Record, ev contract.Event) error {
+	if len(c.commandTopics) == 0 || c.dispatcher == nil {
+		return nil
+	}
+
+	if _, strict := c.commandTopics[rec.Topic]; !strict {
+		return nil
+	}
+
+	key := contract.EventKey(ev.ResourceType, ev.EventType)
+	if c.dispatcher.Handles(ev.Source, key) {
+		return nil
+	}
+
+	return fmt.Errorf("%w: %q from %q on the commands queue %q — a command with no handler is undelivered work, never skipped",
+		ErrUnhandledEvent, key, ev.Source, rec.Topic)
 }
 
 // handleWithRetry dispatches the record to Handle and, on a transient handler
@@ -465,7 +819,7 @@ func (c *consumerRuntime) handleRecord(ctx context.Context, rec *kgo.Record) (di
 // is exhausted (a SUSTAINED transient -> seek-back + halt upstream; NEVER DLQ),
 // dispositionDLQ on a terminal handler/codec error, or dispositionStop on
 // shutdown. The second return value is the number of in-loop retries consumed.
-func (c *consumerRuntime) handleWithRetry(ctx context.Context, rec *kgo.Record, ev contract.Event) (disposition, int) {
+func (c *consumerRuntime) handleWithRetry(ctx context.Context, rec *kgo.Record, ev contract.Event) (disposition, int, quarantineCause) {
 	deadline := time.Now().Add(c.cfg.RetryInLoopMaxDwell)
 	backoff := c.cfg.RetryBackoffInitial
 
@@ -482,19 +836,19 @@ func (c *consumerRuntime) handleWithRetry(ctx context.Context, rec *kgo.Record, 
 		// the explicit Canceled/DeadlineExceeded cover a freshly-wrapped one.
 		if err != nil && ctx.Err() != nil &&
 			(errors.Is(err, ctx.Err()) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
-			return dispositionStop, attempt
+			return dispositionStop, attempt, quarantineCause{}
 		}
 
 		disp := c.classify(err, sourceHandler)
 		if disp != dispositionRetry {
-			return disp, attempt
+			return disp, attempt, handlerQuarantineCause(err)
 		}
 
 		// Transient handler error. Stop retrying in-loop if the budget or the
 		// aggregate dwell cap is reached, or if shutting down — the partition is
 		// then seeked back and re-delivered fresh on the next poll.
 		if attempt >= c.cfg.RetryBudget || ctx.Err() != nil {
-			return dispositionRetry, attempt
+			return dispositionRetry, attempt, quarantineCause{}
 		}
 
 		wait := backoff
@@ -504,11 +858,11 @@ func (c *consumerRuntime) handleWithRetry(ctx context.Context, rec *kgo.Record, 
 
 		if wait <= 0 {
 			// Aggregate dwell cap hit: defer to the cross-poll halt path.
-			return dispositionRetry, attempt
+			return dispositionRetry, attempt, quarantineCause{}
 		}
 
 		if !c.sleep(ctx, wait) {
-			return dispositionStop, attempt
+			return dispositionStop, attempt, quarantineCause{}
 		}
 
 		if backoff < c.cfg.RetryBackoffMax {
@@ -544,12 +898,27 @@ func (c *consumerRuntime) dispatch(ctx context.Context, rec *kgo.Record, ev cont
 // in-session cursor does not advance past the un-quarantined record) and the
 // caller halts the partition + skips the commit, so the record is re-attempted
 // on the next poll. A poison record never silently drops.
-func (c *consumerRuntime) routeDLQ(ctx context.Context, rec *kgo.Record, retryCount int) (published bool) {
-	// The original handler/codec error is not threaded into the publisher (the
-	// disposition already consumed it); a stable terminal marker populates the
-	// DLQ error-class/message forensic headers. The routing decision was made
-	// upstream by classify-by-source — the DLQ error class is metadata only.
-	if err := c.dlq.PublishDLQ(ctx, rec, errTerminalQuarantine, retryCount); err != nil {
+func (c *consumerRuntime) routeDLQ(ctx context.Context, rec *kgo.Record, retryCount int, cause quarantineCause) (published bool) {
+	// The underlying error and its cause kind BOTH travel to the publisher.
+	// Stamping one stable marker on every entry made a filling DLQ say only
+	// "something was terminal" — a codec fault, a foreign write, a drifted
+	// event-key registration and a genuine business rejection have four
+	// different owners, and an operator could not tell them apart.
+	//
+	// The error travels UNWRAPPED-BUT-INTACT: PublishDLQ sanitizes it (broker
+	// credentials stripped) at the point it becomes a header value, which is
+	// also where the adapter classifies it. Flattening it here would strip the
+	// sentinel chain both of them read.
+	//
+	// cause is always fully populated on this path: dispositionDLQ is only ever
+	// returned by classify for a NON-NIL error, and both of its callers pair it
+	// with a kind (dlqCauseCodec, or handlerQuarantineCause's four-way bucket).
+	// The former nil/empty fallbacks were unreachable, and the kind fallback
+	// attributed unknown causes to "handler" — pointing an operator at the
+	// service team for a fault that was never theirs.
+	kind := cause.kind
+
+	if err := c.dlq.PublishDLQ(ctx, rec, cause.err, kind, retryCount); err != nil {
 		c.seekBack(rec)
 		c.logger.Log(ctx, log.LevelError, "streaming consumer: DLQ publish failed",
 			log.String("topic", rec.Topic),
@@ -561,7 +930,7 @@ func (c *consumerRuntime) routeDLQ(ctx context.Context, rec *kgo.Record, retryCo
 		return false
 	}
 
-	c.recordMetric(ctx, metricDLQTotal)
+	c.recordMetricWithLabels(ctx, metricDLQTotal, map[string]string{"cause_kind": kind})
 
 	return true
 }
@@ -674,10 +1043,16 @@ func (c *consumerRuntime) dlqCloseTimeout() time.Duration {
 	return defaultCloseTimeout
 }
 
-// Healthy reports consumer readiness: not closed, and the poll loop has
-// completed at least one cycle (so the group is joined and fetching). A consumer
-// that has never completed a poll is reported not-ready rather than falsely
-// healthy.
+// Healthy reports consumer readiness: not closed, the poll loop has completed
+// at least one cycle (so the group is joined and fetching), and no partition is
+// wedged.
+//
+// The third condition is the one that was missing. Polling cleanly is not the
+// same as making progress: a poison record whose DLQ publish keeps failing, or
+// a downstream outage holding a partition back, leaves !closed && lastPollOK
+// both true forever while nothing is processed. The consumer reported green,
+// the pod stayed in the load balancer, and under one topic per app the
+// producing application's whole catalog sat behind it.
 func (c *consumerRuntime) Healthy(ctx context.Context) error {
 	if c == nil {
 		return ErrNilGroupClient
@@ -693,7 +1068,7 @@ func (c *consumerRuntime) Healthy(ctx context.Context) error {
 		return ErrNotReady
 	}
 
-	return nil
+	return c.wedgedPartition()
 }
 
 // ErrNotReady is returned by Healthy before the first poll cycle completes.
@@ -814,15 +1189,91 @@ func (c *consumerRuntime) recordSystemEvent(ctx context.Context, ev contract.Eve
 	)
 }
 
-// alertHalted meters + logs that one or more partitions are halted on a
-// sustained transient, so an operator can intervene on a long downstream outage.
-func (c *consumerRuntime) alertHalted(ctx context.Context, halted map[topicPartition]struct{}) {
-	c.recordMetric(ctx, metricPartitionHalted)
+// trackHalts folds one poll cycle's halt set into the per-partition consecutive
+// -cycle streaks Healthy reads.
+//
+// CONSECUTIVE is the whole point: a partition that halts, recovers, and halts
+// again is making progress, and treating that as a wedge would flap readiness
+// on ordinary downstream jitter. So a streak drops out entirely — rather than
+// decaying — the moment the partition makes progress.
+//
+// Progress is "seen AND not halted", never "not halted". A seek-back discards
+// the partition's buffered records, so franz-go needs a fresh fetch round-trip
+// before re-delivering them, and a hot sibling partition can win that race —
+// leaving the wedged partition absent from a poll batch it never recovered in.
+// Reading absence as recovery oscillated the streak 1 -> 0 -> 1 forever and the
+// threshold was never reached. An idle partition never enters the map at all,
+// so nothing else changes.
+func (c *consumerRuntime) trackHalts(seen map[topicPartition]struct{}, halted map[topicPartition]string) {
+	c.haltMu.Lock()
+	defer c.haltMu.Unlock()
 
-	for tp := range halted {
-		c.logger.Log(ctx, log.LevelWarn, "streaming consumer: partition halted on sustained transient (head-of-line blocked, ALERT)",
+	if c.haltStreaks == nil {
+		c.haltStreaks = make(map[topicPartition]haltStreak)
+	}
+
+	for tp := range c.haltStreaks {
+		_, delivered := seen[tp]
+		if _, still := halted[tp]; delivered && !still {
+			delete(c.haltStreaks, tp)
+		}
+	}
+
+	for tp, reason := range halted {
+		streak := c.haltStreaks[tp]
+		streak.cycles++
+		streak.reason = reason
+
+		c.haltStreaks[tp] = streak
+	}
+}
+
+// wedgedPartition returns a readiness error for the first partition (in
+// deterministic order) halted for haltedCyclesUnhealthy consecutive cycles, or
+// nil when none is.
+//
+// It names the topic, the partition, and the cause, because a health check that
+// only says "not ready" sends an operator to read logs for what it already
+// knew.
+func (c *consumerRuntime) wedgedPartition() error {
+	c.haltMu.Lock()
+	defer c.haltMu.Unlock()
+
+	worst, found := topicPartition{}, false
+	streak := haltStreak{}
+
+	for tp, s := range c.haltStreaks {
+		if s.cycles < haltedCyclesUnhealthy {
+			continue
+		}
+
+		// Deterministic pick so repeated probes report the same partition.
+		if !found || tp.topic < worst.topic || (tp.topic == worst.topic && tp.partition < worst.partition) {
+			worst, streak, found = tp, s, true
+		}
+	}
+
+	if !found {
+		return nil
+	}
+
+	return fmt.Errorf("%w: topic=%q partition=%d cause=%s consecutive_cycles=%d",
+		ErrPartitionHalted, worst.topic, worst.partition, streak.reason, streak.cycles)
+}
+
+// alertHalted meters + logs that one or more partitions are halted, so an
+// operator can intervene on a long downstream outage or a broken DLQ path.
+func (c *consumerRuntime) alertHalted(ctx context.Context, halted map[topicPartition]string) {
+	for tp, reason := range halted {
+		// The reason is a closed three-value set, so it is safe as a label and
+		// it is the one thing that routes the page: a stuck downstream, a broken
+		// DLQ path, and a shutdown have three different owners.
+		c.recordMetricWithLabels(ctx, metricPartitionHalted, map[string]string{"reason": reason})
+
+		c.logger.Log(ctx, log.LevelWarn, "streaming consumer: partition halted (head-of-line blocked, ALERT)",
 			log.String("topic", tp.topic),
 			log.Int("partition", int(tp.partition)),
+			log.String("reason", reason),
 		)
 	}
 }
@@ -831,6 +1282,12 @@ func (c *consumerRuntime) alertHalted(ctx context.Context, halted map[topicParti
 // when none is wired (tests, disabled telemetry) this is a no-op. Errors from
 // the factory are swallowed — a metric failure must never break the poll loop.
 func (c *consumerRuntime) recordMetric(ctx context.Context, name string) {
+	c.recordMetricWithLabels(ctx, name, nil)
+}
+
+// recordMetricWithLabels is recordMetric with a bounded label set. Callers own
+// the cardinality bound on every label value they pass.
+func (c *consumerRuntime) recordMetricWithLabels(ctx context.Context, name string, labels map[string]string) {
 	if c.metrics == nil {
 		return
 	}
@@ -840,7 +1297,7 @@ func (c *consumerRuntime) recordMetric(ctx context.Context, name string) {
 		return
 	}
 
-	_ = counter.Add(ctx, 1)
+	_ = counter.WithLabels(labels).Add(ctx, 1)
 }
 
 // errSource names the ORIGIN of a non-nil error so classify can apply the
@@ -913,6 +1370,24 @@ func (c *consumerRuntime) classify(err error, source errSource) disposition {
 		return dispositionDLQ
 
 	case sourceHandler:
+		// STRUCTURAL LIBRARY VERDICTS BYPASS THE CLASSIFIER. ErrUnhandledEvent
+		// and ErrUnexpectedSource are synthesized by THIS library, not by the
+		// service: no handler is registered for the key, or the record came
+		// from a source this consumer refuses. Neither can ever become
+		// satisfiable by waiting, so neither is reclassifiable — exactly like a
+		// codec fault, which is why they short-circuit in the same place.
+		//
+		// Handing them to the service Classifier was a wedge waiting to happen.
+		// The common classifier shape is "retry anything that is not my own
+		// business rule", which turns a never-satisfiable verdict into a
+		// transient: retried to exhaustion, seeked back, partition halted,
+		// redelivered, forever — and under one topic per app that is the
+		// producing application's ENTIRE catalog stuck behind one record, with
+		// nothing reaching the DLQ where an operator would have seen it.
+		if errors.Is(err, ErrUnhandledEvent) || errors.Is(err, ErrUnexpectedSource) {
+			return dispositionDLQ
+		}
+
 		// Handler-return error: FAIL-CLOSED. The optional Classifier RECLASSIFIES
 		// a known downstream-transient (Midaz/Postgres down) BACK to retry; the
 		// DEFAULT (no Classifier, or it returns false / does not recognize the

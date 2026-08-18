@@ -6,7 +6,7 @@ import (
 	"math"
 	"strings"
 
-	billingv1 "github.com/LerianStudio/lib-streaming/v2/billing/gen/lerian/streaming/billing/v1"
+	billingv1 "github.com/LerianStudio/lib-streaming/v3/billing/gen/lerian/streaming/billing/v1"
 )
 
 // Anti-abuse ceilings. These are DoS guards, NOT business rules: they are sized

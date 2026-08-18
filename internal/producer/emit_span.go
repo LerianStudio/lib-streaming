@@ -87,12 +87,7 @@ func (p *Producer) setEmitSpanAttributes(span trace.Span, event Event, topic, de
 	span.SetAttributes(attrs...)
 
 	if p.logger.Enabled(log.LevelDebug) {
-		partKey := event.PartitionKey()
-		if p.partFn != nil {
-			partKey = p.partFn(event)
-		}
-
-		span.SetAttributes(attribute.String("messaging.kafka.message.key", partKey))
+		span.SetAttributes(attribute.String("messaging.kafka.message.key", p.resolvePartitionKey(event)))
 	}
 }
 

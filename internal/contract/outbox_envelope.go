@@ -15,8 +15,18 @@ const (
 	// OutboxEnvelopeVersion is the wire-version of the persisted
 	// OutboxEnvelope. Validation uses strict equality (==
 	// OutboxEnvelopeVersion) so unknown versions are rejected as
-	// malformed.
-	OutboxEnvelopeVersion = 1
+	// malformed — INCLUDING version 1, the v2-era envelope.
+	//
+	// Bumped to 2 for v3. The struct SHAPE is identical to version 1, but
+	// the MEANING of the persisted Destination changed: a version-1 row
+	// holds a per-event topic ("midaz-ledger.transaction.created"), a
+	// version-2 row holds the application topic
+	// ("lerian.streaming.midaz-ledger"). A v3 relay draining a version-1
+	// row would publish it verbatim to a topic nothing subscribes to any
+	// more — delivered, acknowledged, and consumed by no one. Rejecting
+	// the row makes that an operator-visible decode failure instead of
+	// silent loss behind a green dashboard.
+	OutboxEnvelopeVersion = 2
 )
 
 // OutboxEnvelope is the persisted streaming outbox payload. One row is

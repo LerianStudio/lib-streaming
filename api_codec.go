@@ -3,7 +3,7 @@ package streaming
 import (
 	"github.com/twmb/franz-go/pkg/kgo"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/cloudevents"
+	"github.com/LerianStudio/lib-streaming/v3/internal/cloudevents"
 )
 
 // CloudEvents binary-mode Kafka header codec — pure helpers exposed at the
@@ -14,6 +14,21 @@ import (
 // The codec is the same one lib-streaming uses internally on the publish
 // path; building or parsing here yields wire-identical bytes to what a
 // real Producer would emit / parse.
+
+// CloudEventsType composes the ce-type header value:
+// "studio.lerian.<source>.<resourceType>.<eventType>".
+//
+// It is the consumer-facing half of the codec. A consumer that matches on
+// ce-type rather than on the ce-resourcetype / ce-eventtype extension pair
+// builds the string with this, instead of re-implementing the prefix and
+// separator and drifting from the producer that writes it.
+//
+// The <source> segment is the v3 addition: without it two services publishing
+// the same resource and event names produce byte-identical ce-type values, a
+// homonym collision the topic collapse makes reachable in practice.
+func CloudEventsType(source, resourceType, eventType string) string {
+	return cloudevents.TypeOf(source, resourceType, eventType)
+}
 
 // BuildCloudEventsHeaders assembles CloudEvents binary-mode Kafka headers
 // for event. Returns 8-13 headers depending on which optional fields are

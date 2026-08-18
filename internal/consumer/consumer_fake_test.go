@@ -11,7 +11,7 @@ import (
 	"github.com/LerianStudio/lib-observability/v2/log"
 	"github.com/twmb/franz-go/pkg/kgo"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
 )
 
 // spyLogger records log message strings so a test can assert observability
@@ -20,17 +20,42 @@ import (
 type spyLogger struct {
 	log.Logger // embedded nop; only Log is overridden
 
-	mu  sync.Mutex
-	msg []string
+	mu     sync.Mutex
+	msg    []string
+	fields [][]log.Field
 }
 
 func newSpyLogger() *spyLogger { return &spyLogger{Logger: log.NewNop()} }
 
-func (s *spyLogger) Log(_ context.Context, _ log.Level, msg string, _ ...log.Field) {
+func (s *spyLogger) Log(_ context.Context, _ log.Level, msg string, fields ...log.Field) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.msg = append(s.msg, msg)
+	s.fields = append(s.fields, append([]log.Field(nil), fields...))
+}
+
+// fieldValues returns the values recorded under key on every line whose message
+// equals msg — how a test asserts that a log line NAMED the thing it is about.
+func (s *spyLogger) fieldValues(msg, key string) []any {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var out []any
+
+	for i, line := range s.msg {
+		if line != msg {
+			continue
+		}
+
+		for _, f := range s.fields[i] {
+			if f.Key == key {
+				out = append(out, f.Value)
+			}
+		}
+	}
+
+	return out
 }
 
 func (s *spyLogger) contains(substr string) bool {
@@ -205,17 +230,21 @@ type fakeDLQ struct {
 	mu sync.Mutex
 
 	calls      []*kgo.Record
+	causes     []error
+	causeKinds []string
 	failNext   bool
 	failErr    error
 	closeCalls int
 	closeErr   error
 }
 
-func (d *fakeDLQ) PublishDLQ(_ context.Context, rec *kgo.Record, _ error, _ int) error {
+func (d *fakeDLQ) PublishDLQ(_ context.Context, rec *kgo.Record, cause error, causeKind string, _ int) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
 	d.calls = append(d.calls, rec)
+	d.causes = append(d.causes, cause)
+	d.causeKinds = append(d.causeKinds, causeKind)
 
 	if d.failNext {
 		if d.failErr == nil {
@@ -242,6 +271,18 @@ func (d *fakeDLQ) count() int {
 	defer d.mu.Unlock()
 
 	return len(d.calls)
+}
+
+// lastCause returns the cause and cause kind of the most recent quarantine.
+func (d *fakeDLQ) lastCause() (error, string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if len(d.causes) == 0 {
+		return nil, ""
+	}
+
+	return d.causes[len(d.causes)-1], d.causeKinds[len(d.causeKinds)-1]
 }
 
 func (d *fakeDLQ) closeCount() int {
@@ -294,7 +335,7 @@ func ceHeaders(tenant string, system bool) []kgo.RecordHeader {
 	h := []kgo.RecordHeader{
 		{Key: "ce-specversion", Value: []byte("1.0")},
 		{Key: "ce-id", Value: []byte("evt-1")},
-		{Key: "ce-source", Value: []byte("//test/source")},
+		{Key: "ce-source", Value: []byte("test-source")},
 		{Key: "ce-type", Value: []byte("studio.lerian.loan.created")},
 		{Key: "ce-time", Value: []byte(time.Now().UTC().Format(time.RFC3339Nano))},
 		{Key: "ce-resourcetype", Value: []byte("loan")},
@@ -376,10 +417,19 @@ func clientClosedFetch() kgo.Fetches {
 func newTestRuntime(t testingTB, client GroupClient, handler Handler, dlq dlqPublisher, opts ...Option) *consumerRuntime {
 	t.Helper()
 
+	return newTestRuntimeCfg(t, nil, client, handler, dlq, opts...)
+}
+
+// newTestRuntimeCfg is newTestRuntime with a hook to adjust the config — used by
+// the tests that drive config-carried behaviour such as the ce-source allowlist.
+func newTestRuntimeCfg(t testingTB, mutate func(*ConsumerConfig), client GroupClient, handler Handler, dlq dlqPublisher, opts ...Option) *consumerRuntime {
+	t.Helper()
+
 	cfg := ConsumerConfig{
 		Enabled:             true,
 		Brokers:             []string{"localhost:9092"},
 		Group:               "test-group",
+		Source:              "test-consumer",
 		Topics:              []string{"t"},
 		RetryBudget:         2,
 		RetryBackoffInitial: time.Millisecond,
@@ -387,7 +437,10 @@ func newTestRuntime(t testingTB, client GroupClient, handler Handler, dlq dlqPub
 		RetryInLoopMaxDwell: 10 * time.Millisecond,
 		HaltBackoff:         time.Millisecond,
 		CloseTimeout:        time.Second,
-		DLQTopicSuffix:      ".dlq",
+	}
+
+	if mutate != nil {
+		mutate(&cfg)
 	}
 
 	all := append([]Option{WithDLQPublisher(dlq)}, opts...)

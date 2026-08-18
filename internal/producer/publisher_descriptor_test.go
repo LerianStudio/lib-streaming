@@ -17,7 +17,7 @@ func TestPublisherDescriptor_DefaultRoutePath(t *testing.T) {
 
 	descriptor, err := NewPublisherDescriptor(PublisherDescriptor{
 		ServiceName: "transaction-service",
-		SourceBase:  "//lerian.midaz/transaction-service",
+		Source:      "midaz-transaction-service",
 	})
 	if err != nil {
 		t.Fatalf("NewPublisherDescriptor() error = %v", err)
@@ -34,13 +34,13 @@ func TestPublisherDescriptor_RejectsInvalidShape(t *testing.T) {
 		name       string
 		descriptor PublisherDescriptor
 	}{
-		{name: "missing service", descriptor: PublisherDescriptor{SourceBase: "//source"}},
+		{name: "missing service", descriptor: PublisherDescriptor{Source: "source"}},
 		{name: "missing source", descriptor: PublisherDescriptor{ServiceName: "svc"}},
 		{
 			name: "relative route",
 			descriptor: PublisherDescriptor{
 				ServiceName: "svc",
-				SourceBase:  "//source",
+				Source:      "source",
 				RoutePath:   "streaming",
 			},
 		},
@@ -48,7 +48,7 @@ func TestPublisherDescriptor_RejectsInvalidShape(t *testing.T) {
 			name: "control char",
 			descriptor: PublisherDescriptor{
 				ServiceName: "svc\n",
-				SourceBase:  "//source",
+				Source:      "source",
 			},
 		},
 	}
@@ -69,6 +69,8 @@ func TestPublisherDescriptor_RejectsInvalidShape(t *testing.T) {
 // the Producer's UUIDv7 producerID to the returned descriptor and that the
 // descriptor validates cleanly.
 func TestProducer_Descriptor_PopulatesProducerID(t *testing.T) {
+	t.Parallel()
+
 	cfg, _ := kfakeConfig(t)
 
 	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
@@ -82,7 +84,7 @@ func TestProducer_Descriptor_PopulatesProducerID(t *testing.T) {
 
 	got, err := p.Descriptor(PublisherDescriptor{
 		ServiceName: "svc",
-		SourceBase:  "//s",
+		Source:      "s",
 	})
 	if err != nil {
 		t.Fatalf("Descriptor err = %v", err)
@@ -102,6 +104,40 @@ func TestProducer_Descriptor_PopulatesProducerID(t *testing.T) {
 	}
 }
 
+// TestProducer_Descriptor_StampsProducerSource pins that the descriptor's
+// Source is taken from the running Producer, never from the caller.
+//
+// The manifest's document-level topic is derived from descriptor.Source. If
+// the caller could supply a different one, the manifest would advertise a
+// topic the producer never publishes to, and the Hub would subscribe to an
+// empty topic forever while both sides report healthy.
+func TestProducer_Descriptor_StampsProducerSource(t *testing.T) {
+	t.Parallel()
+
+	cfg, _ := kfakeConfig(t)
+
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
+	if err != nil {
+		t.Fatalf("New err = %v", err)
+	}
+
+	t.Cleanup(func() { _ = emitter.Close() })
+
+	p := asProducer(t, emitter)
+
+	for _, callerSource := range []string{"", "some-other-app", "  test  "} {
+		got, err := p.Descriptor(PublisherDescriptor{ServiceName: "svc", Source: callerSource})
+		if err != nil {
+			t.Fatalf("Descriptor(Source=%q) err = %v", callerSource, err)
+		}
+
+		if got.Source != p.cloudEventsSource {
+			t.Errorf("Descriptor(Source=%q).Source = %q; want the producer's own source %q",
+				callerSource, got.Source, p.cloudEventsSource)
+		}
+	}
+}
+
 // TestProducer_Descriptor_NilReceiverReturnsSentinel asserts Descriptor is
 // nil-safe: a zero *Producer returns a zero descriptor and ErrNilProducer
 // rather than panicking.
@@ -110,7 +146,7 @@ func TestProducer_Descriptor_NilReceiverReturnsSentinel(t *testing.T) {
 
 	var nilProducer *Producer
 
-	got, err := nilProducer.Descriptor(PublisherDescriptor{ServiceName: "svc", SourceBase: "//s"})
+	got, err := nilProducer.Descriptor(PublisherDescriptor{ServiceName: "svc", Source: "s"})
 	if !errors.Is(err, ErrNilProducer) {
 		t.Fatalf("nil.Descriptor err = %v; want ErrNilProducer", err)
 	}

@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
 )
 
 func TestStreamingHandler_ReturnsManifestJSON(t *testing.T) {
@@ -23,7 +25,7 @@ func TestStreamingHandler_ReturnsManifestJSON(t *testing.T) {
 
 	handler, err := NewStreamingHandler(PublisherDescriptor{
 		ServiceName: "transaction-service",
-		SourceBase:  "//lerian.midaz/transaction-service",
+		Source:      "midaz-transaction-service",
 	}, catalog, RouteTable{})
 	if err != nil {
 		t.Fatalf("NewStreamingHandler() error = %v", err)
@@ -63,7 +65,7 @@ func TestStreamingHandler_HEADReturnsHeadersWithoutBody(t *testing.T) {
 
 	handler, err := NewStreamingHandler(PublisherDescriptor{
 		ServiceName: "transaction-service",
-		SourceBase:  "//lerian.midaz/transaction-service",
+		Source:      "midaz-transaction-service",
 	}, Catalog{}, RouteTable{})
 	if err != nil {
 		t.Fatalf("NewStreamingHandler() error = %v", err)
@@ -86,7 +88,7 @@ func TestStreamingHandler_NilRequestDoesNotPanic(t *testing.T) {
 
 	handler, err := NewStreamingHandler(PublisherDescriptor{
 		ServiceName: "transaction-service",
-		SourceBase:  "//lerian.midaz/transaction-service",
+		Source:      "midaz-transaction-service",
 	}, Catalog{}, RouteTable{})
 	if err != nil {
 		t.Fatalf("NewStreamingHandler() error = %v", err)
@@ -105,7 +107,7 @@ func TestStreamingHandler_MethodNotAllowed(t *testing.T) {
 
 	handler, err := NewStreamingHandler(PublisherDescriptor{
 		ServiceName: "transaction-service",
-		SourceBase:  "//lerian.midaz/transaction-service",
+		Source:      "midaz-transaction-service",
 	}, Catalog{}, RouteTable{})
 	if err != nil {
 		t.Fatalf("NewStreamingHandler() error = %v", err)
@@ -122,5 +124,188 @@ func TestStreamingHandler_MethodNotAllowed(t *testing.T) {
 	// clients know which methods are acceptable.
 	if got, want := recorder.Header().Get("Allow"), "GET, HEAD"; got != want {
 		t.Errorf("Allow header = %q; want %q", got, want)
+	}
+}
+
+// TestStreamingHandler_GoldenManifestJSON pins the manifest's JSON KEYS and the
+// v3-defining values as literals, decoded into map[string]any.
+//
+// The other tests in this package decode into the typed structs, so a renamed
+// json tag round-trips through its own rename and every one of them still
+// passes. The manifest is a CONTRACT with the Hub and with contract-diffing
+// tooling: renaming "eventKey", or letting a per-event "topic" reappear, breaks
+// consumers that never compiled against these structs.
+func TestStreamingHandler_GoldenManifestJSON(t *testing.T) {
+	t.Parallel()
+
+	catalog, err := NewCatalog(EventDefinition{
+		Key:          "loan.disbursed",
+		ResourceType: "loan_contract",
+		EventType:    "disbursed",
+	})
+	if err != nil {
+		t.Fatalf("NewCatalog() error = %v", err)
+	}
+
+	handler, err := NewStreamingHandler(PublisherDescriptor{
+		ServiceName: "lender-svc",
+		Source:      "lender",
+	}, catalog, RouteTable{})
+	if err != nil {
+		t.Fatalf("NewStreamingHandler() error = %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/streaming", nil))
+
+	var doc map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &doc); err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+
+	if got := doc["version"]; got != "1.0.0" {
+		t.Errorf(`manifest["version"] = %v; want "1.0.0"`, got)
+	}
+
+	// One topic per producing application, at the DOCUMENT level.
+	if got := doc["topic"]; got != "lerian.streaming.lender" {
+		t.Errorf(`manifest["topic"] = %v; want "lerian.streaming.lender"`, got)
+	}
+
+	if got := doc["dlqTopic"]; got != "lerian.streaming.lender.dlq" {
+		t.Errorf(`manifest["dlqTopic"] = %v; want "lerian.streaming.lender.dlq"`, got)
+	}
+
+	// A fact-only catalog advertises NO commands queue. Naming one would send
+	// provisioning and ACL tooling after a topic this app never writes.
+	if _, present := doc["commandsTopic"]; present {
+		t.Errorf(`manifest carries "commandsTopic" = %v for a fact-only catalog; it must be omitted`, doc["commandsTopic"])
+	}
+
+	publisher, ok := doc["publisher"].(map[string]any)
+	if !ok {
+		t.Fatalf(`manifest["publisher"] = %T; want an object`, doc["publisher"])
+	}
+
+	if got := publisher["source"]; got != "lender" {
+		t.Errorf(`manifest["publisher"]["source"] = %v; want "lender" (v2's "sourceBase" is gone)`, got)
+	}
+
+	if _, present := publisher["sourceBase"]; present {
+		t.Error(`manifest["publisher"] still carries the v2 "sourceBase" key`)
+	}
+
+	events, ok := doc["events"].([]any)
+	if !ok || len(events) != 1 {
+		t.Fatalf(`manifest["events"] = %v; want exactly one entry`, doc["events"])
+	}
+
+	event, ok := events[0].(map[string]any)
+	if !ok {
+		t.Fatalf(`manifest["events"][0] = %T; want an object`, events[0])
+	}
+
+	if got := event["eventKey"]; got != "loan_contract.disbursed" {
+		t.Errorf(`events[0]["eventKey"] = %v; want "loan_contract.disbursed"`, got)
+	}
+
+	if got := event["resourceType"]; got != "loan_contract" {
+		t.Errorf(`events[0]["resourceType"] = %v; want "loan_contract"`, got)
+	}
+
+	if got := event["eventType"]; got != "disbursed" {
+		t.Errorf(`events[0]["eventType"] = %v; want "disbursed"`, got)
+	}
+
+	// Always present, even on a fact-only manifest, so a reader can tell
+	// "emits only facts" apart from "predates the class field".
+	if got := event["class"]; got != "fact" {
+		t.Errorf(`events[0]["class"] = %v; want "fact"`, got)
+	}
+
+	// The per-event topic is GONE in v3. A definition has no topic of its own.
+	if _, present := event["topic"]; present {
+		t.Errorf(`events[0] carries a "topic" key; v3 removed the per-event topic entirely (got %v)`, event["topic"])
+	}
+}
+
+// TestStreamingHandler_GoldenManifestJSONWithCommand pins the commands fields
+// as LITERALS on a catalog that mixes a fact with a command — the shape the
+// consignado rail actually publishes.
+//
+// The manifest is what a rail team reads to decide which topics to subscribe
+// to and which ACLs to request, so "commandsTopic" and the per-event "class"
+// are contract, not decoration.
+func TestStreamingHandler_GoldenManifestJSONWithCommand(t *testing.T) {
+	t.Parallel()
+
+	catalog, err := NewCatalog(
+		EventDefinition{
+			Key:          "loan.disbursed",
+			ResourceType: "loan_contract",
+			EventType:    "disbursed",
+		},
+		EventDefinition{
+			Key:          "margin.reserve",
+			ResourceType: "margin",
+			EventType:    "reserve",
+			Class:        contract.ClassCommand,
+		},
+	)
+	if err != nil {
+		t.Fatalf("NewCatalog() error = %v", err)
+	}
+
+	handler, err := NewStreamingHandler(PublisherDescriptor{
+		ServiceName: "lender-svc",
+		Source:      "lender",
+	}, catalog, RouteTable{})
+	if err != nil {
+		t.Fatalf("NewStreamingHandler() error = %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/streaming", nil))
+
+	var doc map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &doc); err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+
+	if got := doc["commandsTopic"]; got != "lerian.streaming.lender.commands" {
+		t.Errorf(`manifest["commandsTopic"] = %v; want "lerian.streaming.lender.commands"`, got)
+	}
+
+	// No fourth name. A consumer quarantines into its own .dlq and a producer
+	// route-DLQs into its own; a ".commands.dlq" would be a write grant
+	// nothing needs.
+	if _, present := doc["commandsDlqTopic"]; present {
+		t.Errorf(`manifest carries "commandsDlqTopic" = %v; the commands queue has no DLQ of its own`, doc["commandsDlqTopic"])
+	}
+
+	events, ok := doc["events"].([]any)
+	if !ok || len(events) != 2 {
+		t.Fatalf(`manifest["events"] = %v; want exactly two entries`, doc["events"])
+	}
+
+	// Deterministic key order: "loan.disbursed" then "margin.reserve".
+	classByEventKey := map[string]any{}
+
+	for _, raw := range events {
+		event, ok := raw.(map[string]any)
+		if !ok {
+			t.Fatalf("manifest event = %T; want an object", raw)
+		}
+
+		key, _ := event["eventKey"].(string)
+		classByEventKey[key] = event["class"]
+	}
+
+	if got := classByEventKey["loan_contract.disbursed"]; got != "fact" {
+		t.Errorf(`events["loan_contract.disbursed"]["class"] = %v; want "fact"`, got)
+	}
+
+	if got := classByEventKey["margin.reserve"]; got != "command" {
+		t.Errorf(`events["margin.reserve"]["class"] = %v; want "command"`, got)
 	}
 }

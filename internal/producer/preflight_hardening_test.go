@@ -208,7 +208,6 @@ func TestProducer_EmitPreFlight_HeaderSanitization_AcceptsAtLimits(t *testing.T)
 	e.TenantID = strings.Repeat("t", maxTenantIDBytes)
 	e.ResourceType = strings.Repeat("r", maxResourceTypeBytes)
 	e.EventType = strings.Repeat("e", maxEventTypeBytes)
-	e.Source = "//" + strings.Repeat("s", maxSourceBytes-2)
 	e.Subject = strings.Repeat("j", maxSubjectBytes)
 	(&e).ApplyDefaults()
 
@@ -217,13 +216,16 @@ func TestProducer_EmitPreFlight_HeaderSanitization_AcceptsAtLimits(t *testing.T)
 	}
 }
 
-// TestProducer_EmitPreFlight_SanitizeEmptySource_Rejected asserts that a
-// non-empty Source made up entirely of separators/invalid runes (which
-// sanitizeSourceSegment folds to "") is rejected with ErrInvalidSource. Left
-// unguarded, Event.Topic() would build a leading-dot ".<resource>.<event>"
-// topic that Kafka rejects at publish time — a caller config bug should fail
-// synchronously as a caller-correctable error instead.
-func TestProducer_EmitPreFlight_SanitizeEmptySource_Rejected(t *testing.T) {
+// TestProducer_EmitPreFlight_RejectsMalformedSource asserts that a source
+// which is not a single dot-free lowercase segment is rejected with
+// ErrInvalidSource, synchronously and as a caller-correctable error.
+//
+// The inputs are the shapes real services actually get wrong: the v2 URI form
+// that v3 dropped, a capitalized service name, a dotted namespace, and a
+// leading separator. v2 folded each of these through a lossy sanitizer, which
+// could silently merge two distinct services onto one topic namespace and one
+// Kafka ACL scope with neither owner noticing.
+func TestProducer_EmitPreFlight_RejectsMalformedSource(t *testing.T) {
 	t.Parallel()
 
 	cfg, _ := kfakeConfig(t)
@@ -237,7 +239,15 @@ func TestProducer_EmitPreFlight_SanitizeEmptySource_Rejected(t *testing.T) {
 
 	p := asProducer(t, emitter)
 
-	cases := []string{"---", "!!!", "//", "://", "   "}
+	cases := []string{
+		"//lerian.midaz/transaction-service",
+		"Lender",
+		"lerian.midaz",
+		"-lender",
+		"---",
+		"   ",
+	}
+
 	for _, src := range cases {
 		t.Run(src, func(t *testing.T) {
 			t.Parallel()
@@ -447,7 +457,7 @@ func TestProducer_Emit_CircuitOpen_OutboxFailure_MetricsOutboxFailed(t *testing.
 	fakeMgr.ForceTransition(p.targets["primary"].cbServiceName, circuitbreaker.StateOpen)
 
 	event := sampleRequest()
-	topic := "test.transaction.created"
+	topic := "lerian.streaming.test"
 
 	if err := emitter.Emit(context.Background(), event); err == nil {
 		t.Fatal("Emit err = nil; want non-nil (outbox failure must surface)")

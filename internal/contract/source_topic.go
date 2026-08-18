@@ -1,121 +1,122 @@
 package contract
 
-import "strings"
+import (
+	"fmt"
+	"regexp"
+)
 
-// topicSegmentSeparators are the characters treated as separators when
-// trimming the leading/trailing edges of a sanitized source segment. All
-// three are valid inside a Kafka topic name, but a name that starts or ends
-// with one is undesirable, so they are stripped from the boundaries only.
-const topicSegmentSeparators = "-._"
+// TopicPrefix is the fixed namespace every lib-streaming topic carries.
+// Combined with the producing application's ce-source it yields the ONE
+// topic that application publishes to (see AppTopic).
+const TopicPrefix = "lerian.streaming."
 
-// sanitizeSourceSegment reduces a CloudEvents ce-source value to a single
-// topic-name-safe segment used as the SERVICE NAMESPACE prefix of a derived
-// topic (see Event.Topic). Downstream Kafka ACLs scope a producer to
-// "{sanitize(Source)}.*", so this segment must be deterministic and stable
-// for a given service source.
+// DLQTopicSuffix is appended to an app topic to derive its dead-letter
+// topic. Under the v3 one-topic-per-app contract there is effectively one
+// DLQ per application, but the per-topic derivation semantic is unchanged:
+// the DLQ of topic T is always T + ".dlq".
+const DLQTopicSuffix = ".dlq"
+
+// CommandsTopicSuffix is appended to an app topic to derive the queue that
+// carries that application's service-to-service COMMANDS.
 //
-// The transformation is:
+// Commands are separated from facts because their unmatched semantics are
+// opposite. A fact stream is a firehose a consumer legitimately ignores most
+// of; a command stream is addressed TO the consumer, so a key it has no
+// handler for is undelivered work, not noise. Splitting the queue is what
+// lets the consumer apply strict semantics to one and lenient to the other
+// without a per-key registry.
 //
-//  1. Lowercase the input.
-//  2. Map every rune outside the Kafka topic-name charset [a-z0-9._-] to a
-//     single '-'. This flattens URI-ish sources (scheme "://", authority
-//     "//", path "/", ":" and spaces) into hyphen-joined segments. Dots and
-//     underscores that were already present are meaningful namespace
-//     delimiters and are preserved.
-//  3. Collapse consecutive '-' runs (including those just introduced) into a
-//     single '-'.
-//  4. Trim leading and trailing separators ('-', '.', '_') so the segment
-//     never begins or ends with a delimiter.
+// There is deliberately NO ".commands.dlq". A consumer quarantines into its
+// OWN ".dlq" and a producer route-DLQs a failed command publish into its OWN
+// ".dlq"; both already exist, and a fourth name would widen every
+// command-emitting app's write grant for nothing.
+const CommandsTopicSuffix = ".commands"
+
+// MaxKafkaTopicNameBytes is Kafka's protocol-level topic-name limit.
+const MaxKafkaTopicNameBytes = 249
+
+// maxSourceSegmentBytes is the largest ce-source that still yields a legal
+// commands topic name. The commands topic is the longest name derived from a
+// source (prefix + source + ".commands"), so bounding against it bounds every
+// derived name at once.
 //
-// Examples:
+// The rule is UNIFORM across applications: every app CAN emit commands, so
+// the bound is the same whether or not this one's catalog holds any today. A
+// per-app bound would make adding the first command definition a
+// source-rename event.
+const maxSourceSegmentBytes = MaxKafkaTopicNameBytes - len(TopicPrefix) - len(CommandsTopicSuffix)
+
+// sourcePattern is the STRICT v3 ce-source shape: one dot-free lowercase
+// segment, starting with an alphanumeric, continuing with alphanumerics,
+// hyphens, or underscores.
 //
-//	"midaz-ledger"                       -> "midaz-ledger"
-//	"MIDAZ-Ledger"                       -> "midaz-ledger"
-//	"//lerian.midaz/transaction-service" -> "lerian.midaz-transaction-service"
-//	"svc://tenant-cb-test"               -> "svc-tenant-cb-test"
+// Dots are excluded deliberately. The source IS a single segment of the
+// derived topic name; allowing a dot would let one application claim topic
+// namespace that reads as several, defeating the "one topic per producing
+// application" contract and muddying Kafka ACL scoping.
+var sourcePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+
+// ValidateSource reports whether source is a legal v3 ce-source.
 //
-// COLLISION RISK: the transformation is lossy, so two DISTINCT raw ce-source
-// values can normalize to the same segment (e.g. "my!service" and
-// "my-service" both become "my-service"). Because that segment IS the Kafka
-// topic namespace / ACL scope ("{sanitize(Source)}.*"), an accidental
-// collision between unrelated services would silently merge their topic space
-// and ACL grants. Service owners MUST pick ce-source values that stay unique
-// AFTER lowercasing, punctuation-folding, and separator-collapsing — do not
-// rely on raw-string distinctions (case, punctuation) that this function
-// erases.
+// v3 REJECTS an invalid source; it never rewrites one. The v2 lossy
+// normalization (sanitizeSourceSegment: lowercase, punctuation-fold,
+// separator-collapse) is DELETED. That transformation could map two
+// distinct services onto one topic namespace and one Kafka ACL scope
+// without either owner noticing — a silent cross-service collision.
+// Rejecting at the three entry points where a source is first seen
+// (config validation, Builder validation, producer preflight) turns that
+// class of bug into a startup failure with a precise message.
 //
-// EMPTY RESULT: empty input yields an empty string, and a non-empty input made
-// up entirely of separators/invalid runes (e.g. "---" or "!!!") also sanitizes
-// to "". Both shapes are rejected upstream at emit time — empty Source by
-// ErrMissingSource and sanitize-to-empty Source by ErrInvalidSource in the
-// producer preflight — before topic derivation runs, so Event.Topic() never
-// constructs a leading-dot ".<resource>.<event>" topic that Kafka would
-// reject. This function itself does not signal an error.
-//
-// PERFORMANCE: Event.Topic() calls this on every emit, so it is on the per-Emit
-// hot path. The cost is a strings.ToLower plus a strings.Builder rune scan
-// (small and bounded by the 2048-byte Source cap). Source is effectively
-// constant for a producer's lifetime; the runtime path deliberately keeps this
-// single canonical sanitizer rather than a memoizing cache, trading a tiny
-// recompute for allocation-predictable behavior and no shared mutable state. A
-// caller that needs the segment in a tight loop can hoist it once (see the
-// producer's sourceTopicPrefix test helper).
-func sanitizeSourceSegment(source string) string {
+// Returns ErrMissingSource for an empty source and an ErrInvalidSource-
+// wrapped error for a malformed or over-long one, so callers keep the
+// existing errors.Is vocabulary.
+func ValidateSource(source string) error {
 	if source == "" {
-		return ""
+		return ErrMissingSource
 	}
 
-	lowered := strings.ToLower(source)
-
-	var b strings.Builder
-	b.Grow(len(lowered))
-
-	prevHyphen := false
-
-	for _, r := range lowered {
-		if isTopicSegmentRune(r) {
-			b.WriteRune(r)
-
-			prevHyphen = false
-
-			continue
-		}
-
-		// Replacement char: collapse consecutive replacements into one '-'.
-		if prevHyphen {
-			continue
-		}
-
-		b.WriteByte('-')
-
-		prevHyphen = true
+	if len(source) > maxSourceSegmentBytes {
+		return fmt.Errorf("%w: source exceeds %d bytes (derived topic %q + %q must fit Kafka's %d-byte limit)",
+			ErrInvalidSource, maxSourceSegmentBytes, TopicPrefix, CommandsTopicSuffix, MaxKafkaTopicNameBytes)
 	}
 
-	return strings.Trim(b.String(), topicSegmentSeparators)
+	if !sourcePattern.MatchString(source) {
+		return fmt.Errorf("%w: source %q must be a single dot-free lowercase segment matching %s",
+			ErrInvalidSource, source, sourcePattern.String())
+	}
+
+	return nil
 }
 
-// SanitizeSourceSegment is the exported wrapper over sanitizeSourceSegment.
+// AppTopic derives the ONE topic a producing application publishes to.
 //
-// Exported so the producer package's property tests can exercise the SAME
-// implementation that Topic() uses at runtime when reconstructing the
-// expected base topic — mirroring the ParseMajorVersion export rationale. It
-// carries no behavior of its own; production code calls the unexported form.
-func SanitizeSourceSegment(source string) string {
-	return sanitizeSourceSegment(source)
+// Every event that application emits — business fact or service-to-service
+// command, every resource type, every event type, every schema version —
+// rides this single topic. Consumers subscribe to the app stream and
+// dispatch per event using the ce-resourcetype / ce-eventtype headers.
+//
+// The source is expected to be pre-validated by ValidateSource at config,
+// Builder, and preflight time; AppTopic itself performs no validation so it
+// stays allocation-predictable on the per-Emit path.
+func AppTopic(source string) string {
+	return TopicPrefix + source
 }
 
-// isTopicSegmentRune reports whether r is inside the Kafka topic-name charset
-// that sanitizeSourceSegment preserves verbatim: ASCII [a-z0-9._-]. Uppercase
-// is handled by the caller lowercasing first; non-ASCII runes are replaced.
-func isTopicSegmentRune(r rune) bool {
-	switch {
-	case r >= 'a' && r <= 'z':
-		return true
-	case r >= '0' && r <= '9':
-		return true
-	case r == '.' || r == '_' || r == '-':
-		return true
-	default:
-		return false
-	}
+// AppDLQTopic derives the dead-letter topic for an application's stream.
+func AppDLQTopic(source string) string {
+	return AppTopic(source) + DLQTopicSuffix
+}
+
+// AppCommandsTopic derives the queue carrying an application's
+// service-to-service COMMANDS — the events another service must act on, as
+// opposed to the facts it may ignore.
+//
+// It is the second stream a producing application writes, and the one a rail
+// consumer subscribes to when it is being commanded. Its whole reason to
+// exist is the unmatched verdict: a command key with no registered handler
+// is quarantined, never skipped, so a producer shipping a new command ahead
+// of its consumer's handler fails loudly instead of losing work behind green
+// dashboards.
+func AppCommandsTopic(source string) string {
+	return AppTopic(source) + CommandsTopicSuffix
 }

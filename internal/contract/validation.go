@@ -10,7 +10,6 @@ const (
 	MaxTenantIDBytes        = 256
 	MaxResourceTypeBytes    = 128
 	MaxEventTypeBytes       = 128
-	MaxSourceBytes          = 2048
 	MaxSubjectBytes         = 1024
 	MaxEventIDBytes         = 256
 	MaxSchemaVersionBytes   = 64

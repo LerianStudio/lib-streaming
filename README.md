@@ -9,13 +9,13 @@
 
 # lib-streaming
 
-**lib-streaming** is Lerian Studio's producer-only event publication library for CloudEvents-framed domain events. It gives Go services a catalog-driven `Emitter` API with multi-transport routing across Kafka, SQS, RabbitMQ, and EventBridge, per-target tenant-aware circuit breakers, route-aware outbox fallback, per-route DLQ, and observability contracts designed for financial infrastructure.
+**lib-streaming** is Lerian Studio's event publication AND consumption library for CloudEvents-framed domain events. It gives Go services a catalog-driven `Emitter` API with multi-transport routing across Kafka, SQS, RabbitMQ, and EventBridge, per-target tenant-aware circuit breakers, route-aware outbox fallback, per-route DLQ, and observability contracts designed for financial infrastructure — plus a hardened at-least-once group `Consumer` that subscribes by producing application, dispatches by event key, verifies `ce-source`, and owns commit, retry, seek-back, DLQ, tenant propagation, and rebalance safety.
 
-Producer-only means this library publishes business facts. It does not consume Kafka streams, and it does not replace `github.com/LerianStudio/lib-commons/v5/commons/rabbitmq`, which remains the internal command-queue primitive.
+It does not replace `github.com/LerianStudio/lib-commons/v6/commons/rabbitmq`, which remains the internal command-queue primitive. The two are orthogonal: lib-streaming carries past-tense business facts, lib-commons carries internal commands.
 
 | | |
 |---|---|
-| **Module** | `github.com/LerianStudio/lib-streaming` |
+| **Module** | `github.com/LerianStudio/lib-streaming/v3` |
 | **Go** | `1.26.3` |
 | **License** | Elastic License 2.0. See [LICENSE](./LICENSE) |
 
@@ -70,8 +70,11 @@ Producer-only means this library publishes business facts. It does not consume K
 - **Three-method emitter contract**: `Emit(ctx, EmitRequest) error`, `Close() error`, and `Healthy(ctx) error`.
 - **Immutable catalog**: deterministic definition ordering, duplicate-key rejection, and duplicate contract-tuple rejection.
 - **Policy precedence**: definition default → config override → call override.
-- **Topic derivation**: `{service}.<resource>.<event>` where `service` is the sanitized `ce-source` (e.g. `midaz-ledger.transaction.created`), with `.v<major>` suffix for schema major versions `>=2`.
-- **Tenant-aware partitioning**: tenant ID by default; system events use `system:<eventType>` and require explicit opt-in.
+- **One topic per producing application**: `lerian.streaming.<source>`. The topic carries no resource type, no event type, and no schema version — every business **fact** a service emits rides it. Its service-to-service **commands** ride `lerian.streaming.<source>.commands`, and DLQ is `lerian.streaming.<source>.dlq`. Kafka ACLs scope a command-emitting application to exactly those three WRITES and everyone else to two — consumers included, since a consumer quarantines into its own DLQ — plus READ on the topics of the applications it consumes.
+- **Commands are a separate queue with opposite unmatched semantics**: a definition marked `Class: streaming.ClassCommand` publishes to `<source>.commands`, and a consumer subscribed via `Commands(...)` **quarantines** an event key it has no handler for instead of skipping it. The class is not on the wire — the queue *is* the class.
+- **Strict `ce-source`**: a single dot-free lowercase segment (`^[a-z0-9][a-z0-9_-]*$`), at most 223 bytes so the derived `.commands` name fits Kafka's 249-byte limit, rejected — never rewritten — at config, Builder, and preflight time.
+- **`ce-type` carries the app**: `studio.lerian.<source>.<resource>.<event>`, so two services' same-named events never collide.
+- **Tenant-aware partitioning**: tenant ID by default; system events use `system:<eventType>` and require explicit opt-in. The key buys per-tenant **FIFO** on the direct-emit path and per-tenant **partition affinity** — not strict order — for outbox-relayed events, because the lib-commons relay retries per row with no per-aggregate serialization. A consumer needing strict per-aggregate order must reconcile on its own sequence field.
 - **Caller-error taxonomy**: `IsCallerError(err)` distinguishes correctable validation/auth/serialization failures from broker/runtime faults.
 - **Lifecycle integration**: `*Producer` implements `commons.App` for Launcher-owned startup and shutdown.
 - **Metric cardinality discipline**: no `tenant_id` metric labels; tenant identity belongs on spans.
@@ -87,7 +90,7 @@ Producer-only means this library publishes business facts. It does not consume K
 ### 1. Install
 
 ```bash
-go get github.com/LerianStudio/lib-streaming@latest
+go get github.com/LerianStudio/lib-streaming/v3@latest
 ```
 
 ### 2. Bootstrap a Producer
@@ -119,30 +122,37 @@ if err != nil {
     return err
 }
 
-eventTopic := (&streaming.Event{
-    Source:       cfg.CloudEventsSource,
-    ResourceType: "transaction",
-    EventType:    "created",
-}).Topic()
-
+// Kill switch FIRST. LoadConfig skips validation when disabled, so a disabled
+// deployment legitimately carries an empty source — deriving a topic from it
+// before this check would fail the one path that is supposed to be inert.
 if !cfg.Enabled {
-    emitter := streaming.NewNoopEmitter()
-    // inject emitter into services; skip launcher.Add for the no-op path
+    // Inject streaming.NewNoopEmitter() into services; skip launcher.Add on
+    // the no-op path.
     return nil
 }
 if len(cfg.Brokers) == 0 {
     return errors.New("streaming enabled but STREAMING_BROKERS is empty")
 }
 
+// ONE topic per producing application: lerian.streaming.<source>.
+// AppTopic VALIDATES the source and returns (string, error): provisioning
+// creates this name, an ACL grants it, and a route publishes to it, so a
+// malformed source fails here rather than reaching a real broker.
+appTopic, err := streaming.AppTopic(cfg.CloudEventsSource)
+if err != nil {
+    return err
+}
+
 emitter, err := streaming.NewBuilder().
     Source(cfg.CloudEventsSource).
     Catalog(catalog).
     Routes(streaming.RouteDefinition{
-        Key:           "transaction.created.kafka.primary",
-        DefinitionKey: "transaction.created",
-        Target:        "primary",
-        Destination:   streaming.KafkaTopic(eventTopic),
-        Requirement:   streaming.RouteRequired,
+        // No DefinitionKey: a catch-all route serves the whole catalog.
+        // Under one topic per app there is nothing to fan out per event.
+        Key:         "primary.kafka",
+        Target:      "primary",
+        Destination: streaming.KafkaTopic(appTopic),
+        Requirement: streaming.RouteRequired,
     }).
     Target(streaming.TargetConfig{
         Name:    "primary",
@@ -208,6 +218,181 @@ All environment variables use the `STREAMING_` prefix. The canonical reference l
 
 When `STREAMING_ENABLED=false`, callers should use `streaming.NewNoopEmitter()` instead of constructing a Builder. Do not treat an empty broker list as an intentional production disablement when streaming is required. Fail startup and fix the deployment secret or config instead. Multi-transport wiring (multiple Kafka clusters, SQS / RabbitMQ / EventBridge dispatch) is programmatic — non-Kafka destinations such as SQS queue URLs, RabbitMQ exchanges, and EventBridge bus names are typically already plumbed through the consuming service's own configuration.
 
+## Consuming a Stream
+
+Under one topic per producing application, one subscription delivers that
+application's **entire** fact stream. Selection moves from the broker to the
+consumer: name the producers you consume, register a handler per event, and
+the library resolves the topics, verifies each event's `ce-source`, and
+dispatches by event key.
+
+Commands are the exception, and they get their own subscription — see
+[Commands: the same condition, the opposite verdict](#commands-the-same-condition-the-opposite-verdict).
+
+```go
+c, err := streaming.NewConsumer().
+    Brokers(cfg.Brokers...).
+    Group("my-service").
+    Source(cfg.CloudEventsSource).                    // this app's own identity; names its DLQ
+    Apps("lender", "matcher").                        // -> lerian.streaming.{lender,matcher}
+    OnFrom("lender", "loan.disbursed", onLenderLoan). // "<resourceType>.<eventType>"
+    OnFrom("matcher", "loan.disbursed", onMatcherLoan).
+    OnFrom("lender", "loan.settled", onLoanSettled).
+    RetryBudget(3).
+    Classifier(isTransient).
+    Build(ctx)
+if err != nil {
+    return err
+}
+
+go func() { // runtime.SafeGo in production
+    // Run returns nil on clean shutdown (ctx cancel or Close); any error is
+    // an unexpected exit and must reach a log line or the lifecycle
+    // supervisor, or processing stops silently.
+    if err := c.Run(ctx); err != nil {
+        logger.Log(ctx, log.LevelError, "streaming consumer exited", log.Err(err))
+    }
+}()
+defer c.Close()
+```
+
+Those two `loan.disbursed` registrations are the point. Lender's and matcher's
+are **different facts with different payloads** — v3 put the producing app into
+`ce-type` precisely so they stop colliding, and `OnFrom` is how a consumer
+spends that. A single-producer consumer keeps the terse form:
+`Apps("lender").On("loan.disbursed", h)` binds to the sole app. A bare `On`
+under **several** apps fails the build rather than binding to whichever record
+arrives first.
+
+| Concern | Behaviour |
+| --- | --- |
+| Identity | `Source(...)` (or `STREAMING_CLOUDEVENTS_SOURCE`) is **required**. One service, one ce-source: the producer publishes under it and the consumer quarantines into `lerian.streaming.<source>.dlq`. |
+| Subscription | `Apps("lender")` → `lerian.streaming.lender` (facts). `Commands("lender")` → `lerian.streaming.lender.commands`. `Topics(...)` remains the raw escape hatch. All three compose, and naming one app in both `Apps` and `Commands` is legal — two subscriptions, one allowlist entry. |
+| Dispatch key | `(producing app, "<resourceType>.<eventType>")`. `OnFrom(app, key, fn)` names the app; `On(key, fn)` binds to the sole app and fails the build when there is more than one. Underscores travel verbatim. |
+| Unmatched events | On a **fact** stream: **ignored** (skipped and committed) by default; `UnmatchedPolicy(streaming.UnmatchedError)` quarantines them instead. On a **commands** queue: always **quarantined** with cause kind `unhandled_key`. Not configurable — `UnmatchedPolicy` governs fact streams only. |
+| Source verification | A record whose `ce-source` is not one of the named `Apps`/`Commands` is quarantined with `ErrUnexpectedSource` before any handler runs — in **both** handler modes. `ExpectSources(...)` — or `STREAMING_CONSUMER_EXPECT_SOURCES` — replaces that derived allowlist, must cover every named app, and is the only way to resolve the named-app + `Topics` refusal from the environment. |
+| Whole-stream handler | `Handler(h)` receives every record for consumers that select themselves, and gets the same source verification. It still rejects the genuinely dispatch-only knobs: `On`/`OnFrom` (`ErrHandlerAndDispatchBothSet`), `UnmatchedPolicy` (`ErrHandlerAndUnmatchedPolicyBothSet`), and `Commands` (`ErrHandlerAndCommandsBothSet` — with no handler registry there is nothing to ask whether a command key is handled). |
+| Readiness | `Healthy(ctx)` fails with `ErrConsumerPartitionHalted` once a partition has been head-of-line blocked across three consecutive poll cycles. Polling cleanly is not the same as making progress. |
+
+`UnmatchedIgnore` is the default on fact streams because it is the only safe
+one there: a consumer subscribed to a producer's fact stream receives every
+fact that producer emits and will legitimately care about a handful. Erroring
+on the rest would fail-closed the producer's entire sibling stream into the
+DLQ. Choose `UnmatchedError` only when this consumer genuinely owns every fact
+on the stream and an unknown key means the producer's catalog drifted ahead of
+it.
+
+### Commands: the same condition, the opposite verdict
+
+A **command** is work one named service asks another to do. It rides a separate
+queue — `lerian.streaming.<producer>.commands` — and a consumer subscribes to it
+with `Commands(...)`:
+
+```go
+c, err := streaming.NewConsumer().
+    Brokers(cfg.Brokers...).
+    Group("br-consignado-gw").
+    Source(cfg.CloudEventsSource).
+    Apps("lender").                                    // lender's FACTS: unmatched keys ignored
+    Commands("lender").                                // lender's COMMANDS: unmatched keys quarantined
+    OnFrom("lender", "margin.reserve", onMarginReserve).
+    Build(ctx)
+if err != nil {
+    return err
+}
+```
+
+Same consumer, same unregistered key, opposite outcomes — decided by the topic
+the record arrived on. That asymmetry is the only reason the queue exists. A
+fact you did not register for is noise on someone else's firehose. A command you
+did not register for is **undelivered work addressed to you**: under fact
+semantics, a producer shipping a new command key before this consumer deploys
+its handler would lose every one of those commands, forever, with green
+dashboards on both sides. So it quarantines to this consumer's own DLQ with
+cause kind `unhandled_key`, and that is deliberately **not** configurable.
+
+On the producing side nothing changes but one field:
+
+```go
+streaming.EventDefinition{
+    Key:          "margin.reserve",
+    ResourceType: "margin",
+    EventType:    "reserve",
+    Class:        streaming.ClassCommand, // -> lerian.streaming.<source>.commands
+}
+```
+
+The route table is untouched — a catch-all route to `AppTopic(source)` still
+serves the whole catalog, and the producer redirects command-class definitions
+at dispatch. An explicit `KafkaTopic(...)` you pointed somewhere on purpose is
+never rewritten — with one exception: you may not point one at
+`lerian.streaming.<source>.commands` itself. `Build` refuses that route with
+`ErrInvalidRouteDefinition`, because a command reaching the queue by route
+skips the DLQ pin and derives the `.commands.dlq` that deliberately does not
+exist, and a fact reaching it by route lands on the strict queue where
+consumers quarantine keys they were entitled to ignore. The class on the
+definition is the only door. The wire record is byte-identical either way: **no `ce-*`
+header carries the class**, because the queue *is* the class — which makes it a
+subscription-time, ACL-visible fact rather than a runtime string every consumer
+has to trust.
+
+Tenant filtering remains the handler's responsibility: `event.TenantID` comes
+from the validated `ce-tenantid` header, never from the payload, and a handler
+that skips the tenant check has a cross-tenant leak.
+
+**Handler errors must not carry PII.** A terminal handler error travels to the
+DLQ as `x-lerian-dlq-error-message`, with only broker credentials stripped and
+the value capped at 4 KiB — nothing else is redacted. A CPF, account number, or
+name interpolated into a returned error is published onto the DLQ topic
+verbatim, readable by anything with DLQ read access for the topic's whole
+retention window. Return an opaque identifier and look the record up out of
+band.
+
+### Quarantine lands in the consumer's own DLQ
+
+A consumer publishes poison to `lerian.streaming.<consumer-app>.dlq` — its own
+topic, not the producer's. The rule that falls out of it is worth stating
+plainly for whoever writes the ACLs:
+
+> **Every application WRITES only its own names** — its topic, its `.commands`
+> queue if it commands anyone, and its `.dlq`. Three names for a
+> command-emitting app, two for everyone else, whether it produces, consumes, or
+> both. **It READS the topics of the applications it consumes** — their fact
+> topics when it watches their facts, their `.commands` when they command it.
+
+Consuming therefore never widens an application's write grant, and a filling DLQ
+names the team that owns the fix rather than the team whose events happened to
+be poison.
+
+There is deliberately **no `.commands.dlq`**. A consumer quarantines into its
+own `.dlq`, and a producer route-DLQs a failed command publish into its own;
+both names already exist and are already granted.
+
+Splitting commands out also gives a read grant back. A rail consumer that only
+takes a producer's commands — a gateway acting on `lender`'s instructions —
+needs READ on `lerian.streaming.lender.commands` and **nothing** on
+`lerian.streaming.lender`. Under the collapsed topic it had to read the
+producer's whole fact stream to receive one command; least-privilege is
+partially restored.
+
+The **Streaming Hub subscribes fact topics only, never `.commands`**. The Hub
+fans business events out to tenant webhooks and external buses; a
+service-to-service command is neither public nor idempotent under external
+redelivery, so it is not in the Hub's grant. Because the DLQ topic no longer implies where a record came from,
+every consumer quarantine carries `x-lerian-dlq-source-topic`,
+`-source-partition`, and `-source-offset` — the route back to the original.
+
+**Provision `.dlq` topics with size headroom.** A DLQ record is strictly larger
+than the record it quarantines (same payload, same headers, plus the forensic
+set), so `max.message.bytes` on a `.dlq` topic must be at or above its source
+topic's. Without headroom a near-cap record cannot be quarantined at all, and on
+the consume side that is fail-closed: the partition is held back and the record
+redelivers forever. The library covers what it can from its side — a size-driven
+DLQ publish is retried once with the payload omitted and marked
+`x-lerian-dlq-payload-omitted: true` (plus `x-lerian-dlq-payload-bytes`), and
+the payload stays recoverable from the source topic via the origin coordinates —
+but headroom is the actual fix.
+
 ## Multi-Transport Routing
 
 A single Emit can dispatch to N routes. Route attempts run in deterministic route-table order inside the Emit call. Per-target circuit breakers isolate target failures; when the configured manager supports lib-commons `TenantAwareManager`, non-system events use tenant-scoped breakers for each target so tenant A's outage does not reject tenant B. Required routes drive the aggregate Emit outcome; optional routes are best-effort.
@@ -223,19 +408,30 @@ A single Emit can dispatch to N routes. Route attempts run in deterministic rout
 ### Wiring multiple targets
 
 ```go
+// AppTopic returns (string, error), so hoist it out of the literal.
+appTopic, err := streaming.AppTopic("midaz-ledger")
+if err != nil {
+    return err
+}
+
 emitter, err := streaming.NewBuilder().
     Source("midaz-ledger").
     Catalog(catalog).
     Routes(
+        // Catch-all: the whole catalog rides the app topic on the primary target.
         streaming.RouteDefinition{
-            Key:           "transaction.created.kafka.primary",
-            DefinitionKey: "transaction.created",
-            Target:        "kafka-primary",
-            Destination:   streaming.KafkaTopic("midaz-ledger.transaction.created"),
-            Requirement:   streaming.RouteRequired,
+            Key:         "kafka_primary.all",
+            Target:      "kafka-primary",
+            Destination: streaming.KafkaTopic(appTopic),
+            Requirement: streaming.RouteRequired,
         },
+        // Definition-scoped: shadow ONE event to SQS. Resolution is
+        // ADDITIVE per target — this route names a DIFFERENT target than
+        // the catch-all, so transaction.created goes to BOTH the app topic
+        // and the SQS queue. A definition-scoped route only replaces the
+        // catch-all when it names the SAME target.
         streaming.RouteDefinition{
-            Key:           "transaction.created.sqs.shadow",
+            Key:           "transaction_created.sqs.shadow",
             DefinitionKey: "transaction.created",
             Target:        "sqs-shadow",
             Destination:   streaming.SQSQueueURL("https://sqs.us-east-1.amazonaws.com/123/q"),
@@ -253,6 +449,9 @@ emitter, err := streaming.NewBuilder().
     Tracer(tracer).
     OutboxRepository(outboxRepo).
     Build(ctx)
+if err != nil {
+    return err
+}
 ```
 
 ### All-or-error semantics
@@ -285,7 +484,7 @@ The SQS and EventBridge adapters reject provider wire messages larger than 256 K
 
 ### RabbitMQ is events-only
 
-The lib-streaming RabbitMQ adapter is for **business events** aimed at third-party / SaaS subscribers. Internal command queues remain on `github.com/LerianStudio/lib-commons/v5/commons/rabbitmq`. The two are orthogonal — neither replaces the other.
+The lib-streaming RabbitMQ adapter is for **business events** aimed at third-party / SaaS subscribers. Internal command queues remain on `github.com/LerianStudio/lib-commons/v6/commons/rabbitmq`. The two are orthogonal — neither replaces the other.
 
 ### Custom transports
 
@@ -301,9 +500,11 @@ doc, err := streaming.BuildManifest(descriptor, catalog, routeTable)
 // pass an empty RouteTable for a catalog-only document.
 ```
 
-The manifest version is exposed as `streaming.ManifestVersion`. Routes are deterministically ordered (definition key, then route key) so the JSON document is byte-stable across builds.
+The manifest version is exposed as `streaming.ManifestVersion` (currently `1.0.0` — the platform is greenfield, so this document is the first shipped manifest contract and consumers discriminate by structure, never by this string). Routes are deterministically ordered (definition key, then route key) so the JSON document is byte-stable across builds.
 
-`(*Producer).Descriptor(base PublisherDescriptor)` returns the validated descriptor with the per-process `ProducerID` populated. Use it to feed `BuildManifest` or to stamp identity into custom DLQ metadata without re-validating the descriptor surface manually.
+The document advertises the application's `topic` and `dlqTopic`, and — only when the catalog holds at least one `ClassCommand` definition — its `commandsTopic`. Its presence is the manifest's answer to "does this application command anyone?", so a fact-only producer never points provisioning or ACL tooling at a topic it will not write. There is no `commandsDlqTopic`. Every event carries a `class` of `"fact"` or `"command"`, always present so a reader can tell "emits only facts" from "predates the field".
+
+`(*Producer).Descriptor(base PublisherDescriptor)` returns the validated descriptor with the per-process `ProducerID` populated and `Source` replaced by the producer's own `ce-source` (the manifest topic derives from it, so the producer is its only authority — a caller-supplied value is discarded). Use it to feed `BuildManifest` or to stamp identity into custom DLQ metadata without re-validating the descriptor surface manually.
 
 **SECURITY**: the manifest exposes event taxonomy, schema versions, service metadata, and producer IDs. Callers MUST wrap the handler in their app's auth middleware before mounting it publicly. The library does not enforce authentication.
 
@@ -371,6 +572,36 @@ A single `Emit` dispatched across N routes increments `streaming_emitted_total` 
 
 Capacity-plan accordingly: counter volume scales with route count, not Emit count.
 
+### Outbox replay: classify caller errors as non-retryable
+
+Wire `streaming.IsCallerError` into the lib-commons outbox dispatcher:
+
+```go
+dispatcher, err := outbox.NewDispatcher(
+    outboxRepo,
+    outboxRegistry,
+    logger,
+    tracer,
+    outbox.WithRetryClassifier(outbox.RetryClassifierFunc(streaming.IsCallerError)),
+)
+if err != nil {
+    return err
+}
+```
+
+Without it, a row that can never succeed burns its whole retry budget and its
+whole backoff window before anyone hears about it, and the relay's throughput
+goes with it. `IsCallerError` returns true exactly for the synchronous,
+caller-correctable faults — validation, serialization, auth, and every
+caller-correctable sentinel — so the dispatcher moves those rows straight to
+INVALID and keeps retrying only the ones a retry could fix.
+
+This matters most right after a v3 deploy: `OutboxEnvelopeVersion` is now 2 and
+a leftover version-1 row is rejected with `ErrInvalidOutboxEnvelope`, a caller
+error. Every such row is permanently unpublishable, so a fleet of them should
+land in INVALID immediately (alertable, countable, replayable after a rewrite)
+rather than cycling through retries for hours.
+
 ### DLQ alerting
 
 `streaming_dlq_publish_failed_total` increments when the DLQ publish itself fails. The original required-route failure may still return to the caller, but the forensic copy was not preserved. Alert on any increase:
@@ -379,9 +610,48 @@ Capacity-plan accordingly: counter volume scales with route count, not Emit coun
 increase(streaming_dlq_publish_failed_total[5m]) > 0
 ```
 
-Non-Kafka routes need explicit DLQ destinations. Kafka-like routes can derive `<source>.dlq`; SQS, RabbitMQ, EventBridge, and custom routes skip DLQ delivery unless `RouteDefinition.DLQ` is set. The DLQ destination kind must match the source route destination kind because lib-streaming publishes the DLQ message through the same target adapter.
+Non-Kafka routes need explicit DLQ destinations. Kafka-like routes derive `<destination topic>.dlq` — for the default route that is `lerian.streaming.<source>.dlq`, one DLQ per application. A failed **command** publish quarantines there too, not to a `.commands.dlq`: that fourth name does not exist and nothing provisions it. SQS, RabbitMQ, EventBridge, and custom routes skip DLQ delivery unless `RouteDefinition.DLQ` is set. The DLQ destination kind must match the source route destination kind because lib-streaming publishes the DLQ message through the same target adapter.
 
 For production routes where quarantine is mandatory, make `DLQ` part of the route review checklist. Optional routes that are business-critical should also declare a DLQ and have separate optional-route failure alerts, because optional route failures do not fail the caller's Emit.
+
+### Consumer alerting
+
+Three consumer signals are worth a page. All are counters on the
+`streaming_consumer_` prefix.
+
+```promql
+# A partition is head-of-line blocked. reason="dlq_publish_failed" means a
+# record cannot be quarantined at all (check .dlq topic size headroom and ACLs)
+# and NOTHING behind it will ever commit; reason="sustained_transient" means a
+# downstream is down. Healthy() also fails after three consecutive cycles, so
+# this should coincide with the pod leaving the load balancer.
+increase(streaming_consumer_partition_halted_total[5m]) > 0
+```
+
+```promql
+# The quarantine write itself failed. Every increase here is a record that
+# could not be set aside — on the consume side that is fail-closed, so it is a
+# wedge in progress, not a lost forensic copy.
+increase(streaming_consumer_dlq_publish_failed_total[5m]) > 0
+```
+
+```promql
+# FACT records arriving with no handler registered. A steady non-zero rate on a
+# key you expected to own means a typo'd registration or a producer catalog that
+# moved ahead of this consumer — it commits and processes nothing, silently.
+# event_key="other" means the 64-label cap was reached; the key names are in
+# the logs (search "unmatched event key seen past the metric label cap").
+sum by (event_key) (increase(streaming_consumer_unmatched_total[15m])) > 0
+```
+
+```promql
+# An unhandled COMMAND. This one is not "processing nothing" — it is
+# undelivered work already set aside, so page rather than ticket: either this
+# consumer is behind its producer's catalog, or a handler registration is
+# wrong. The quarantined records carry the origin coordinates needed to replay
+# them once the handler ships.
+increase(streaming_consumer_dlq_total{cause_kind="unhandled_key"}[15m]) > 0
+```
 
 ## Project Structure
 
@@ -455,9 +725,11 @@ Key public API areas:
 
 - **Builder** — `NewBuilder`, `Source`, `Catalog`, `Routes`, `Target`, `TargetExtra`, `RegisterTransport`, `CBFailureRatio`, `CBMinRequests`, `CBTimeout`, `CloseTimeout`, `Logger`, `MetricsFactory`, `Tracer`, `CircuitBreakerManager`, `OutboxRepository`, `OutboxWriter`, `TLSConfig`, `SASL`, `AllowPlaintextSASL`, `AllowSystemEvents`, `PartitionKey`, `SQSTarget`, `RabbitMQTarget`, `EventBridgeTarget`, `Build`.
 - **Routes & destinations** — `TargetConfig`, `RouteDefinition`, `RouteTable`, `Destination`, `TransportKind`, `RouteRequirement`, `KafkaTopic`, `SQSQueueURL`, `RabbitMQRoute`, `EventBridgeBus`.
+- **Topic naming** — `AppTopic`, `AppDLQTopic`, `AppCommandsTopic`, `ValidateSource`, `TopicPrefix`, `DLQTopicSuffix`, `CommandsTopicSuffix`, `MaxKafkaTopicNameBytes`.
+- **Consumer dispatch** — `NewConsumer().Source(...)`, `.Apps(...)`, `.Commands(...)`, `.OnFrom(app, "<resourceType>.<eventType>", handler)`, `.On(...)` (single-app shorthand), `.UnmatchedPolicy(...)`, `.ExpectSources(...)`, `HandlerFunc`, `UnmatchedIgnore`, `UnmatchedError`, `ErrUnhandledEvent`, `ErrUnexpectedSource`, `ErrBareOnWithMultipleApps`, `ErrUnknownDispatchApp`, `ErrConsumerMissingSource`, `ErrConsumerPartitionHalted`, `ErrHandlerAndCommandsBothSet`.
 - **Transport port** — `TransportAdapter`, `TransportMessage`, `TransportHeader`, `TransportAdapterOptions`, `TransportAdapterFactory`, `PartitionKeyFunc`, plus the built-in client interfaces (`SQSPublisherClient`, `RabbitMQPublisher`, `EventBridgePutEventsClient`).
 - **Emitters** — `Emitter`, `Producer` (including `Descriptor`, `RegisterOutboxRelay`, `Run`, `RunContext`, `CloseContext`), `NoopEmitter`, and `streamingtest.MockEmitter`.
-- **Catalogs** — `Catalog`, `EventDefinition`, `NewCatalog`, `NewEventDefinition`, and duplicate-contract validation.
+- **Catalogs** — `Catalog`, `EventDefinition`, `NewCatalog`, `NewEventDefinition`, `EventClass`, `ClassFact`, `ClassCommand`, and duplicate-contract validation.
 - **Requests** — `EmitRequest`, `NewEmitRequest`, payload rules, tenant/subject metadata.
 - **Delivery Policies** — `DefaultDeliveryPolicy`, `ResolveDeliveryPolicy`, `DirectMode`, `OutboxMode`, `DLQMode`, `DeliveryPolicy`, `DeliveryPolicyOverride`.
 - **Outbox** — `OutboxEnvelope` (with `Validate` / `ValidateShape`), `OutboxWriter`, `WithOutboxTx`, `StreamingOutboxEventType`, transactional writer support, relay registration.

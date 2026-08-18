@@ -12,8 +12,8 @@
 package billing
 
 import (
-	streaming "github.com/LerianStudio/lib-streaming/v2"
-	billingv1 "github.com/LerianStudio/lib-streaming/v2/billing/gen/lerian/streaming/billing/v1"
+	streaming "github.com/LerianStudio/lib-streaming/v3"
+	billingv1 "github.com/LerianStudio/lib-streaming/v3/billing/gen/lerian/streaming/billing/v1"
 )
 
 // Topic is the Kafka-like topic billable usage events are published to. It is

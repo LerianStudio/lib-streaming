@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/LerianStudio/lib-observability/v2/log"
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
 )
 
 // captureBuilderLogger is a minimal log.Logger that records every Log call so
@@ -90,7 +90,7 @@ func TestBuilder_TargetNameEmpty_FiresAssertion(t *testing.T) {
 
 	_, err := NewBuilder().
 		Logger(cap).
-		Source("svc://ledger").
+		Source("svc-ledger").
 		Catalog(minimalCatalog(t)).
 		Routes(minimalRoute()).
 		Target(TargetConfig{Name: "", Kind: TransportKafkaLike, Brokers: []string{"localhost:9092"}}).
@@ -116,7 +116,7 @@ func TestBuilder_TargetNameControlChar_FiresAssertion(t *testing.T) {
 
 	_, err := NewBuilder().
 		Logger(cap).
-		Source("svc://ledger").
+		Source("svc-ledger").
 		Catalog(minimalCatalog(t)).
 		Routes(minimalRoute()).
 		Target(TargetConfig{Name: "primary\nattacker", Kind: TransportKafkaLike, Brokers: []string{"localhost:9092"}}).
@@ -142,7 +142,7 @@ func TestBuilder_TargetNameOversize_FiresAssertion(t *testing.T) {
 
 	_, err := NewBuilder().
 		Logger(cap).
-		Source("svc://ledger").
+		Source("svc-ledger").
 		Catalog(minimalCatalog(t)).
 		Routes(minimalRoute()).
 		Target(TargetConfig{Name: tooLong, Kind: TransportKafkaLike, Brokers: []string{"localhost:9092"}}).
@@ -170,7 +170,7 @@ func TestBuilder_TargetNameCredentialLike_FiresAssertion(t *testing.T) {
 
 	_, err := NewBuilder().
 		Logger(cap).
-		Source("svc://ledger").
+		Source("svc-ledger").
 		Catalog(minimalCatalog(t)).
 		Routes(minimalRoute()).
 		// "password=abc" matches the credential-assignment pattern in
@@ -198,7 +198,7 @@ func TestBuilder_TargetNameDuplicate_FiresAssertion(t *testing.T) {
 
 	_, err := NewBuilder().
 		Logger(cap).
-		Source("svc://ledger").
+		Source("svc-ledger").
 		Catalog(minimalCatalog(t)).
 		Routes(minimalRoute()).
 		Target(TargetConfig{Name: "primary", Kind: TransportKafkaLike, Brokers: []string{"localhost:9092"}}).

@@ -12,7 +12,7 @@ import (
 	"github.com/LerianStudio/lib-commons/v6/commons"
 	"github.com/LerianStudio/lib-commons/v6/commons/outbox"
 	"github.com/LerianStudio/lib-observability/v2/tracing"
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
 )
 
 // txContextKey is the context key that holds an ambient *sql.Tx for the
@@ -67,7 +67,10 @@ func (p *Producer) publishRouteOutbox(
 		return ErrOutboxNotConfigured
 	}
 
-	envelope := p.newOutboxEnvelope(ctx, event, definitionKey, route, policy)
+	envelope, err := p.newOutboxEnvelope(ctx, event, definitionKey, route, policy)
+	if err != nil {
+		return err
+	}
 
 	// ValidateShape skips Destination.Validate (which performs DNS lookups
 	// and SSRF guards) on the synchronous persist path. The full Validate
@@ -121,7 +124,12 @@ func (p *Producer) newOutboxEnvelope(
 	definitionKey string,
 	route contract.RouteDefinition,
 	policy contract.DeliveryPolicy,
-) contract.OutboxEnvelope {
+) (contract.OutboxEnvelope, error) {
+	aggregateID, err := p.deriveOutboxAggregateID(event)
+	if err != nil {
+		return contract.OutboxEnvelope{}, err
+	}
+
 	return contract.OutboxEnvelope{
 		Version:       contract.OutboxEnvelopeVersion,
 		RouteKey:      route.Key,
@@ -129,12 +137,12 @@ func (p *Producer) newOutboxEnvelope(
 		Target:        route.Target,
 		Transport:     route.Destination.Kind,
 		Destination:   route.Destination,
-		AggregateID:   p.deriveOutboxAggregateID(event),
+		AggregateID:   aggregateID,
 		Requirement:   route.Requirement,
 		Policy:        policy,
 		TraceCarrier:  captureTraceCarrier(ctx),
 		Event:         event,
-	}
+	}, nil
 }
 
 func captureTraceCarrier(ctx context.Context) contract.TraceCarrier {
@@ -165,36 +173,37 @@ func captureTraceCarrier(ctx context.Context) contract.TraceCarrier {
 	return carrier
 }
 
-// deriveAggregateID produces a deterministic UUID from the event's
+// deriveOutboxAggregateID produces a deterministic UUID from the event's
 // partition key. Same tenant+aggregate → same AggregateID, which keeps the
 // outbox row stream aligned with the broker partition stream and lets
 // operators correlate the two by hash.
 //
-// SystemEvent=true events use a random UUID because their "partition key"
-// ("system:<eventtype>") would otherwise collapse every system event into
-// the same aggregate.
-func deriveAggregateID(event Event) uuid.UUID {
+// SystemEvent=true events use a fresh unique UUID because their "partition
+// key" ("system:<eventtype>") would otherwise collapse every system event
+// into the same aggregate. UUIDv7 is preferred (the AggregateID persists on
+// an outbox row, and time-ordered IDs keep B-tree locality); a generator
+// error falls back to a random v4 via uuid.NewRandom, and a failure of both
+// generators surfaces as an error instead of a panic.
+//
+// It resolves the partition key exactly the way Emit dispatch does: the
+// WithPartitionKey override when one is wired and it yields a non-empty key,
+// otherwise Event.PartitionKey(). An empty override key falls back to
+// Event.PartitionKey(), which prevents aggregate-ID collapse across tenants.
+func (p *Producer) deriveOutboxAggregateID(event Event) (uuid.UUID, error) {
 	if event.SystemEvent {
-		return uuid.New()
+		if id, err := commons.GenerateUUIDv7(); err == nil {
+			return id, nil
+		}
+
+		id, err := uuid.NewRandom()
+		if err != nil {
+			return uuid.UUID{}, fmt.Errorf("streaming: mint outbox aggregate id: %w", err)
+		}
+
+		return id, nil
 	}
 
-	return uuid.NewSHA1(uuid.NameSpaceDNS, []byte(event.PartitionKey()))
-}
-
-// deriveOutboxAggregateID produces the AggregateID using the same
-// partition-key resolution used by Emit dispatch: when a custom partition
-// function is configured via WithPartitionKey, it takes precedence over
-// the event's default PartitionKey().
-func (p *Producer) deriveOutboxAggregateID(event Event) uuid.UUID {
-	if p.partFn == nil {
-		return deriveAggregateID(event)
-	}
-
-	if event.SystemEvent {
-		return uuid.New()
-	}
-
-	return uuid.NewSHA1(uuid.NameSpaceDNS, []byte(p.partFn(event)))
+	return uuid.NewSHA1(uuid.NameSpaceDNS, []byte(p.resolvePartitionKey(event))), nil
 }
 
 // outboxRowFromEnvelope serializes an OutboxEnvelope into the lib-commons
@@ -218,7 +227,10 @@ func outboxRowFromEnvelope(envelope contract.OutboxEnvelope) (*outbox.OutboxEven
 
 	rowID, err := commons.GenerateUUIDv7()
 	if err != nil {
-		rowID = uuid.New()
+		rowID, err = uuid.NewRandom()
+		if err != nil {
+			return nil, fmt.Errorf("streaming: mint outbox row id: %w", err)
+		}
 	}
 
 	return &outbox.OutboxEvent{

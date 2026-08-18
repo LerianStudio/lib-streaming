@@ -10,8 +10,8 @@ import (
 
 	"github.com/LerianStudio/lib-observability/v2/log"
 
-	"github.com/LerianStudio/lib-streaming/v2/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v2/internal/transport"
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
 )
 
 // classifyingFakeAdapter is a class-aware fake transport for the DLQ
@@ -190,7 +190,7 @@ func TestPublishRouteDLQ_ClassMatrix(t *testing.T) {
 
 			p, err := NewProducerMulti(
 				ctx,
-				MultiProducerConfig{Source: "svc://dlq-matrix"},
+				MultiProducerConfig{Source: "svc-dlq-matrix"},
 				nil,
 				[]TargetSpec{{Name: "primary", Kind: TransportKafkaLike, Adapter: adapter}},
 				routes,
@@ -255,7 +255,7 @@ func TestPublishRouteDLQ_DestinationAttributesReachAdapter(t *testing.T) {
 
 	p, err := NewProducerMulti(
 		ctx,
-		MultiProducerConfig{Source: "svc://dlq-attributes"},
+		MultiProducerConfig{Source: "svc-dlq-attributes"},
 		nil,
 		[]TargetSpec{{Name: "primary", Kind: TransportKafkaLike, Adapter: adapter}},
 		routes,
@@ -388,7 +388,7 @@ func TestPublishRouteDLQ_PublishFailIncrementsCounter(t *testing.T) {
 
 	p, err := NewProducerMulti(
 		ctx,
-		MultiProducerConfig{Source: "svc://dlq-fail"},
+		MultiProducerConfig{Source: "svc-dlq-fail"},
 		nil,
 		[]TargetSpec{{Name: "primary", Kind: TransportKafkaLike, Adapter: adapter}},
 		routes,

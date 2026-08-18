@@ -13,7 +13,7 @@ Architectural constraints and design decisions for the `lib-streaming` codebase.
 - Prefer explicit error returns over panics in every production path.
 - Keep nil-safety and concurrency-safety as default behavior for exported constructors, options, lifecycle methods, and emitters.
 - Service bootstrap remains the caller's responsibility. The library must not own app bootstrap, HTTP server setup, or tenant extraction.
-- `lib-streaming` is orthogonal to `github.com/LerianStudio/lib-commons/v5/commons/rabbitmq`; RabbitMQ remains the internal command-queue primitive.
+- `lib-streaming` is orthogonal to `github.com/LerianStudio/lib-commons/v6/commons/rabbitmq`; RabbitMQ remains the internal command-queue primitive.
 
 ### Package Ownership
 
@@ -41,8 +41,8 @@ Architectural constraints and design decisions for the `lib-streaming` codebase.
 - `WithOutboxRepository` and `WithOutboxWriter` are mutually exclusive; last call wins.
 - Service methods must depend on `streaming.Emitter`, not concrete `*streaming.Producer`, unless they need lifecycle or relay registration.
 - The root facade may use aliases to internal types, but exported behavior and docs are the public contract.
-- **Routes** are immutable after `NewRouteTable` construction. Every catalog `EventDefinition` MUST resolve to at least one registered route, and every route's `Target` MUST match a registered target whose adapter `Kind` matches the route's `Destination.Kind`.
-- **RabbitMQ via the streaming Builder is events-only** — past-tense business facts for third-party / SaaS subscribers. Internal command queues remain on `github.com/LerianStudio/lib-commons/v5/commons/rabbitmq`. Producer-only ownership applies even when the destination is AMQP.
+- **Routes** are immutable after `NewRouteTable` construction. Every catalog `EventDefinition` MUST resolve to at least one **Required** route (an all-optional definition can lose every copy while `Emit` returns nil — `ErrNoRequiredRoute`), no two routes may share a `(DefinitionKey, Target)` pair (both would publish, duplicating the event), and every route's `Target` MUST match a registered target whose adapter `Kind` matches the route's `Destination.Kind`.
+- **RabbitMQ via the streaming Builder is events-only** — past-tense business facts for third-party / SaaS subscribers. Internal command queues remain on `github.com/LerianStudio/lib-commons/v6/commons/rabbitmq`. Producer-only ownership applies even when the destination is AMQP.
 - **Built-in non-Kafka adapters** (`internal/transport/sqs`, `internal/transport/rabbitmq`, `internal/transport/eventbridge`) MUST NOT depend on the corresponding SDK module. Each adapter exposes a small caller-supplied interface so callers own their SDK lifecycle. Production callers MUST implement `Ping(ctx) error`; adapter health fails closed when the client has no health affordance.
 - **Per-target tenant-aware circuit breakers** isolate broker failures by target and, when the configured manager satisfies lib-commons `TenantAwareManager`, by `(tenant, target)` for non-system events. System events and custom managers that only satisfy the legacy `Manager` interface use the no-tenant compatibility breaker. `targetRuntime.state` mirrors only the no-tenant breaker; tenant-scoped state is read from the manager and observed through lib-commons `tenant_hash` CB metrics/logs. `streaming_circuit_state` is a single-dimension gauge tracking the primary target's no-tenant breaker only.
 - **Target names** are validated at `Build`. Empty names, names containing control characters, names exceeding `MaxEventIDBytes` (256), and credential-like material are rejected with the documented sentinel. The cap is symmetric with route-field validation. Target names are surfaced into operator logs by the per-target `StateChangeListener`, so this validation closes a log-injection vector amplified by the CB recovery loop.
@@ -50,15 +50,15 @@ Architectural constraints and design decisions for the `lib-streaming` codebase.
 
 ## 3. Required Libraries
 
-- Module path: `github.com/LerianStudio/lib-streaming` (bare path; no `/vN` suffix while on v0/v1 per Go's semantic-import-versioning rules).
+- Module path: `github.com/LerianStudio/lib-streaming/v3` — the `/vN` suffix is required from v2 onward by Go's semantic-import-versioning rules, and `go.mod` declares it.
 - Go version: `1.26.3` as declared in `go.mod`.
-- Commons: use `github.com/LerianStudio/lib-commons/v5` primitives where they are the Lerian standard.
+- Commons: use `github.com/LerianStudio/lib-commons/v6` primitives where they are the Lerian standard.
 - Assertions: use `github.com/LerianStudio/lib-observability/assert` for post-construction internal invariants.
 - Panic observability: consuming services must initialize `github.com/LerianStudio/lib-observability/runtime` panic metrics and call `runtime.SetProductionMode` to scrub panic values before telemetry; this library must not add naked goroutines or unobservable recovery paths.
-- Systemplane: use `github.com/LerianStudio/lib-systemplane` for runtime configuration; do not import removed `github.com/LerianStudio/lib-commons/v5/commons/systemplane` packages.
+- Systemplane: use `github.com/LerianStudio/lib-systemplane` for runtime configuration; do not import removed `github.com/LerianStudio/lib-commons/v6/commons/systemplane` packages.
 - UUIDs: prefer `commons.GenerateUUIDv7()` for generated event IDs.
 - Kafka client: franz-go is the producer backend. Do not introduce another Kafka client without an explicit architecture decision.
-- Outbox integration: use `lib-commons/v5/commons/outbox` registry/repository contracts through the library adapter; do not implement a parallel dispatcher in this library.
+- Outbox integration: use `lib-commons/v6/commons/outbox` registry/repository contracts through the library adapter; do not implement a parallel dispatcher in this library.
 - Do not introduce custom metrics, tracing, logging, DB, MQ, or TLS helper stacks when a lib-commons primitive already covers the need.
 
 ## 4. Configuration Contract
@@ -99,8 +99,10 @@ Architectural constraints and design decisions for the `lib-streaming` codebase.
 - `Event` represents the CloudEvents 1.0 binary-mode envelope plus raw JSON payload.
 - Required CloudEvents fields include tenant, resource type, event type, event ID, schema version, timestamp, source, data content type, and payload rules as documented by the contract package.
 - `ApplyDefaults()` fills missing event ID, timestamp, schema version, and data content type on a local copy.
-- Topic derivation is `lerian.streaming.<resource>.<event>`.
-- Add `.v<major>` to the topic only when the schema version major is `>=2`.
+- Topic derivation is `lerian.streaming.<source>` — ONE topic per producing application. The topic carries no resource type, no event type, and no schema version.
+- `ce-source` must be a single dot-free lowercase segment (`^[a-z0-9][a-z0-9_-]*$`) short enough that the derived `.dlq` topic fits Kafka's 249-byte limit. Invalid sources are rejected, never rewritten.
+- `ce-type` is `studio.lerian.<source>.<resource>.<event>`.
+- Never encode the schema version in a topic name; `ce-schemaversion` is the only version carrier.
 - Default partition key is `TenantID`.
 - System-event partition key is `system:<eventType>`.
 - System events require `WithAllowSystemEvents`; they must not be accidentally publishable by regular service code.
@@ -285,7 +287,7 @@ Build tags are the authoritative test type discriminator:
 
 ## 20. Versioning and Compatibility
 
-- Semantic import path is the bare `github.com/LerianStudio/lib-streaming` while the module is on v0/v1; all install docs and examples must use this exact path. A `/v2` path-major suffix is required only when cutting the first v2.0.0 breaking release, at which point every import in the codebase, every example in the docs, and the `module` directive in `go.mod` move together.
+- Semantic import path is `github.com/LerianStudio/lib-streaming/v3`; all install docs and examples must use this exact path, matching the `module` directive in `go.mod`. Cutting the next path-major (e.g. `/v4`) moves every import in the codebase, every example in the docs, and the `module` directive together in one change.
 - Breaking changes require a `CHANGELOG.md` entry and a migration note.
 - New exported identifiers require Go doc comments.
 - Behavior changes in exported functions require tests and documentation updates.
