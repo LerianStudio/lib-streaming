@@ -187,8 +187,8 @@ func captureTraceCarrier(ctx context.Context) contract.TraceCarrier {
 //
 // It resolves the partition key exactly the way Emit dispatch does: the
 // WithPartitionKey override when one is wired and it yields a non-empty key,
-// otherwise Event.PartitionKey(). An empty override key is rejected there
-// because it would collapse every row of every tenant onto one aggregate id.
+// otherwise Event.PartitionKey(). An empty override key falls back to
+// Event.PartitionKey(), which prevents aggregate-ID collapse across tenants.
 func (p *Producer) deriveOutboxAggregateID(event Event) (uuid.UUID, error) {
 	if event.SystemEvent {
 		if id, err := commons.GenerateUUIDv7(); err == nil {
