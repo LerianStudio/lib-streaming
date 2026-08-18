@@ -1,10 +1,6 @@
 package producer
 
-import (
-	"encoding/json"
-
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
-)
+import "encoding/json"
 
 // resolvedEvent is the internal output of resolving an EmitRequest against the
 // producer catalog and policy overrides.
@@ -99,18 +95,16 @@ func (p *Producer) resolveEventWithPolicy(request EmitRequest, rejectDisabled bo
 	// before it could emit — a streaming-level tenant guard would be redundant
 	// and would only block legitimate single-tenant emits.
 
-	// Validate BEFORE deriving. The source is the sole input to the topic
-	// name, so deriving first would build a name from a value not yet known
-	// to be legal. Unreachable today (the source is the producer's own,
-	// validated at Build) but the ordering is the invariant, not the luck.
+	// Validate-before-derive is satisfied by CONSTRUCTION, not per Emit:
+	// event.Source is p.cloudEventsSource, which NewProducerMulti validated
+	// with ValidateSource and which is immutable thereafter. Re-running the
+	// regex here would pay a per-Emit cost to re-prove a construction-time
+	// fact about a constant.
 	//
-	// The full ValidateSource, not a bare non-empty check: an empty source is
-	// only one of the ways a topic name goes wrong, and this is the last gate
-	// before a name is derived.
-	if err := contract.ValidateSource(event.Source); err != nil {
-		return resolvedEvent{}, err
-	}
-
+	// The outbox REPLAY path is different — its Event.Source comes from
+	// persisted bytes, not from this Producer — and is validated on every
+	// replay by preFlightWithPayload, which is the gate that path goes
+	// through.
 	topic := event.Topic()
 
 	return resolvedEvent{

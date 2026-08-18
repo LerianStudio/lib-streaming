@@ -71,6 +71,18 @@ func NewProducerMulti(
 		return nil, contract.ErrNoRoutesConfigured
 	}
 
+	// The ce-source is validated ONCE, here, and is immutable for the life of
+	// the Producer. Everything downstream — Event.Topic(), the DLQ name, the
+	// manifest's advertised topic — is derived from it, so validating at
+	// construction is what makes "validate before you derive" true by
+	// construction rather than by luck on every Emit.
+	//
+	// The Builder applies the same gate earlier; this closes the direct-
+	// NewProducerMulti path, which custom bootstrap code reaches without it.
+	if err := contract.ValidateSource(mpc.Source); err != nil {
+		return nil, err
+	}
+
 	resolvedOpts := resolveEmitterOptions(opts)
 	logger := resolvedOpts.logger
 

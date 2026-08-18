@@ -37,25 +37,42 @@ func TestResolveEvent_NilReceiverReturnsZero(t *testing.T) {
 // Producer and then zero the field to exercise the in-resolveEvent guard.
 // This proves the function surfaces ErrMissingSource even in the defensive
 // case where validation somehow did not run.
-func TestResolveEvent_MissingSourceReturnsErrMissingSource(t *testing.T) {
-	cfg, _ := kfakeConfig(t)
-
-	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
-	if err != nil {
-		t.Fatalf("New err = %v", err)
+// TestNewProducer_RejectsMissingOrMalformedSource pins that the ce-source gate
+// is a CONSTRUCTION-time gate, not a per-Emit one.
+//
+// The source is the sole input to the application's topic, its DLQ name, and
+// the manifest's advertised topic — and it is immutable once the Producer
+// exists. Validating it once at construction is what makes "validate before
+// you derive" true by construction instead of re-proving a fact about a
+// constant on every Emit. A service with a malformed source now fails to
+// start rather than failing on its first business event.
+func TestNewProducer_RejectsMissingOrMalformedSource(t *testing.T) {
+	cases := []struct {
+		name   string
+		source string
+		want   error
+	}{
+		{"empty", "", ErrMissingSource},
+		{"v2 uri shape", "//lerian.midaz/tx", ErrInvalidSource},
+		{"capitalized", "Lender", ErrInvalidSource},
+		{"dotted namespace", "lerian.midaz", ErrInvalidSource},
 	}
 
-	t.Cleanup(func() { _ = emitter.Close() })
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, _ := kfakeConfig(t)
+			cfg.CloudEventsSource = tc.source
 
-	p := asProducer(t, emitter)
+			emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
+			if err == nil {
+				_ = emitter.Close()
+				t.Fatalf("New(source=%q) = nil error; want %v at CONSTRUCTION", tc.source, tc.want)
+			}
 
-	// Simulate a Producer that slipped past config validation with an empty
-	// CloudEventsSource. resolveEvent's guard is defense in depth.
-	p.cloudEventsSource = ""
-
-	_, err = p.resolveEventAllowDisabled(sampleRequest())
-	if !errors.Is(err, ErrMissingSource) {
-		t.Fatalf("resolveEvent err = %v; want ErrMissingSource", err)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("New(source=%q) err = %v; want %v", tc.source, err, tc.want)
+			}
+		})
 	}
 }
 
