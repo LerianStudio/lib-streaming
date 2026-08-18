@@ -591,8 +591,8 @@ func (b *Builder) buildMulti(ctx context.Context, routeTable RouteTable) (Emitte
 	return &Producer{inner: inner}, nil
 }
 
-// warnOffAppTopicKafkaRoutes logs every Kafka route whose destination is
-// neither the application's topic nor its DLQ.
+// warnOffAppTopicKafkaRoutes logs every Kafka route whose destination is none
+// of the application's three names: its topic, its commands queue, or its DLQ.
 //
 // One topic per producing application is a CONVENTION on the Builder path, not
 // a constraint: a Kafka destination is a caller-supplied string, and legitimate
@@ -602,11 +602,15 @@ func (b *Builder) buildMulti(ctx context.Context, routeTable RouteTable) (Emitte
 // bought, and a topic outside the grant fails at publish time in production
 // with an authorization error that reads as a broker problem.
 //
-// AppTopic(source) and AppDLQTopic(source) are the two names in the grant.
+// AppTopic(source), AppCommandsTopic(source), and AppDLQTopic(source) are the
+// three names in the grant. A fact-only application writes two of them; the
+// commands queue is accepted here regardless, because whether the catalog
+// holds a command today is not a property of the route table.
 func (b *Builder) warnOffAppTopicKafkaRoutes(ctx context.Context, routeTable RouteTable) {
 	logger := b.resolveLogger()
 
 	appTopic := contract.AppTopic(b.source)
+	appCommandsTopic := contract.AppCommandsTopic(b.source)
 	appDLQTopic := contract.AppDLQTopic(b.source)
 
 	for _, route := range routeTable.Definitions() {
@@ -614,16 +618,18 @@ func (b *Builder) warnOffAppTopicKafkaRoutes(ctx context.Context, routeTable Rou
 			continue
 		}
 
-		if route.Destination.Name == appTopic || route.Destination.Name == appDLQTopic {
+		switch route.Destination.Name {
+		case appTopic, appCommandsTopic, appDLQTopic:
 			continue
 		}
 
 		logger.Log(ctx, log.LevelWarn,
-			"streaming: Kafka route destination is outside this application's topic pair — one topic per producing application is the convention, and a Kafka ACL scoped to the pair will reject this publish",
+			"streaming: Kafka route destination is outside this application's own topic names — one topic per producing application is the convention, and a Kafka ACL scoped to those names will reject this publish",
 			log.String("route_key", route.Key),
 			log.String("target", route.Target),
 			log.String("destination", route.Destination.Name),
 			log.String("app_topic", appTopic),
+			log.String("app_commands_topic", appCommandsTopic),
 			log.String("app_dlq_topic", appDLQTopic),
 		)
 	}

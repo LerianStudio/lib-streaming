@@ -1,6 +1,10 @@
 package producer
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+)
 
 // resolvedEvent is the internal output of resolving an EmitRequest against the
 // producer catalog and policy overrides.
@@ -14,6 +18,10 @@ type resolvedEvent struct {
 	Event         Event
 	Topic         string
 	Policy        DeliveryPolicy
+	// Class is the definition's event class. It is the ONLY input that moves
+	// an app-topic destination onto the ".commands" queue, so it travels with
+	// the resolved event rather than being re-looked-up per route.
+	Class contract.EventClass
 }
 
 func (p *Producer) resolveEventAllowDisabled(request EmitRequest) (resolvedEvent, error) {
@@ -105,13 +113,22 @@ func (p *Producer) resolveEventWithPolicy(request EmitRequest, rejectDisabled bo
 	// persisted bytes, not from this Producer — and is validated on every
 	// replay by preFlightWithPayload, which is the gate that path goes
 	// through.
+	// A COMMAND rides the app's ".commands" queue instead of its fact topic.
+	// The wire record is identical either way — the queue IS the class — so
+	// this is the single place the split is decided, and every downstream
+	// consumer of resolvedEvent.Topic (metrics label, span attribute, DLQ
+	// forensic header) reports the queue the record actually went to.
 	topic := event.Topic()
+	if definition.Class == contract.ClassCommand {
+		topic = contract.AppCommandsTopic(event.Source)
+	}
 
 	return resolvedEvent{
 		DefinitionKey: request.DefinitionKey,
 		Event:         event,
 		Topic:         topic,
 		Policy:        policy,
+		Class:         definition.Class,
 	}, nil
 }
 

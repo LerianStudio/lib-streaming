@@ -124,7 +124,8 @@ func (p *Producer) emitMulti(ctx context.Context, request contract.EmitRequest) 
 
 	headers := buildTransportHeaders(ctx, event)
 	for i := range routes {
-		outcomes = append(outcomes, p.dispatchRoute(ctx, span, event, topic, resolved.DefinitionKey, policy, headers, routes[i]))
+		route := commandRoute(routes[i], event.Source, resolved.Class)
+		outcomes = append(outcomes, p.dispatchRoute(ctx, span, event, topic, resolved.DefinitionKey, policy, headers, route))
 	}
 
 	return p.aggregateRouteOutcomes(span, resolved, outcomes)
@@ -187,6 +188,50 @@ func (p *Producer) enforceRoutePayloadCap(ctx context.Context, event Event, topi
 		Class:        contract.ClassValidation,
 		Cause:        contract.ErrPayloadTooLarge,
 	}
+}
+
+// commandRoute redirects an APP-TOPIC Kafka route onto the application's
+// ".commands" queue when the definition being emitted is a command, and pins
+// the route's DLQ to the application's own ".dlq" so the redirect does not
+// invent a ".commands.dlq".
+//
+// Only a destination that IS AppTopic(source) moves. An explicit
+// KafkaTopic(...) the caller pointed somewhere on purpose — a legacy mirror, a
+// migration window — is left exactly where it was pointed: the caller named a
+// concrete stream, and silently relocating it would be the library overruling
+// an explicit instruction.
+//
+// The rewrite lands here rather than in the route table because the route
+// table is per-DEFINITION-KEY-or-catch-all, and the catch-all serves facts and
+// commands alike. Rewriting the table would need one catch-all per class;
+// rewriting the dispatch destination needs one function.
+//
+// Non-Kafka transports (SQS, RabbitMQ, EventBridge) are untouched: they have no
+// app-topic convention to derive from, so a command routed to one of them goes
+// exactly where the route says.
+func commandRoute(route contract.RouteDefinition, source string, class contract.EventClass) contract.RouteDefinition {
+	if class != contract.ClassCommand ||
+		route.Destination.Kind != contract.TransportKafkaLike ||
+		route.Destination.Name != contract.AppTopic(source) {
+		return route
+	}
+
+	route.Destination.Name = contract.AppCommandsTopic(source)
+
+	// A failed command publish quarantines into the PRODUCER's own DLQ — the
+	// name every application already writes and every ACL already grants.
+	// Without this pin, resolveRouteDLQDestination would derive
+	// "<app>.commands.dlq" from the rewritten destination: a fourth topic
+	// nobody provisioned, so the quarantine silently fails and the evidence
+	// of a lost command is lost too. An explicit route.DLQ still wins.
+	if route.DLQ == nil {
+		route.DLQ = &contract.Destination{
+			Kind: contract.TransportKafkaLike,
+			Name: contract.AppDLQTopic(source),
+		}
+	}
+
+	return route
 }
 
 // dispatchRoute resolves the per-route policy, builds the transport message,

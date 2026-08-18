@@ -46,7 +46,7 @@ func (l *warnSpyLogger) offTopicWarnings() int {
 	n := 0
 
 	for _, w := range l.warns {
-		if strings.Contains(w, "outside this application's topic pair") {
+		if strings.Contains(w, "outside this application's own topic names") {
 			n++
 		}
 	}
@@ -54,17 +54,17 @@ func (l *warnSpyLogger) offTopicWarnings() int {
 	return n
 }
 
-// TestBuilder_WarnsOnKafkaDestinationOutsideAppTopicPair pins that the Builder
+// TestBuilder_WarnsOnKafkaDestinationOutsideAppTopicNames pins that the Builder
 // says something when a Kafka route points away from the application's own
-// topic.
+// topics.
 //
 // One topic per application is a CONVENTION on this path, not a constraint —
 // the destination is a caller-supplied string and legitimate off-topic routes
 // exist (mirroring, migration windows). But the same freedom silently defeats
-// the two-name Kafka ACL grant the topic collapse bought, and the failure then
-// surfaces at publish time as an authorization error that reads like a broker
-// fault. So: warn, never fail.
-func TestBuilder_WarnsOnKafkaDestinationOutsideAppTopicPair(t *testing.T) {
+// the Kafka ACL grant the topic collapse bought, and the failure then surfaces
+// at publish time as an authorization error that reads like a broker fault.
+// So: warn, never fail.
+func TestBuilder_WarnsOnKafkaDestinationOutsideAppTopicNames(t *testing.T) {
 	t.Parallel()
 
 	target, _ := builderKfakeTarget(t)
@@ -88,34 +88,50 @@ func TestBuilder_WarnsOnKafkaDestinationOutsideAppTopicPair(t *testing.T) {
 	}
 }
 
-// TestBuilder_SilentOnAppTopicPair pins the other half: the two names inside
-// the ACL grant — the app topic and its DLQ — produce no warning at all, so the
-// signal stays worth reading.
-func TestBuilder_SilentOnAppTopicPair(t *testing.T) {
+// TestBuilder_SilentOnItsOwnTopicNames pins the other half: the three names
+// inside the ACL grant — the app topic, its commands queue, and its DLQ —
+// produce no warning at all, so the signal stays worth reading.
+func TestBuilder_SilentOnItsOwnTopicNames(t *testing.T) {
 	t.Parallel()
-
-	target, _ := builderKfakeTarget(t)
-	spy := newWarnSpy()
 
 	appTopic, err := streaming.AppTopic("builder-test")
 	if err != nil {
 		t.Fatalf("AppTopic() error = %v", err)
 	}
 
-	emitter, err := streaming.NewBuilder().
-		Source("builder-test").
-		Catalog(builderCatalog(t)).
-		Routes(builderRoute(appTopic)).
-		Target(target).
-		Logger(spy).
-		Build(context.Background())
+	commandsTopic, err := streaming.AppCommandsTopic("builder-test")
 	if err != nil {
-		t.Fatalf("Build() error = %v", err)
+		t.Fatalf("AppCommandsTopic() error = %v", err)
 	}
 
-	t.Cleanup(func() { _ = emitter.Close() })
+	dlqTopic, err := streaming.AppDLQTopic("builder-test")
+	if err != nil {
+		t.Fatalf("AppDLQTopic() error = %v", err)
+	}
 
-	if got := spy.offTopicWarnings(); got != 0 {
-		t.Fatalf("off-topic warnings = %d; want 0 for the app topic itself", got)
+	for _, topic := range []string{appTopic, commandsTopic, dlqTopic} {
+		t.Run(topic, func(t *testing.T) {
+			t.Parallel()
+
+			target, _ := builderKfakeTarget(t)
+			spy := newWarnSpy()
+
+			emitter, err := streaming.NewBuilder().
+				Source("builder-test").
+				Catalog(builderCatalog(t)).
+				Routes(builderRoute(topic)).
+				Target(target).
+				Logger(spy).
+				Build(context.Background())
+			if err != nil {
+				t.Fatalf("Build() error = %v", err)
+			}
+
+			t.Cleanup(func() { _ = emitter.Close() })
+
+			if got := spy.offTopicWarnings(); got != 0 {
+				t.Fatalf("off-topic warnings = %d; want 0 for %q, one of this application's own names", got, topic)
+			}
+		})
 	}
 }
