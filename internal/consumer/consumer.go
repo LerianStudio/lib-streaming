@@ -20,11 +20,6 @@ import (
 	"github.com/LerianStudio/lib-streaming/v3/internal/transport/kafka"
 )
 
-// errTerminalQuarantine is the fallback cause stamped on a DLQ forensic header
-// when a record is quarantined with no underlying error to report (a defensive
-// case — every real quarantine path carries one).
-var errTerminalQuarantine = errors.New("streaming consumer: record quarantined to DLQ (terminal/poison)")
-
 // DLQ cause kinds, stamped on x-lerian-dlq-cause-kind. Low-cardinality by
 // design: an operator filters and alerts on this, then reads the sanitized
 // underlying error from x-lerian-dlq-error-message.
@@ -99,6 +94,18 @@ const maxUnmatchedEventKeyLabels = 64
 // unmatchedEventKeyOverflow is the label used once maxUnmatchedEventKeyLabels
 // distinct keys have been metered.
 const unmatchedEventKeyOverflow = "other"
+
+// The two unmatched-event log lines, as constants so a test can pin the exact
+// string rather than a substring that drifts.
+const (
+	// unmatchedNoHandlerMessage fires once per distinct unmatched key.
+	unmatchedNoHandlerMessage = "streaming consumer: no handler registered for event key — records are being skipped and committed"
+	// unmatchedLabelOverflowMessage fires ONCE, at the boundary where the
+	// event_key label stops naming keys. Without it the "other" bucket
+	// silently swallows every later drift and the metric looks like it just
+	// went quiet.
+	unmatchedLabelOverflowMessage = `streaming consumer: unmatched event-key label overflow; further keys metered as "other"`
+)
 
 // tenantContextKey is the unexported context key under which the validated
 // tenant id is seeded onto the handler ctx. A tenant-aware downstream repo reads
@@ -182,6 +189,16 @@ type consumerRuntime struct {
 	// and so the metric's event_key label stays bounded.
 	unmatchedSeen  sync.Map
 	unmatchedCount atomic.Int64
+	// unmatchedOverflowOnce guards the single boundary warning fired when the
+	// event_key label cap is first exceeded.
+	unmatchedOverflowOnce sync.Once
+
+	// dispatcher is the handler when it is a *Dispatcher, resolved once at
+	// construction. New binds this runtime's unmatched recorder onto it —
+	// which means a Dispatcher REUSED across two Build calls has its
+	// observeUnmatched rebound to the LAST consumer, and the first consumer
+	// then meters nothing. Build one Dispatcher per consumer.
+	dispatcher *Dispatcher
 }
 
 // New constructs the real consumer runtime from validated config and resolved
@@ -231,7 +248,13 @@ func New(cfg ConsumerConfig, client GroupClient, handler Handler, opts ...Option
 	// the right default and stays the default; what changes is that it stops
 	// being invisible. A typo'd On("loan.disbursd") otherwise builds clean,
 	// commits every record, reports Healthy, and processes nothing forever.
+	//
+	// This MUTATES the caller-owned Dispatcher. Reusing one Dispatcher across
+	// two Build calls rebinds observeUnmatched to the last consumer, leaving
+	// the first one metering nothing — build one Dispatcher per consumer.
 	if d, ok := handler.(*Dispatcher); ok {
+		c.dispatcher = d
+
 		d.ObserveUnmatched(c.recordUnmatched)
 	}
 
@@ -250,11 +273,16 @@ func (c *consumerRuntime) recordUnmatched(ctx context.Context, eventKey string) 
 	if _, seen := c.unmatchedSeen.Load(eventKey); !seen {
 		if c.unmatchedCount.Load() >= maxUnmatchedEventKeyLabels {
 			label = unmatchedEventKeyOverflow
+
+			c.unmatchedOverflowOnce.Do(func() {
+				c.logger.Log(ctx, log.LevelWarn, unmatchedLabelOverflowMessage,
+					log.Int("distinct_event_keys", maxUnmatchedEventKeyLabels),
+				)
+			})
 		} else if _, loaded := c.unmatchedSeen.LoadOrStore(eventKey, struct{}{}); !loaded {
 			c.unmatchedCount.Add(1)
 
-			c.logger.Log(ctx, log.LevelWarn,
-				"streaming consumer: no handler registered for event key — records are being skipped and committed",
+			c.logger.Log(ctx, log.LevelWarn, unmatchedNoHandlerMessage,
 				log.String("event_key", eventKey),
 				log.String("policy", string(c.unmatchedPolicy())),
 			)
@@ -267,8 +295,8 @@ func (c *consumerRuntime) recordUnmatched(ctx context.Context, eventKey string) 
 // unmatchedPolicy reports the dispatcher's unmatched policy for logging, or
 // the ignore default when the handler is not a dispatcher.
 func (c *consumerRuntime) unmatchedPolicy() UnmatchedPolicy {
-	if d, ok := c.handler.(*Dispatcher); ok {
-		return d.unmatched
+	if c.dispatcher != nil {
+		return c.dispatcher.unmatched
 	}
 
 	return UnmatchedIgnore
@@ -659,17 +687,16 @@ func (c *consumerRuntime) routeDLQ(ctx context.Context, rec *kgo.Record, retryCo
 	// credentials stripped) at the point it becomes a header value, which is
 	// also where the adapter classifies it. Flattening it here would strip the
 	// sentinel chain both of them read.
-	underlying := cause.err
-	if underlying == nil {
-		underlying = errTerminalQuarantine
-	}
-
+	//
+	// cause is always fully populated on this path: dispositionDLQ is only ever
+	// returned by classify for a NON-NIL error, and both of its callers pair it
+	// with a kind (dlqCauseCodec, or handlerQuarantineCause's four-way bucket).
+	// The former nil/empty fallbacks were unreachable, and the kind fallback
+	// attributed unknown causes to "handler" — pointing an operator at the
+	// service team for a fault that was never theirs.
 	kind := cause.kind
-	if kind == "" {
-		kind = dlqCauseHandler
-	}
 
-	if err := c.dlq.PublishDLQ(ctx, rec, underlying, kind, retryCount); err != nil {
+	if err := c.dlq.PublishDLQ(ctx, rec, cause.err, kind, retryCount); err != nil {
 		c.seekBack(rec)
 		c.logger.Log(ctx, log.LevelError, "streaming consumer: DLQ publish failed",
 			log.String("topic", rec.Topic),
@@ -951,16 +978,7 @@ func (c *consumerRuntime) alertHalted(ctx context.Context, halted map[topicParti
 // when none is wired (tests, disabled telemetry) this is a no-op. Errors from
 // the factory are swallowed — a metric failure must never break the poll loop.
 func (c *consumerRuntime) recordMetric(ctx context.Context, name string) {
-	if c.metrics == nil {
-		return
-	}
-
-	counter, err := c.metrics.Counter(metrics.Metric{Name: name})
-	if err != nil || counter == nil {
-		return
-	}
-
-	_ = counter.Add(ctx, 1)
+	c.recordMetricWithLabels(ctx, name, nil)
 }
 
 // recordMetricWithLabels is recordMetric with a bounded label set. Callers own

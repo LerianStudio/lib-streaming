@@ -95,10 +95,6 @@ func TestRouteDLQ_StampsTheCauseKindThatQuarantinedTheRecord(t *testing.T) {
 			if tt.wantCauseIs != nil && !errors.Is(cause, tt.wantCauseIs) {
 				t.Errorf("cause = %v; want it to wrap %v", cause, tt.wantCauseIs)
 			}
-
-			if cause.Error() == errTerminalQuarantine.Error() {
-				t.Error("cause is still the generic terminal marker; the real error was dropped")
-			}
 		})
 	}
 }
