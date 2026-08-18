@@ -101,7 +101,8 @@ type Producer struct {
 	producerID string
 
 	// partFn, when non-nil, overrides Event.PartitionKey() at publish time.
-	// Default (nil) means struct-level PartitionKey().
+	// Default (nil) means struct-level PartitionKey(). Read it through
+	// resolvePartitionKey, never directly — see that method's godoc.
 	partFn func(Event) string
 
 	// closeTimeout caps Close's Flush deadline. Resolved in New from the
@@ -406,4 +407,30 @@ func validateCatalogAtBootstrap(catalog Catalog, policyOverrides map[string]Deli
 	}
 
 	return nil
+}
+
+// resolvePartitionKey returns the partition key for event: the WithPartitionKey
+// override when one is wired and it yields a non-empty key, otherwise the
+// event's own Event.PartitionKey().
+//
+// The empty-string fallback is the load-bearing half. franz-go's sticky-key
+// partitioner branches on key != nil and []byte("") is NOT nil, so an override
+// returning "" hashes every record to murmur2 of a constant and pins the whole
+// application stream to ONE partition — silently, with no error anywhere. That
+// is the same collapse the Subject/EventID rungs of Event.PartitionKey() exist
+// to prevent, and an override must not be able to reintroduce it.
+//
+// Every publish path (route dispatch, route DLQ, outbox replay, the debug span
+// attribute, and the outbox aggregate-id derivation) resolves the key here so
+// the guard cannot be missed at one site.
+func (p *Producer) resolvePartitionKey(event Event) string {
+	if p.partFn == nil {
+		return event.PartitionKey()
+	}
+
+	if key := p.partFn(event); key != "" {
+		return key
+	}
+
+	return event.PartitionKey()
 }

@@ -359,10 +359,7 @@ func (p *Producer) dispatchRoute(
 	// The route message is built once and cloned only at the adapter boundary.
 	// That keeps route fan-out allocation bounded while preventing a mutating
 	// adapter from leaking changes into sibling routes or DLQ/replay paths.
-	partKey := event.PartitionKey()
-	if p.partFn != nil {
-		partKey = p.partFn(event)
-	}
+	partKey := p.resolvePartitionKey(event)
 
 	destination := route.Destination.Normalize()
 	message := transport.TransportMessage{

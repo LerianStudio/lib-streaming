@@ -118,10 +118,7 @@ func (p *Producer) publishRouteDLQ(
 		transport.Header{Key: dlqheader.ProducerID, Value: []byte(p.producerID)},
 	)
 
-	partKey := event.PartitionKey()
-	if p.partFn != nil {
-		partKey = p.partFn(event)
-	}
+	partKey := p.resolvePartitionKey(event)
 
 	message := transport.TransportMessage{
 		Destination: dlqDest,

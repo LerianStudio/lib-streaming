@@ -183,18 +183,16 @@ func deriveAggregateID(event Event) uuid.UUID {
 
 // deriveOutboxAggregateID produces the AggregateID using the same
 // partition-key resolution used by Emit dispatch: when a custom partition
-// function is configured via WithPartitionKey, it takes precedence over
-// the event's default PartitionKey().
+// function is configured via WithPartitionKey, it takes precedence over the
+// event's default PartitionKey() — unless it yields the empty string, which
+// resolvePartitionKey rejects because it would collapse every row of every
+// tenant onto one aggregate id.
 func (p *Producer) deriveOutboxAggregateID(event Event) uuid.UUID {
-	if p.partFn == nil {
-		return deriveAggregateID(event)
-	}
-
 	if event.SystemEvent {
 		return uuid.New()
 	}
 
-	return uuid.NewSHA1(uuid.NameSpaceDNS, []byte(p.partFn(event)))
+	return uuid.NewSHA1(uuid.NameSpaceDNS, []byte(p.resolvePartitionKey(event)))
 }
 
 // outboxRowFromEnvelope serializes an OutboxEnvelope into the lib-commons

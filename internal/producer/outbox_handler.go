@@ -128,10 +128,7 @@ func (p *Producer) handleOutboxRow(ctx context.Context, row *outbox.OutboxEvent)
 			row.ID, envelope.Target, rt.kind, envelope.Transport, envelope.Destination.Kind)
 	}
 
-	partKey := envelope.Event.PartitionKey()
-	if p.partFn != nil {
-		partKey = p.partFn(envelope.Event)
-	}
+	partKey := p.resolvePartitionKey(envelope.Event)
 
 	message := transport.TransportMessage{
 		Destination: envelope.Destination,
