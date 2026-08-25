@@ -119,6 +119,17 @@ func TestLoadProvisionConfig(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			// Pin all three FIRST so the case is hermetic. A developer or CI
+			// runner exporting STREAMING_TOPIC_AUTO_PROVISION=false (a perfectly
+			// reasonable local setting) would otherwise fail the "unset" cases,
+			// and the failure would read as a library bug. Empty string is
+			// equivalent to unset for the commons getters: ParseBool("") and
+			// ParseInt("") both fail and return the default, and the empty value
+			// suppresses their malformed-value warning.
+			for _, key := range []string{envAutoProvision, envPartitions, envReplication} {
+				t.Setenv(key, "")
+			}
+
 			for key, value := range test.env {
 				t.Setenv(key, value)
 			}

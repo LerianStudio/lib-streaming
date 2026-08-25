@@ -219,12 +219,13 @@
 //
 // # Environment variables
 //
-// All env vars use the STREAMING_ prefix. LoadConfig reads every var
-// below, applies defaults, and validates the result. When Enabled is
-// false, callers should use streaming.NewNoopEmitter() instead of constructing
-// a Builder. Do not treat an empty broker list as an intentional production
-// disablement when streaming is required; fail startup and fix the deployment
-// configuration.
+// All env vars use the STREAMING_ prefix. LoadConfig reads every var in the
+// first table below, applies defaults, and validates the result; the
+// STREAMING_TOPIC_* table that follows it is read elsewhere and is called out
+// there. When Enabled is false, callers should use streaming.NewNoopEmitter()
+// instead of constructing a Builder. Do not treat an empty broker list as an
+// intentional production disablement when streaming is required; fail startup
+// and fix the deployment configuration.
 //
 //	Variable                             | Type     | Default         | Purpose
 //	-------------------------------------|----------|-----------------|---------------------------------------------------------------
@@ -250,15 +251,20 @@
 //	STREAMING_SASL_USERNAME              | string   | ""              | SASL username; required when a mechanism is set
 //	STREAMING_SASL_PASSWORD              | string   | ""              | SASL password (SECRET; never logged)
 //	STREAMING_SASL_ALLOW_PLAINTEXT       | bool     | false           | Allow SASL without TLS (dev-only, unsafe)
+//
+// Topic auto-provisioning is configured by a SEPARATE table, because these three
+// are NOT read by LoadConfig. They are read in internal/kafkasec at the point
+// provisioning happens, and they apply to BOTH the producer and the consumer. The
+// producer Builder is fluent and never loads Config unless the caller opts in
+// with TLSFromConfig / SASLFromConfig, so a knob routed through that struct would
+// be silently inert on the default Builder path. Setting them therefore takes
+// effect without any FromConfig call.
+//
+//	Variable                             | Type     | Default         | Purpose
+//	-------------------------------------|----------|-----------------|---------------------------------------------------------------
 //	STREAMING_TOPIC_AUTO_PROVISION       | bool     | true            | Create this application's own declared topics at construction. ON by default; set false in environments that pre-provision through IaC
 //	STREAMING_TOPIC_PARTITIONS           | int      | -1              | Partition count for auto-created topics; -1 uses the broker default (num.partitions)
 //	STREAMING_TOPIC_REPLICATION_FACTOR   | int      | -1              | Replication factor for auto-created topics; -1 uses the broker default
-//
-// The three STREAMING_TOPIC_* variables are read directly where provisioning
-// happens rather than through LoadConfig, and they apply to BOTH the producer and
-// the consumer. The producer Builder is fluent and never loads Config unless the
-// caller opts in with TLSFromConfig / SASLFromConfig, so a knob routed through
-// that struct would be silently inert on the default Builder path.
 //
 // STREAMING_ALLOW_PLAINTEXT_SASL is a DEPRECATED alias for
 // STREAMING_SASL_ALLOW_PLAINTEXT. It is consulted only when the canonical
@@ -336,19 +342,28 @@
 // A creation that fails logs a WARN naming the topic and the missing ACL, and
 // construction CONTINUES. It is never an error return.
 //
-// That is deliberate. An AUTHORIZATION failure is the normal, correct state in a
-// hardened environment where topics come from IaC and the runtime credential has
-// no CreateTopics on purpose; refusing to boot there would break exactly the
-// deployments that are configured properly. Proceeding is also safe: producer
-// events are held durably by the outbox and a consumer stays in its ordinary
-// wait, while the later produce/consume failure is the loud signal and is already
-// fail-closed downstream. Any other unexpected error warns for the same reason.
+// That is deliberate, and it rests mainly on ONE reason: an AUTHORIZATION failure
+// is the normal, correct state in a hardened environment where topics come from
+// IaC and the runtime credential has no CreateTopics on purpose, so refusing to
+// boot there would break exactly the deployments that are configured properly.
+// Any other unexpected error warns for the same reason.
+//
+// What happens afterwards is NOT symmetric between the two sides, and the
+// difference decides how to alert:
+//
+//   - PUBLISHING to a missing topic fails LOUDLY: the publish returns
+//     ClassTopicNotFound to the caller, already fail-closed. This is not the
+//     outbox absorbing it — outbox fallback covers circuit-open only, and only
+//     when a caller wired one; a producer with no outbox simply gets the error.
+//   - CONSUMING from a missing topic fails SILENTLY: it is indistinguishable
+//     from an idle subscription, so there is no error, no metric, and Healthy
+//     still passes. The WARN is the ONLY signal, so alert on it.
 //
 // Remediation is either grant the service's principal CREATE on the named topic
 // (or on the CLUSTER), or pre-provision through IaC and set
 // STREAMING_TOPIC_AUTO_PROVISION=false to silence the warning. The CreateTopics
 // round-trip is bounded at 10s so a broker outage cannot hang startup; the bound
-// is not configurable.
+// is not configurable, and this call is the first and only broker I/O Build does.
 //
 // The admin call rides the runtime's OWN franz-go client, so the broker dial
 // (brokers, TLS, SASL) is the same validated one the runtime already uses — there

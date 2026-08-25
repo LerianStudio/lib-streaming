@@ -25,10 +25,11 @@ import (
 // cleanly and its FIRST PUBLISH failed, and a consumer on a nonexistent topic
 // polled clean forever while consuming nothing.
 //
-// The ownership rule under test: a runtime provisions only the topics it writes
-// or owns the name of. A producer ensures its own fact topic; a consumer ensures
-// its own DLQ (it is that topic's producer) and its own commands queue (work
-// addressed to it). Nobody provisions another application's topics.
+// The ownership rule under test: a runtime ensures every topic it writes UNDER
+// ITS OWN SOURCE NAMESPACE. A producer ensures its fact topic and its DLQ; a
+// consumer ensures its own DLQ (it is that topic's producer) and its own commands
+// queue when it is the app being commanded. Nobody provisions a name outside
+// their own namespace, and a commands queue is never provisioned by its emitter.
 
 const (
 	provProducerApp      = "lender"
@@ -40,13 +41,41 @@ const (
 	provConsumerDLQ      = "lerian.streaming.br-consignado-gw.dlq"
 	provConsumerCommands = "lerian.streaming.br-consignado-gw.commands"
 
-	provForeignApp        = "midaz"
-	provForeignFactTopic  = "lerian.streaming.midaz"
-	provForeignCommands   = "lerian.streaming.midaz.commands"
+	provForeignApp       = "midaz"
+	provForeignFactTopic = "lerian.streaming.midaz"
+	provForeignCommands  = "lerian.streaming.midaz.commands"
+
 	provAutoProvisionFlag = "STREAMING_TOPIC_AUTO_PROVISION"
+	provPartitionsFlag    = "STREAMING_TOPIC_PARTITIONS"
+	provReplicationFlag   = "STREAMING_TOPIC_REPLICATION_FACTOR"
 
 	provGroup = "topic-provisioning-kfake"
 )
+
+// pinProvisionEnv makes every test here hermetic against the host environment.
+//
+// All three provisioning variables are set explicitly, never inherited. Two
+// concrete ways an inherited value breaks this file: an exported
+// STREAMING_TOPIC_AUTO_PROVISION=false (a reasonable local setting) turns every
+// positive assertion into a failure that reads as a library bug, and a
+// STREAMING_TOPIC_REPLICATION_FACTOR above 1 makes kfake answer
+// INVALID_REPLICATION_FACTOR — the single-broker cluster below cannot satisfy it,
+// so the topic is never created and the failure looks like a provisioning bug
+// rather than a test-environment one.
+//
+// Partitions and replication are pinned to 1 for the same reason: this cluster
+// has exactly one broker, so 1/1 is the only combination guaranteed to succeed,
+// and it removes the dependency on kfake's own defaulting behaviour.
+//
+// Called explicitly per test rather than from a build helper, so the
+// provisioning-disabled test can pin "false" without a helper overriding it.
+func pinProvisionEnv(t *testing.T, autoProvision string) {
+	t.Helper()
+
+	t.Setenv(provAutoProvisionFlag, autoProvision)
+	t.Setenv(provPartitionsFlag, "1")
+	t.Setenv(provReplicationFlag, "1")
+}
 
 // provisionCluster is a bare broker: no seeded topics, and NO
 // AllowAutoTopicCreation. Any topic that exists after a Build was created by an
@@ -147,6 +176,8 @@ func buildProvisioningProducer(t *testing.T, cluster *kfake.Cluster) streaming.E
 // have its topic, and the topic exists by the time Build returns. Its first
 // publish now lands instead of failing.
 func TestIntegration_ProducerBuildProvisionsItsFactTopic(t *testing.T) {
+	pinProvisionEnv(t, "true")
+
 	cluster := provisionCluster(t)
 
 	if got := provisionedTopics(t, cluster); len(got) != 0 {
@@ -169,6 +200,8 @@ func TestIntegration_ProducerBuildProvisionsItsFactTopic(t *testing.T) {
 // the worst possible way: DLQ publish failures are logged and counted, never
 // returned to the caller, so the forensic copy silently never lands.
 func TestIntegration_ProducerBuildProvisionsItsOwnDLQ(t *testing.T) {
+	pinProvisionEnv(t, "true")
+
 	cluster := provisionCluster(t)
 
 	buildProvisioningProducer(t, cluster)
@@ -189,6 +222,8 @@ func TestIntegration_ProducerBuildProvisionsItsOwnDLQ(t *testing.T) {
 // deliberately NOT done, so a command emitted before its addressee exists still
 // fails visibly. This test makes that a decision rather than an oversight.
 func TestIntegration_ProducerBuildExcludesItsCommandsQueue(t *testing.T) {
+	pinProvisionEnv(t, "true")
+
 	cluster := provisionCluster(t)
 
 	buildProvisioningProducer(t, cluster)
@@ -202,6 +237,8 @@ func TestIntegration_ProducerBuildExcludesItsCommandsQueue(t *testing.T) {
 // of the whole feature end to end: with the broker refusing auto-creation, the
 // first Emit succeeds.
 func TestIntegration_ProducerFirstPublishLandsOnAProvisionedTopic(t *testing.T) {
+	pinProvisionEnv(t, "true")
+
 	cluster := provisionCluster(t)
 	emitter := buildProvisioningProducer(t, cluster)
 
@@ -218,6 +255,8 @@ func TestIntegration_ProducerFirstPublishLandsOnAProvisionedTopic(t *testing.T) 
 // against a broker that already has the topic. TOPIC_ALREADY_EXISTS is a silent
 // success: no error, no duplicate, no second topic.
 func TestIntegration_ProducerBuildIsIdempotent(t *testing.T) {
+	pinProvisionEnv(t, "true")
+
 	cluster := provisionCluster(t)
 
 	buildProvisioningProducer(t, cluster)
@@ -240,7 +279,7 @@ func TestIntegration_ProducerBuildIsIdempotent(t *testing.T) {
 // opt-out: topics are pre-provisioned by IaC and the library must not try.
 // Construction still succeeds — the knob suppresses provisioning, not startup.
 func TestIntegration_ProvisioningDisabledCreatesNothing(t *testing.T) {
-	t.Setenv(provAutoProvisionFlag, "false")
+	pinProvisionEnv(t, "false")
 
 	cluster := provisionCluster(t)
 
@@ -291,6 +330,8 @@ func buildProvisioningConsumer(t *testing.T, cluster *kfake.Cluster, takeOwnComm
 // FOREIGN app's fact topic it subscribes to is NOT created: that name belongs to
 // midaz, and creating it here would mask a typo'd subscription as healthy.
 func TestIntegration_ConsumerBuildProvisionsItsOwnDLQ(t *testing.T) {
+	pinProvisionEnv(t, "true")
+
 	cluster := provisionCluster(t)
 
 	buildProvisioningConsumer(t, cluster, false)
@@ -314,6 +355,8 @@ func TestIntegration_ConsumerBuildProvisionsItsOwnDLQ(t *testing.T) {
 // takes commands addressed to ITSELF owns that queue and creates it. It still
 // does not create the foreign app's names.
 func TestIntegration_ConsumerBuildProvisionsItsOwnCommandsQueue(t *testing.T) {
+	pinProvisionEnv(t, "true")
+
 	cluster := provisionCluster(t)
 
 	buildProvisioningConsumer(t, cluster, true)

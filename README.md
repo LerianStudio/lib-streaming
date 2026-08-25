@@ -239,7 +239,14 @@ The DLQ is the same name family on both sides, so an app that both produces and 
 
 This exists because nothing else created them: Lerian brokers run `auto_create_topics_enabled=false` (correct hardening) and the streaming-hub reconciler is read-only by design. The resulting failures were quiet at boot and loud too late — a producer initialized cleanly and its **first publish** returned `UNKNOWN_TOPIC_OR_PARTITION`, and a consumer subscribed to a nonexistent topic is **indistinguishable from one on an idle topic**: franz-go surfaces no topic-specific fetch error, so the poll loop records a clean cycle, `Healthy` passes, and the service consumes nothing indefinitely.
 
-**Failure posture: WARN, never refuse to start.** A creation that fails logs a WARN naming the topic and the missing ACL, and startup continues. An authorization failure is the *normal* state in a hardened environment where topics come from IaC and the runtime credential deliberately has no `CreateTopics`; refusing to boot there would break exactly the deployments that are configured correctly. Proceeding is safe — producer events are held durably by the outbox, a consumer stays in its ordinary wait, and the later produce/consume failure is the loud, already-fail-closed signal. Remediation: grant the service's principal `CREATE` on the named topic (or on the `CLUSTER`), or pre-provision through IaC and set `STREAMING_TOPIC_AUTO_PROVISION=false`.
+**Failure posture: WARN, never refuse to start.** A creation that fails logs a WARN naming the topic and the missing ACL, and startup continues. The reason is that an authorization failure is the *normal* state in a hardened environment where topics come from IaC and the runtime credential deliberately has no `CreateTopics` — refusing to boot there would break exactly the deployments that are configured correctly.
+
+What happens next is **not symmetric**, and it decides how you alert:
+
+- **Publishing** to a missing topic fails **loudly** — the publish returns `ClassTopicNotFound` to the caller, already fail-closed. This is *not* the outbox absorbing it: outbox fallback covers circuit-open only, and only when a caller wired one. A producer with no outbox simply gets the error back.
+- **Consuming** from a missing topic fails **silently** — indistinguishable from an idle subscription, so no error, no metric, and `Healthy` still passes. **The WARN is the only signal. Alert on it.**
+
+Remediation: grant the service's principal `CREATE` on the named topic (or on the `CLUSTER`), or pre-provision through IaC and set `STREAMING_TOPIC_AUTO_PROVISION=false`.
 
 | Variable | Type | Default | Purpose |
 |---|---|---|---|

@@ -41,9 +41,10 @@ const (
 const BrokerDefault = -1
 
 // provisionTimeout bounds the CreateTopics round-trip. It exists because
-// provisioning is ON by default and runs inside construction: without a bound, a
-// broker outage would turn a Build that used to succeed (franz-go dials lazily,
-// so today's Build does no I/O) into a hung boot.
+// provisioning is ON by default and runs inside construction: this call is the
+// FIRST and only broker I/O Build performs — before it, Build did none at all,
+// because franz-go dials lazily — so without a bound a broker outage would turn
+// a Build that used to succeed regardless into a hung boot.
 //
 // The envelope is intentionally NOT configurable — same posture as the CB
 // recovery interval and the SQS resolver's retry budget. 10s is far above a
@@ -154,16 +155,23 @@ type provisionVerdict struct {
 //
 // # Why it only warns
 //
-// A failed creation MUST NOT refuse construction:
+// A failed creation MUST NOT refuse construction. The reason is one-sided and
+// worth stating precisely, because the two runtimes behave very differently
+// afterwards:
 //
 //   - AUTHORIZATION failures are the NORMAL state in a hardened environment,
 //     where topics come from IaC and the runtime credential deliberately has no
 //     CreateTopics. Boot-refusal there would break exactly the deployments that
-//     are configured correctly.
-//   - The producer holds events durably in the outbox and the consumer stays in
-//     its ordinary wait, so nothing is lost by proceeding.
-//   - The later produce/consume failure is the loud signal, and it is already
-//     fail-closed downstream.
+//     are configured correctly. This is the load-bearing reason on both sides.
+//   - On the PRODUCE side the later failure is genuinely loud: a publish to a
+//     missing topic fails with ClassTopicNotFound and the error is RETURNED to
+//     the caller, so it is already fail-closed. Note this is NOT the outbox
+//     doing the work — outbox fallback covers circuit-open only, and only when a
+//     caller wired one; an unwired producer simply gets the error back.
+//   - On the CONSUME side nothing is loud, and this WARN is the ONLY signal.
+//     A missing subscribed topic is indistinguishable from an idle one, so the
+//     consumer reports healthy and consumes nothing. Alert on this log line;
+//     there is no metric behind it and no later error to catch.
 //
 // So the actionable message goes to the log — naming the topic and the missing
 // ACL — and construction continues. The credential needs CREATE on the named
@@ -283,8 +291,10 @@ func logProvisionVerdicts(ctx context.Context, logger log.Logger, cfg ProvisionC
 				"streaming: cannot auto-create Kafka topic — this credential lacks CreateTopics on it. "+
 					"Grant CREATE on the named topic (or on the CLUSTER) to the principal this service authenticates as, "+
 					"or pre-provision the topic through IaC and set STREAMING_TOPIC_AUTO_PROVISION=false to silence this. "+
-					"Startup continues: producer events are held in the outbox and consumers stay in their normal wait, "+
-					"but publishing to or consuming from a missing topic will fail until it exists",
+					"Startup continues. If this topic is one this service PUBLISHES to, a publish will fail and return "+
+					"the error to the caller until it exists. If it is one this service CONSUMES, there is no later "+
+					"error and no metric — a missing topic looks exactly like an idle one, so this log line is the "+
+					"only signal and the service will report healthy while consuming nothing",
 				log.String("topic", verdict.Topic),
 				log.String("required_acl", "CREATE on TOPIC "+verdict.Topic),
 				log.String("opt_out", envAutoProvision+"=false"),
@@ -293,8 +303,10 @@ func logProvisionVerdicts(ctx context.Context, logger log.Logger, cfg ProvisionC
 
 		default:
 			logger.Log(ctx, log.LevelWarn,
-				"streaming: Kafka topic auto-creation failed — startup continues, but publishing to or "+
-					"consuming from a missing topic will fail until it exists. Create it manually, or set "+
+				"streaming: Kafka topic auto-creation failed — startup continues. A publish to this topic will "+
+					"fail and return the error to the caller until it exists; a SUBSCRIPTION to it fails silently "+
+					"instead (a missing topic is indistinguishable from an idle one), so this log line is the only "+
+					"signal on the consume side. Create the topic manually, or set "+
 					"STREAMING_TOPIC_AUTO_PROVISION=false if this environment provisions topics through IaC",
 				log.String("topic", verdict.Topic),
 				log.String("opt_out", envAutoProvision+"=false"),
