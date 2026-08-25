@@ -338,7 +338,7 @@ producer lacks). Prefix `STREAMING_CONSUMER_`.
 | RetryBackoffMax       | STREAMING_CONSUMER_RETRY_BACKOFF_MAX_MS      | 5s      | per-attempt in-loop backoff cap |
 | RetryInLoopMaxDwell   | STREAMING_CONSUMER_RETRY_INLOOP_MAX_DWELL_MS | 1s      | **hard cap on AGGREGATE in-loop dwell** per record; MUST stay well below the group rebalance/session timeout (the member holds `BlockRebalanceOnPoll` for the batch, `config.go:1944-1953`) so it is never kicked (Gap 4) |
 | HaltBackoff           | STREAMING_CONSUMER_HALT_BACKOFF_MS           | 250ms   | **cross-poll** backoff before re-polling when any partition is halted (sustained transient); group is unblocked during this wait. Tune up (seconds→minutes) for slow downstreams |
-| PollTimeout           | STREAMING_CONSUMER_POLL_TIMEOUT_MS           | 0       | per-poll cap (0 = block) |
+| PollTimeout           | STREAMING_CONSUMER_POLL_TIMEOUT_MS           | 15s     | per-cycle deadline on ONE `PollFetches`, so a cycle completes on a quiet topic and `Healthy()` can pass without traffic. `0` resolves to the default — there is deliberately **no "block forever"** setting, because that WAS the readiness deadlock: `PollFetches` blocks until records arrive, so on an empty topic no cycle ever completed, `lastPollOK` was never stored and `Healthy` returned `ErrNotReady` forever. A readiness knob, not a throughput knob: a busy topic returns long before the deadline, and raising it only delays the FIRST ready on an empty topic. Keep it well under the group session timeout (~45s) |
 | CloseTimeout          | STREAMING_CONSUMER_CLOSE_TIMEOUT_S           | 30s     | graceful drain bound |
 
 There is deliberately **no DLQ-suffix knob**. A consumer quarantines into
