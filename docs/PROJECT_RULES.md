@@ -65,7 +65,8 @@ Architectural constraints and design decisions for the `lib-streaming` codebase.
 
 - All environment variables consumed by this repository use the `STREAMING_` prefix.
 - `.env.reference` is the canonical environment-variable reference and must change with any added, removed, or renamed config key.
-- `LoadConfig() (Config, []string, error)` reads all `STREAMING_*` values, applies defaults, returns warnings, and validates enabled configs.
+- `LoadConfig() (Config, []string, error)` reads the producer `STREAMING_*` values, applies defaults, returns warnings, and validates enabled configs.
+- The `STREAMING_TOPIC_*` auto-provisioning knobs are the documented exception: they are read in `internal/kafkasec` at the point provisioning happens, not through `LoadConfig` or `LoadConsumerConfig`, because they apply to BOTH sides and the producer Builder is fluent — it never loads `Config` unless the caller opts in with `TLSFromConfig` / `SASLFromConfig`, so a knob routed through that struct would be silently inert on the default Builder path. Any further env var belongs in `LoadConfig`/`LoadConsumerConfig` unless it has the same both-sides, every-path property.
 - Config validation is skipped when streaming is disabled.
 - Disabled streaming is fail-safe: callers should use `streaming.NewNoopEmitter()` only when `cfg.Enabled=false`. Enabled configs with empty broker lists fail closed with `ErrMissingBrokers` instead of silently disabling publication.
 - The Builder is stricter: callers constructing a real producer must supply a valid catalog, a non-empty route table, and at least one target with valid brokers.
@@ -93,6 +94,15 @@ Architectural constraints and design decisions for the `lib-streaming` codebase.
 - `DeliveryPolicy.Enabled=false` disables event emission and must return the documented caller-correctable error.
 - Avoid adding policy modes unless all direct, outbox, DLQ, metrics, tests, and documentation behavior is defined.
 - Do not make delivery policy depend on tenant ID or payload content; policies are contract/config/call scoped.
+
+### Automatic topic provisioning
+
+- Each runtime creates the topics it OWNS at construction, derived from declarations it already receives: `Builder.Build` creates `lerian.streaming.<source>` on every Kafka target; `ConsumerBuilder.Build` creates its own `.dlq` and — only when the consumer names its OWN source in `Commands(...)` — its own `.commands`.
+- No public API is added for this. If provisioning ever needs a new method or argument, the ownership derivation is wrong.
+- Nobody provisions another application's topics. `Apps(...)`, another app's `Commands(...)`, and the raw `Topics(...)` escape hatch create nothing.
+- Kafka only. `EnsureTopics` is an optional capability interface implemented solely by `internal/transport/kafka.Adapter`; the SQS, RabbitMQ, and EventBridge adapters must not gain a stub.
+- The admin client wraps the runtime's own live `*kgo.Client` and must never be closed (`kadm.Client.Close` closes the wrapped client). No second dial configuration.
+- `kafkasec.EnsureTopics` MUST NOT return an error. An authorization failure is the normal state in a hardened, IaC-provisioned environment, so provisioning failure is a WARN and construction continues; `TOPIC_ALREADY_EXISTS` is silent success. The round-trip is bounded (currently 10s) and the bound is not configurable.
 
 ## 7. CloudEvents, Topics, and Partitioning
 

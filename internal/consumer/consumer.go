@@ -481,6 +481,18 @@ func Build(ctx context.Context, cfg ConsumerConfig, handler Handler, opts ...Opt
 		return nil, err
 	}
 
+	// Create the topics this consumer OWNS (its own DLQ, and its own commands
+	// queue when it is the app being commanded) before Run starts polling. It
+	// runs AFTER New because New is where the caller's Option-supplied logger is
+	// resolved, and the WARN-not-fail posture is worthless against a nop logger.
+	//
+	// Ordering is not load-bearing: franz-go refreshes metadata on a cadence, so
+	// a subscription picks up a topic created moments later. What matters is that
+	// it happens before the first quarantine needs the DLQ to exist.
+	if built, ok := runner.(*consumerRuntime); ok {
+		dlqAdapter.EnsureTopics(ctx, built.logger, ownedTopics(cfg)...)
+	}
+
 	return runner, nil
 }
 

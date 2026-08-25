@@ -571,6 +571,8 @@ func (b *Builder) buildMulti(ctx context.Context, routeTable RouteTable) (Emitte
 		return nil, err
 	}
 
+	b.ensureAppTopic(ctx, specs)
+
 	mpc := producer.MultiProducerConfig{
 		Source:         b.source,
 		CloseTimeout:   b.closeTimeout,
@@ -596,6 +598,52 @@ func (b *Builder) buildMulti(ctx context.Context, routeTable RouteTable) (Emitte
 	}
 
 	return &Producer{inner: inner}, nil
+}
+
+// topicEnsurer is the OPTIONAL provisioning capability a transport adapter may
+// declare. Only the Kafka adapter implements it, which is what confines
+// auto-provisioning to Kafka without a kind check: the SQS, RabbitMQ, and
+// EventBridge adapters simply do not satisfy this interface, and a custom
+// Kafka-like adapter opts in by declaring the method.
+type topicEnsurer interface {
+	EnsureTopics(ctx context.Context, logger log.Logger, topics ...string)
+}
+
+// ensureAppTopic creates this application's own fact topic on every Kafka target
+// at construction time, so a freshly deployed producer's FIRST publish lands.
+//
+// Nothing else on the platform creates it: Lerian brokers run
+// auto_create_topics_enabled=false and the streaming-hub reconciler is read-only
+// by design. The failure that leaves is quiet at boot and loud too late — the
+// producer initializes cleanly and the first Emit returns
+// UNKNOWN_TOPIC_OR_PARTITION.
+//
+// The name is derived entirely from what the developer already declared: it is
+// AppTopic(Source), the app's own ce-source. No new setter, no new argument.
+//
+// It runs on EVERY Kafka target rather than only the targets whose routes name
+// the app topic. The app owns that name on every cluster it dials — it is derived
+// from its own ce-source and covered by its own ACL grant there — so this needs
+// no route-table reasoning, and the only cost in a multi-cluster mirror setup is
+// an empty topic on a cluster the app is entitled to write anyway. A route
+// pointing somewhere else is the operator's deliberate choice and already warned
+// about by warnOffAppTopicKafkaRoutes; provisioning does not follow it, because
+// that name belongs to whoever owns it.
+//
+// Never fails the build — see kafkasec.EnsureTopics for the WARN-not-fail
+// rationale.
+func (b *Builder) ensureAppTopic(ctx context.Context, specs []producer.TargetSpec) {
+	appTopic := contract.AppTopic(b.source)
+	logger := b.resolveLogger()
+
+	for _, spec := range specs {
+		ensurer, ok := spec.Adapter.(topicEnsurer)
+		if !ok {
+			continue
+		}
+
+		ensurer.EnsureTopics(ctx, logger, appTopic)
+	}
 }
 
 // warnOffAppTopicKafkaRoutes logs every Kafka route whose destination is none

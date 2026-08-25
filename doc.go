@@ -250,6 +250,15 @@
 //	STREAMING_SASL_USERNAME              | string   | ""              | SASL username; required when a mechanism is set
 //	STREAMING_SASL_PASSWORD              | string   | ""              | SASL password (SECRET; never logged)
 //	STREAMING_SASL_ALLOW_PLAINTEXT       | bool     | false           | Allow SASL without TLS (dev-only, unsafe)
+//	STREAMING_TOPIC_AUTO_PROVISION       | bool     | true            | Create this application's own declared topics at construction. ON by default; set false in environments that pre-provision through IaC
+//	STREAMING_TOPIC_PARTITIONS           | int      | -1              | Partition count for auto-created topics; -1 uses the broker default (num.partitions)
+//	STREAMING_TOPIC_REPLICATION_FACTOR   | int      | -1              | Replication factor for auto-created topics; -1 uses the broker default
+//
+// The three STREAMING_TOPIC_* variables are read directly where provisioning
+// happens rather than through LoadConfig, and they apply to BOTH the producer and
+// the consumer. The producer Builder is fluent and never loads Config unless the
+// caller opts in with TLSFromConfig / SASLFromConfig, so a knob routed through
+// that struct would be silently inert on the default Builder path.
 //
 // STREAMING_ALLOW_PLAINTEXT_SASL is a DEPRECATED alias for
 // STREAMING_SASL_ALLOW_PLAINTEXT. It is consulted only when the canonical
@@ -262,6 +271,62 @@
 // non-Kafka destinations such as SQS queue URLs, RabbitMQ exchanges, or
 // EventBridge bus names are typically already plumbed through the consuming
 // service's own configuration system.
+//
+// # Automatic topic provisioning
+//
+// Declaring an event is the whole job. Every topic name lib-streaming uses is
+// derived from declarations a runtime already receives, so at construction time
+// each runtime creates the topics it OWNS, with no new method to call and no new
+// argument to pass:
+//
+//   - Builder.Build creates the application's own fact topic,
+//     "lerian.streaming.<source>", on every Kafka target.
+//   - ConsumerBuilder.Build creates the consumer's own DLQ,
+//     "lerian.streaming.<source>.dlq" — the consumer is that topic's producer.
+//   - ConsumerBuilder.Build also creates "lerian.streaming.<source>.commands"
+//     when the consumer names its OWN source in Commands(...), i.e. when it is
+//     the application being commanded and therefore owns that queue.
+//
+// Nobody provisions another application's topics. Subscribing with Apps(...) or
+// taking another app's Commands(...) creates nothing: those names belong to their
+// producers, which create them on their own Build. Neither does the raw
+// Topics(...) escape hatch, which carries no ownership knowledge. Kafka only —
+// the SQS, RabbitMQ, and EventBridge adapters are untouched, since their
+// destinations come from their own cloud IaC.
+//
+// Why it exists: Lerian brokers run auto_create_topics_enabled=false (correct
+// hardening) and the streaming-hub reconciler is read-only by design, so nothing
+// else created these topics. The resulting failures were quiet at boot and loud
+// too late — a producer initialized cleanly and its FIRST publish returned
+// UNKNOWN_TOPIC_OR_PARTITION, and a consumer subscribed to a nonexistent topic is
+// INDISTINGUISHABLE from one on an idle topic: franz-go surfaces no
+// topic-specific fetch error, so the poll loop stores a clean cycle, Healthy
+// passes, and the service consumes nothing indefinitely. Consumer-before-producer
+// deploy ordering therefore fails silently rather than loudly, which is why
+// provisioning is on by default.
+//
+// # Provisioning failure posture: WARN, never refuse to start
+//
+// A creation that fails logs a WARN naming the topic and the missing ACL, and
+// construction CONTINUES. It is never an error return.
+//
+// That is deliberate. An AUTHORIZATION failure is the normal, correct state in a
+// hardened environment where topics come from IaC and the runtime credential has
+// no CreateTopics on purpose; refusing to boot there would break exactly the
+// deployments that are configured properly. Proceeding is also safe: producer
+// events are held durably by the outbox and a consumer stays in its ordinary
+// wait, while the later produce/consume failure is the loud signal and is already
+// fail-closed downstream. Any other unexpected error warns for the same reason.
+//
+// Remediation is either grant the service's principal CREATE on the named topic
+// (or on the CLUSTER), or pre-provision through IaC and set
+// STREAMING_TOPIC_AUTO_PROVISION=false to silence the warning. The CreateTopics
+// round-trip is bounded at 10s so a broker outage cannot hang startup; the bound
+// is not configurable.
+//
+// The admin call rides the runtime's OWN franz-go client, so the broker dial
+// (brokers, TLS, SASL) is the same validated one the runtime already uses — there
+// is no second connection configuration to drift.
 //
 // # Error classes and sentinels
 //

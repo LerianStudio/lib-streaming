@@ -218,6 +218,30 @@ All environment variables use the `STREAMING_` prefix. The canonical reference l
 
 When `STREAMING_ENABLED=false`, callers should use `streaming.NewNoopEmitter()` instead of constructing a Builder. Do not treat an empty broker list as an intentional production disablement when streaming is required. Fail startup and fix the deployment secret or config instead. Multi-transport wiring (multiple Kafka clusters, SQS / RabbitMQ / EventBridge dispatch) is programmatic — non-Kafka destinations such as SQS queue URLs, RabbitMQ exchanges, and EventBridge bus names are typically already plumbed through the consuming service's own configuration.
 
+### Topics are created for you
+
+Declaring an event is the whole job. At construction, each runtime creates the topics it **owns** — no new method, no new argument:
+
+| Construction | Creates |
+|---|---|
+| `Builder.Build` | `lerian.streaming.<source>` — the app's fact topic, on every Kafka target |
+| `NewConsumer().Build` | `lerian.streaming.<source>.dlq` — the consumer's own DLQ (it is that topic's producer) |
+| `NewConsumer().Commands(<own source>).Build` | `lerian.streaming.<source>.commands` — the queue of work addressed to this app |
+
+**Nobody provisions another application's topics.** Subscribing with `Apps(...)`, taking another app's `Commands(...)`, or using the raw `Topics(...)` escape hatch creates nothing — those names belong to their producers, which create them on their own `Build`. Kafka only; the SQS, RabbitMQ, and EventBridge adapters are untouched.
+
+This exists because nothing else created them: Lerian brokers run `auto_create_topics_enabled=false` (correct hardening) and the streaming-hub reconciler is read-only by design. The resulting failures were quiet at boot and loud too late — a producer initialized cleanly and its **first publish** returned `UNKNOWN_TOPIC_OR_PARTITION`, and a consumer subscribed to a nonexistent topic is **indistinguishable from one on an idle topic**: franz-go surfaces no topic-specific fetch error, so the poll loop records a clean cycle, `Healthy` passes, and the service consumes nothing indefinitely.
+
+**Failure posture: WARN, never refuse to start.** A creation that fails logs a WARN naming the topic and the missing ACL, and startup continues. An authorization failure is the *normal* state in a hardened environment where topics come from IaC and the runtime credential deliberately has no `CreateTopics`; refusing to boot there would break exactly the deployments that are configured correctly. Proceeding is safe — producer events are held durably by the outbox, a consumer stays in its ordinary wait, and the later produce/consume failure is the loud, already-fail-closed signal. Remediation: grant the service's principal `CREATE` on the named topic (or on the `CLUSTER`), or pre-provision through IaC and set `STREAMING_TOPIC_AUTO_PROVISION=false`.
+
+| Variable | Type | Default | Purpose |
+|---|---|---|---|
+| `STREAMING_TOPIC_AUTO_PROVISION` | bool | `true` | Opt out in environments that pre-provision through IaC |
+| `STREAMING_TOPIC_PARTITIONS` | int | `-1` | `-1` uses the broker's `num.partitions` |
+| `STREAMING_TOPIC_REPLICATION_FACTOR` | int | `-1` | `-1` uses the broker's `default.replication.factor` |
+
+The admin call rides the runtime's own franz-go client, so the broker dial (brokers, TLS, SASL) is the validated one already in use — there is no second connection configuration to drift. The round-trip is bounded at 10s (not configurable) so a broker outage cannot hang startup.
+
 ## Consuming a Stream
 
 Under one topic per producing application, one subscription delivers that
