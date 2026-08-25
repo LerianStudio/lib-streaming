@@ -218,6 +218,44 @@ All environment variables use the `STREAMING_` prefix. The canonical reference l
 
 When `STREAMING_ENABLED=false`, callers should use `streaming.NewNoopEmitter()` instead of constructing a Builder. Do not treat an empty broker list as an intentional production disablement when streaming is required. Fail startup and fix the deployment secret or config instead. Multi-transport wiring (multiple Kafka clusters, SQS / RabbitMQ / EventBridge dispatch) is programmatic — non-Kafka destinations such as SQS queue URLs, RabbitMQ exchanges, and EventBridge bus names are typically already plumbed through the consuming service's own configuration.
 
+### Topics are created for you
+
+Declaring an event is the whole job. At construction, each runtime creates the topics it owns — no new method, no new argument.
+
+**The rule: a runtime ensures every topic it writes _under its own source namespace_.**
+
+| Construction | Creates |
+|---|---|
+| `Builder.Build` | `lerian.streaming.<source>` — the app's fact topic, on every Kafka target |
+| `Builder.Build` | `lerian.streaming.<source>.dlq` — where it route-DLQs a publish failure |
+| `NewConsumer().Build` | `lerian.streaming.<source>.dlq` — the consumer's own DLQ (it is that topic's producer) |
+| `NewConsumer().Commands(<own source>).Build` | `lerian.streaming.<source>.commands` — commands taken under its own namespace |
+
+The DLQ is the same name family on both sides, so an app that both produces and consumes ensures it twice — fine and expected, since `TOPIC_ALREADY_EXISTS` is silent success.
+
+**Nobody provisions a name outside their own namespace.** Subscribing with `Apps(...)`, taking another app's `Commands(...)`, or using the raw `Topics(...)` escape hatch creates nothing — those names belong to their owners, which create them on their own `Build`. Kafka only; the SQS, RabbitMQ, and EventBridge adapters are untouched.
+
+**One boundary is held deliberately: a commands queue is never provisioned by its emitter.** A commands queue lives in the *commanding* app's namespace — a producer with a `Class: ClassCommand` definition writes `lerian.streaming.<its own source>.commands`, and the addressee subscribes with `Commands("<commander>")`. Even though that name is in the emitter's own namespace, it is not created there. The resulting **ordering expectation is intentional**: a command emitted before its addressee's first deploy **fails visibly**, rather than succeeding into a queue nobody reads. Same posture as subscriptions — a command accepted into an unread queue is undelivered money-path work behind a green dashboard, which is the exact failure the commands queue exists to prevent.
+
+This exists because nothing else created them: Lerian brokers run `auto_create_topics_enabled=false` (correct hardening) and the streaming-hub reconciler is read-only by design. The resulting failures were quiet at boot and loud too late — a producer initialized cleanly and its **first publish** returned `UNKNOWN_TOPIC_OR_PARTITION`, and a consumer subscribed to a nonexistent topic is **indistinguishable from one on an idle topic**: franz-go surfaces no topic-specific fetch error, so the poll loop records a clean cycle, `Healthy` passes, and the service consumes nothing indefinitely.
+
+**Failure posture: WARN, never refuse to start.** A creation that fails logs a WARN naming the topic and the missing ACL, and startup continues. The reason is that an authorization failure is the *normal* state in a hardened environment where topics come from IaC and the runtime credential deliberately has no `CreateTopics` — refusing to boot there would break exactly the deployments that are configured correctly.
+
+What happens next is **not symmetric**, and it decides how you alert:
+
+- **Publishing** to a missing topic fails **loudly** — the publish returns `ClassTopicNotFound` to the caller, already fail-closed. This is *not* the outbox absorbing it: outbox fallback covers circuit-open only, and only when a caller wired one. A producer with no outbox simply gets the error back.
+- **Consuming** from a missing topic fails **silently** — indistinguishable from an idle subscription, so no error, no metric, and `Healthy` still passes. **The WARN is the only signal. Alert on it.**
+
+Remediation: grant the service's principal `CREATE` on the named topic (or on the `CLUSTER`), or pre-provision through IaC and set `STREAMING_TOPIC_AUTO_PROVISION=false`.
+
+| Variable | Type | Default | Purpose |
+|---|---|---|---|
+| `STREAMING_TOPIC_AUTO_PROVISION` | bool | `true` | Opt out in environments that pre-provision through IaC |
+| `STREAMING_TOPIC_PARTITIONS` | int | `-1` | `-1` uses the broker's `num.partitions` |
+| `STREAMING_TOPIC_REPLICATION_FACTOR` | int | `-1` | `-1` uses the broker's `default.replication.factor` |
+
+The admin call rides the runtime's own franz-go client, so the broker dial (brokers, TLS, SASL) is the validated one already in use — there is no second connection configuration to drift. The round-trip is bounded at 10s (not configurable) so a broker outage cannot hang startup.
+
 ## Consuming a Stream
 
 Under one topic per producing application, one subscription delivers that

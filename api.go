@@ -571,6 +571,8 @@ func (b *Builder) buildMulti(ctx context.Context, routeTable RouteTable) (Emitte
 		return nil, err
 	}
 
+	b.ensureOwnTopics(ctx, specs)
+
 	mpc := producer.MultiProducerConfig{
 		Source:         b.source,
 		CloseTimeout:   b.closeTimeout,
@@ -596,6 +598,90 @@ func (b *Builder) buildMulti(ctx context.Context, routeTable RouteTable) (Emitte
 	}
 
 	return &Producer{inner: inner}, nil
+}
+
+// topicEnsurer is the OPTIONAL provisioning capability a transport adapter may
+// declare. Only the Kafka adapter implements it, which is what confines
+// auto-provisioning to Kafka without a kind check: the SQS, RabbitMQ, and
+// EventBridge adapters simply do not satisfy this interface, and a custom
+// Kafka-like adapter opts in by declaring the method.
+type topicEnsurer interface {
+	EnsureTopics(ctx context.Context, logger log.Logger, topics ...string)
+}
+
+// producerOwnedTopics returns the topics a producer writes UNDER ITS OWN SOURCE
+// NAMESPACE, and is therefore entitled to create:
+//
+//   - its fact topic, "lerian.streaming.<source>" — every business fact it emits;
+//   - its dead-letter topic, "lerian.streaming.<source>.dlq" — where it route-DLQs
+//     a routable publish failure. A produce-only service has no consumer side to
+//     create this on its behalf, and the gap is invisible in the worst way: DLQ
+//     publish failures are logged and counted, never returned to the caller, so
+//     the forensic copy silently never lands.
+//
+// It is the SAME name family the consumer side ensures. One application that both
+// produces and consumes therefore ensures its DLQ twice, which is fine and
+// expected: TOPIC_ALREADY_EXISTS is silent success.
+//
+// DELIBERATELY EXCLUDED: the producer's own commands queue,
+// "lerian.streaming.<source>.commands". It is in this namespace and a producer
+// whose catalog holds a Class: ClassCommand definition does write it (see
+// internal/producer/producer_multi.go, which derives it from the producing
+// application's own source), but provisioning it would let a command emitted
+// before its addressee's first deploy succeed into a queue nobody reads. Failing
+// visibly is the intended posture, matching subscriptions.
+//
+// An empty source yields nothing rather than "lerian.streaming." and
+// "lerian.streaming..dlq"; buildMulti validates the source before reaching here,
+// and this stays honest if it is ever called first.
+func producerOwnedTopics(source string) []string {
+	if source == "" {
+		return nil
+	}
+
+	return []string{contract.AppTopic(source), contract.AppDLQTopic(source)}
+}
+
+// ensureOwnTopics creates this application's own topics on every Kafka target at
+// construction time, so a freshly deployed producer's FIRST publish lands and its
+// first route-DLQ has somewhere to go.
+//
+// Nothing else on the platform creates them: Lerian brokers run
+// auto_create_topics_enabled=false and the streaming-hub reconciler is read-only
+// by design. The failure that leaves is quiet at boot and loud too late — the
+// producer initializes cleanly and the first Emit returns
+// UNKNOWN_TOPIC_OR_PARTITION.
+//
+// Every name is derived from what the developer already declared: the app's own
+// ce-source. No new setter, no new argument.
+//
+// It runs on EVERY Kafka target rather than only the targets whose routes name
+// these topics. The app owns those names on every cluster it dials — they are
+// derived from its own ce-source and covered by its own ACL grant there — so this
+// needs no route-table reasoning, and the only cost in a multi-cluster mirror
+// setup is an empty topic on a cluster the app is entitled to write anyway. A
+// route pointing somewhere else is the operator's deliberate choice and already
+// warned about by warnOffAppTopicKafkaRoutes; provisioning does not follow it,
+// because that name belongs to whoever owns it.
+//
+// Never fails the build — see kafkasec.EnsureTopics for the WARN-not-fail
+// rationale.
+func (b *Builder) ensureOwnTopics(ctx context.Context, specs []producer.TargetSpec) {
+	topics := producerOwnedTopics(b.source)
+	if len(topics) == 0 {
+		return
+	}
+
+	logger := b.resolveLogger()
+
+	for _, spec := range specs {
+		ensurer, ok := spec.Adapter.(topicEnsurer)
+		if !ok {
+			continue
+		}
+
+		ensurer.EnsureTopics(ctx, logger, topics...)
+	}
 }
 
 // warnOffAppTopicKafkaRoutes logs every Kafka route whose destination is none
