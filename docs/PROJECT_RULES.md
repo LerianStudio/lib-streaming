@@ -97,9 +97,11 @@ Architectural constraints and design decisions for the `lib-streaming` codebase.
 
 ### Automatic topic provisioning
 
-- Each runtime creates the topics it OWNS at construction, derived from declarations it already receives: `Builder.Build` creates `lerian.streaming.<source>` on every Kafka target; `ConsumerBuilder.Build` creates its own `.dlq` and — only when the consumer names its OWN source in `Commands(...)` — its own `.commands`.
+- **The rule: a runtime ensures every topic it writes under its own source namespace.** `Builder.Build` creates `lerian.streaming.<source>` and `lerian.streaming.<source>.dlq` on every Kafka target; `ConsumerBuilder.Build` creates its own `.dlq` and — only when the consumer names its OWN source in `Commands(...)` — its own `.commands`. All derived from declarations the runtime already receives.
+- The DLQ is ensured by both runtimes of one application. The idempotent double-ensure is expected, not a defect to optimize away.
 - No public API is added for this. If provisioning ever needs a new method or argument, the ownership derivation is wrong.
-- Nobody provisions another application's topics. `Apps(...)`, another app's `Commands(...)`, and the raw `Topics(...)` escape hatch create nothing.
+- Nobody provisions a name outside their own namespace. `Apps(...)`, another app's `Commands(...)`, and the raw `Topics(...)` escape hatch create nothing.
+- **A commands queue is never provisioned by its emitter, deliberately.** It lives in the commanding app's namespace (`producer_multi.go` derives it from the producing app's own source), so the rule above would cover it — but provisioning it would let a command emitted before its addressee's first deploy succeed into a queue nobody reads. The intended ordering expectation is that it fails visibly, matching subscriptions. Two tests pin the exclusion; moving the boundary must move the docs with it.
 - Kafka only. `EnsureTopics` is an optional capability interface implemented solely by `internal/transport/kafka.Adapter`; the SQS, RabbitMQ, and EventBridge adapters must not gain a stub.
 - The admin client wraps the runtime's own live `*kgo.Client` and must never be closed (`kadm.Client.Close` closes the wrapped client). No second dial configuration.
 - `kafkasec.EnsureTopics` MUST NOT return an error. An authorization failure is the normal state in a hardened, IaC-provisioned environment, so provisioning failure is a WARN and construction continues; `TOPIC_ALREADY_EXISTS` is silent success. The round-trip is bounded (currently 10s) and the bound is not configurable.

@@ -31,9 +31,10 @@ import (
 // addressed to it). Nobody provisions another application's topics.
 
 const (
-	provProducerApp = "lender"
-	provFactTopic   = "lerian.streaming.lender"
-	provProducerDLQ = "lerian.streaming.lender.dlq"
+	provProducerApp      = "lender"
+	provFactTopic        = "lerian.streaming.lender"
+	provProducerDLQ      = "lerian.streaming.lender.dlq"
+	provProducerCommands = "lerian.streaming.lender.commands"
 
 	provConsumerApp      = "br-consignado-gw"
 	provConsumerDLQ      = "lerian.streaming.br-consignado-gw.dlq"
@@ -156,6 +157,44 @@ func TestIntegration_ProducerBuildProvisionsItsFactTopic(t *testing.T) {
 
 	if got := provisionedTopics(t, cluster); !slices.Contains(got, provFactTopic) {
 		t.Errorf("after Build, topics = %v; want %q present", got, provFactTopic)
+	}
+}
+
+// TestIntegration_ProducerBuildProvisionsItsOwnDLQ closes the produce-only gap.
+//
+// A producer route-DLQs a routable publish failure into its OWN
+// "lerian.streaming.<source>.dlq". That name is in its own source namespace and
+// it is the only writer, so it ensures it — a produce-only service has no
+// consumer side to create it on its behalf. Left missing, the gap is invisible in
+// the worst possible way: DLQ publish failures are logged and counted, never
+// returned to the caller, so the forensic copy silently never lands.
+func TestIntegration_ProducerBuildProvisionsItsOwnDLQ(t *testing.T) {
+	cluster := provisionCluster(t)
+
+	buildProvisioningProducer(t, cluster)
+
+	got := provisionedTopics(t, cluster)
+
+	for _, want := range []string{provFactTopic, provProducerDLQ} {
+		if !slices.Contains(got, want) {
+			t.Errorf("after producer Build, topics = %v; want %q present", got, want)
+		}
+	}
+}
+
+// TestIntegration_ProducerBuildExcludesItsCommandsQueue pins the held boundary.
+//
+// The producer's own commands queue is in its own namespace and a producer with a
+// Class: ClassCommand definition does write it — but provisioning it is
+// deliberately NOT done, so a command emitted before its addressee exists still
+// fails visibly. This test makes that a decision rather than an oversight.
+func TestIntegration_ProducerBuildExcludesItsCommandsQueue(t *testing.T) {
+	cluster := provisionCluster(t)
+
+	buildProvisioningProducer(t, cluster)
+
+	if got := provisionedTopics(t, cluster); slices.Contains(got, provProducerCommands) {
+		t.Errorf("producer Build provisioned its commands queue %q; that is a deliberate exclusion. topics = %v", provProducerCommands, got)
 	}
 }
 

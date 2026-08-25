@@ -220,15 +220,22 @@ When `STREAMING_ENABLED=false`, callers should use `streaming.NewNoopEmitter()` 
 
 ### Topics are created for you
 
-Declaring an event is the whole job. At construction, each runtime creates the topics it **owns** — no new method, no new argument:
+Declaring an event is the whole job. At construction, each runtime creates the topics it owns — no new method, no new argument.
+
+**The rule: a runtime ensures every topic it writes _under its own source namespace_.**
 
 | Construction | Creates |
 |---|---|
 | `Builder.Build` | `lerian.streaming.<source>` — the app's fact topic, on every Kafka target |
+| `Builder.Build` | `lerian.streaming.<source>.dlq` — where it route-DLQs a publish failure |
 | `NewConsumer().Build` | `lerian.streaming.<source>.dlq` — the consumer's own DLQ (it is that topic's producer) |
-| `NewConsumer().Commands(<own source>).Build` | `lerian.streaming.<source>.commands` — the queue of work addressed to this app |
+| `NewConsumer().Commands(<own source>).Build` | `lerian.streaming.<source>.commands` — commands taken under its own namespace |
 
-**Nobody provisions another application's topics.** Subscribing with `Apps(...)`, taking another app's `Commands(...)`, or using the raw `Topics(...)` escape hatch creates nothing — those names belong to their producers, which create them on their own `Build`. Kafka only; the SQS, RabbitMQ, and EventBridge adapters are untouched.
+The DLQ is the same name family on both sides, so an app that both produces and consumes ensures it twice — fine and expected, since `TOPIC_ALREADY_EXISTS` is silent success.
+
+**Nobody provisions a name outside their own namespace.** Subscribing with `Apps(...)`, taking another app's `Commands(...)`, or using the raw `Topics(...)` escape hatch creates nothing — those names belong to their owners, which create them on their own `Build`. Kafka only; the SQS, RabbitMQ, and EventBridge adapters are untouched.
+
+**One boundary is held deliberately: a commands queue is never provisioned by its emitter.** A commands queue lives in the *commanding* app's namespace — a producer with a `Class: ClassCommand` definition writes `lerian.streaming.<its own source>.commands`, and the addressee subscribes with `Commands("<commander>")`. Even though that name is in the emitter's own namespace, it is not created there. The resulting **ordering expectation is intentional**: a command emitted before its addressee's first deploy **fails visibly**, rather than succeeding into a queue nobody reads. Same posture as subscriptions — a command accepted into an unread queue is undelivered money-path work behind a green dashboard, which is the exact failure the commands queue exists to prevent.
 
 This exists because nothing else created them: Lerian brokers run `auto_create_topics_enabled=false` (correct hardening) and the streaming-hub reconciler is read-only by design. The resulting failures were quiet at boot and loud too late — a producer initialized cleanly and its **first publish** returned `UNKNOWN_TOPIC_OR_PARTITION`, and a consumer subscribed to a nonexistent topic is **indistinguishable from one on an idle topic**: franz-go surfaces no topic-specific fetch error, so the poll loop records a clean cycle, `Healthy` passes, and the service consumes nothing indefinitely.
 

@@ -276,23 +276,49 @@
 //
 // Declaring an event is the whole job. Every topic name lib-streaming uses is
 // derived from declarations a runtime already receives, so at construction time
-// each runtime creates the topics it OWNS, with no new method to call and no new
-// argument to pass:
+// each runtime creates the topics it owns, with no new method to call and no new
+// argument to pass.
+//
+// THE RULE: a runtime ensures every topic it writes UNDER ITS OWN SOURCE
+// NAMESPACE. Concretely:
 //
 //   - Builder.Build creates the application's own fact topic,
 //     "lerian.streaming.<source>", on every Kafka target.
+//   - Builder.Build also creates the producer's own dead-letter topic,
+//     "lerian.streaming.<source>.dlq", where it route-DLQs a routable publish
+//     failure. A produce-only service has no consumer side to create it, and the
+//     gap is invisible: DLQ publish failures are logged and counted, never
+//     returned to the caller.
 //   - ConsumerBuilder.Build creates the consumer's own DLQ,
 //     "lerian.streaming.<source>.dlq" — the consumer is that topic's producer.
 //   - ConsumerBuilder.Build also creates "lerian.streaming.<source>.commands"
 //     when the consumer names its OWN source in Commands(...), i.e. when it is
-//     the application being commanded and therefore owns that queue.
+//     taking commands under its own namespace.
 //
-// Nobody provisions another application's topics. Subscribing with Apps(...) or
-// taking another app's Commands(...) creates nothing: those names belong to their
-// producers, which create them on their own Build. Neither does the raw
-// Topics(...) escape hatch, which carries no ownership knowledge. Kafka only —
-// the SQS, RabbitMQ, and EventBridge adapters are untouched, since their
-// destinations come from their own cloud IaC.
+// The DLQ is the same name family on both sides, so an application that both
+// produces and consumes ensures it twice. That is fine and expected:
+// TOPIC_ALREADY_EXISTS is silent success.
+//
+// Nobody provisions a name outside their own namespace. Subscribing with
+// Apps(...) or taking another app's Commands(...) creates nothing, and neither
+// does the raw Topics(...) escape hatch, which carries no ownership knowledge.
+// Kafka only — the SQS, RabbitMQ, and EventBridge adapters are untouched, since
+// their destinations come from their own cloud IaC.
+//
+// # The one held boundary: a commands queue is never provisioned by its emitter
+//
+// A commands queue lives in the COMMANDING application's namespace: a producer
+// whose catalog holds a Class: ClassCommand definition writes
+// "lerian.streaming.<its own source>.commands", and the addressee subscribes to
+// it with Commands("<commander>"). Provisioning it from the emitter is
+// deliberately NOT done, even though the name is in the emitter's own namespace.
+//
+// The consequence is an ORDERING EXPECTATION, and it is intentional: a command
+// emitted before its addressee's first deploy FAILS VISIBLY, rather than
+// succeeding into a queue nobody reads. That is the same posture subscriptions
+// already have, and it is the failure that stays worth having — a command
+// accepted into an unread queue is undelivered money-path work behind a green
+// dashboard, which is exactly what the commands queue exists to prevent.
 //
 // Why it exists: Lerian brokers run auto_create_topics_enabled=false (correct
 // hardening) and the streaming-hub reconciler is read-only by design, so nothing
