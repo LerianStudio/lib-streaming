@@ -344,6 +344,60 @@ func TestIntegration_Consumer_CloseOnlyMidPoll(t *testing.T) {
 	assertRunReturnedNil(t, done)
 }
 
+// TestIntegration_Consumer_IdleTopicBecomesHealthy proves the readiness fix
+// against the REAL franz-go client, not a fake that merely models it.
+//
+// No producer runs here: the topic exists and is EMPTY, which is the state every
+// first activation starts in. Real PollFetches blocks until a record arrives, so
+// before the per-cycle deadline no poll cycle completed, lastPollOK was never
+// stored, and Healthy returned ErrNotReady forever — lender's sandbox sat 0/1 for
+// 25+ minutes against a perfectly healthy broker and only went Ready once someone
+// hand-produced an event.
+//
+// The scripted unit fake asserts this too, but it can only ever confirm my model
+// of franz-go's ctx path. This asserts the path itself.
+func TestIntegration_Consumer_IdleTopicBecomesHealthy(t *testing.T) {
+	cluster := kfakeCluster(t)
+
+	c, err := Build(context.Background(), kfakeConsumerConfig(cluster), &countingHandler{},
+		WithLogger(log.NewNop()))
+	if err != nil {
+		t.Fatalf("Build err = %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := runConsumer(ctx, c)
+
+	// PollTimeout is 200ms here, so a handful of windows is ample. The old
+	// behaviour never becomes ready no matter how long this waits.
+	deadline := time.Now().Add(15 * time.Second)
+
+	var last error
+
+	for time.Now().Before(deadline) {
+		if last = c.Healthy(context.Background()); last == nil {
+			break
+		}
+
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	if last != nil {
+		t.Fatalf("Healthy() err = %v on an idle topic; want nil — an empty poll "+
+			"window with a joined group and no fetch errors is a HEALTHY cycle", last)
+	}
+
+	// A quiet consumer must still shut down cleanly: franz-go adds a poller before
+	// returning its synthetic ctx fetch, so the idle path owes the same
+	// AllowRebalance a record-bearing poll does. An unpaired freeze hangs
+	// LeaveGroup, which surfaces here as the closeWithinBudget timeout.
+	cancel()
+	assertRunReturnedNil(t, done)
+	closeWithinBudget(t, c)
+}
+
 // waitForHandle blocks until the handler has processed at least one record or a
 // short deadline expires, guaranteeing the consumer has polled a real batch (so
 // BlockRebalanceOnPoll froze a rebalance) before the test triggers shutdown.

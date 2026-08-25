@@ -240,8 +240,13 @@ type ConsumerConfig struct {
 	// wait (AllowRebalance was called), so it may safely grow to seconds→minutes
 	// for a slow downstream. Default: 250ms. STREAMING_CONSUMER_HALT_BACKOFF_MS.
 	HaltBackoff time.Duration
-	// PollTimeout caps a single PollFetches wait. Zero means block until
-	// records or ctx cancellation. Default: 0.
+	// PollTimeout caps a single PollFetches wait, so a poll cycle COMPLETES on
+	// a quiet topic instead of blocking until the next record. Zero resolves to
+	// defaultPollTimeout — there is deliberately no "block forever" setting.
+	//
+	// It is a readiness knob, not a throughput knob: a busy topic returns long
+	// before the deadline, so lowering it costs empty cycles and raising it only
+	// delays the FIRST ready in a traffic-less environment. Default: 15s.
 	// STREAMING_CONSUMER_POLL_TIMEOUT_MS.
 	PollTimeout time.Duration
 	// CloseTimeout bounds graceful drain on Close. Default: 30s.
@@ -265,6 +270,14 @@ const (
 	defaultRetryInLoopMaxDwell = 1 * time.Second
 	defaultHaltBackoff         = 250 * time.Millisecond
 	defaultCloseTimeout        = 30 * time.Second
+	// defaultPollTimeout bounds a single PollFetches wait so an idle topic still
+	// completes poll cycles and Healthy can pass without traffic.
+	//
+	// 15s sits inside franz-go's ~45s default group session timeout with room to
+	// spare (the member holds BlockRebalanceOnPoll for the batch), and is well
+	// under the readiness budget of every Lerian deployment shape — a first
+	// activation on an empty topic goes Ready within one window instead of never.
+	defaultPollTimeout = 15 * time.Second
 	// maxSafeRetryInLoopDwell caps RetryInLoopMaxDwell. The member holds
 	// BlockRebalanceOnPoll for the life of the batch (config.go:1944-1953 warns this
 	// exact mode), so the aggregate in-loop dwell must stay comfortably below the
@@ -288,6 +301,7 @@ func DefaultBuilderConfig() ConsumerConfig {
 		RetryBackoffMax:     defaultRetryBackoffMax,
 		RetryInLoopMaxDwell: defaultRetryInLoopMaxDwell,
 		HaltBackoff:         defaultHaltBackoff,
+		PollTimeout:         defaultPollTimeout,
 		CloseTimeout:        defaultCloseTimeout,
 	}
 }
@@ -318,7 +332,7 @@ func LoadConsumerConfig() (ConsumerConfig, []string, error) {
 		RetryBackoffMax:     getenvMsOrDefault("STREAMING_CONSUMER_RETRY_BACKOFF_MAX_MS", defaultRetryBackoffMax),
 		RetryInLoopMaxDwell: getenvMsOrDefault("STREAMING_CONSUMER_RETRY_INLOOP_MAX_DWELL_MS", defaultRetryInLoopMaxDwell),
 		HaltBackoff:         getenvMsOrDefault("STREAMING_CONSUMER_HALT_BACKOFF_MS", defaultHaltBackoff),
-		PollTimeout:         getenvMsOrDefault("STREAMING_CONSUMER_POLL_TIMEOUT_MS", 0),
+		PollTimeout:         getenvMsOrDefault("STREAMING_CONSUMER_POLL_TIMEOUT_MS", defaultPollTimeout),
 		CloseTimeout:        getenvSecOrDefault("STREAMING_CONSUMER_CLOSE_TIMEOUT_S", defaultCloseTimeout),
 	}
 
@@ -382,8 +396,9 @@ func (c ConsumerConfig) Validate() error {
 		return fmt.Errorf("%w: RetryInLoopMaxDwell=%s exceeds the safe ceiling %s (holds BlockRebalanceOnPoll; would risk rebalance-timeout eviction mid-retry)", ErrInvalidConfigField, c.RetryInLoopMaxDwell, maxSafeRetryInLoopDwell)
 	}
 
-	// HaltBackoff and PollTimeout may be zero (zero PollTimeout = block; zero
-	// HaltBackoff = re-poll immediately), but never negative.
+	// HaltBackoff and PollTimeout may be zero (zero PollTimeout = use
+	// defaultPollTimeout; zero HaltBackoff = re-poll immediately), but never
+	// negative.
 	if c.HaltBackoff < 0 {
 		return fmt.Errorf("%w: HaltBackoff=%s (must be >= 0)", ErrInvalidConfigField, c.HaltBackoff)
 	}

@@ -538,8 +538,25 @@ func (c *consumerRuntime) Run(ctx context.Context) error {
 // processFetches, so it still runs strictly after every seek-back is staged
 // (Req 3). The deferred call pairs with EVERY PollFetches and runs exactly once
 // per poll.
+//
+// The poll is bounded by a CHILD deadline (pollWait) so a cycle completes on a
+// quiet topic. PollFetches otherwise blocks until records arrive, so on a topic
+// with zero traffic no cycle ever finished, lastPollOK was never stored, and
+// Healthy returned ErrNotReady forever — a first activation in a traffic-less
+// environment could not become Ready at all. An idle window with a joined group
+// and no fetch errors IS a healthy cycle.
+//
+// The child deadline is NOT a shutdown. drainFetchErrors reads the PARENT ctx,
+// so parent-cancel and Close keep their exact current semantics (stop the loop,
+// Run returns nil) and a deadline expiry is classified as an empty clean cycle
+// instead. Passing the child to drainFetchErrors would turn every quiet window
+// into a shutdown; passing it to processFetches would abort handler work that a
+// deadline was never meant to bound.
 func (c *consumerRuntime) pollCycle(ctx context.Context) (stop bool, halted map[topicPartition]string) {
-	fetches := c.client.PollFetches(ctx)
+	pollCtx, cancelPoll := context.WithTimeout(ctx, c.pollWait())
+	fetches := c.client.PollFetches(pollCtx)
+
+	cancelPoll()
 
 	// Req 3: release the rebalance frozen by BlockRebalanceOnPoll exactly once
 	// per cycle, on EVERY return path. processFetches (with its seek-backs) runs
@@ -964,6 +981,19 @@ func (c *consumerRuntime) drainFetchErrors(ctx context.Context, fetches kgo.Fetc
 			// cleanly so the poll goroutine is goleak-clean (Req 5).
 			shouldStop = true
 
+		case errors.Is(err, context.DeadlineExceeded):
+			// IDLE WINDOW, not an error and not a shutdown: pollCycle's own child
+			// deadline expired with no records on a quiet topic. Leave shouldStop
+			// and fetchErr alone so the cycle completes clean — that is what lets
+			// Healthy pass without traffic.
+			//
+			// Only OUR child ctx can put this error here. franz-go stamps a ctx
+			// error into a fetch solely via NewErrFetch(ctx.Err()) on the ctx the
+			// caller passed to PollFetches; a parent deadline would already have
+			// been caught by the ctx.Err() guard above and stopped the loop, and
+			// broker-side fetch faults surface as kerr/net errors, never as this
+			// sentinel.
+
 		default:
 			fetchErr = true
 
@@ -1033,6 +1063,21 @@ func (c *consumerRuntime) Close() error {
 	return closeErr
 }
 
+// pollWait returns the per-cycle deadline applied to a single PollFetches,
+// falling back to the bounded default when PollTimeout is unset.
+//
+// Zero MUST resolve here rather than meaning "block": a fluent
+// NewConsumer()...Build() seeds DefaultBuilderConfig, and a caller assembling
+// ConsumerConfig by hand leaves the field at its zero value — both were the
+// shapes that deadlocked readiness on a quiet topic.
+func (c *consumerRuntime) pollWait() time.Duration {
+	if c.cfg.PollTimeout > 0 {
+		return c.cfg.PollTimeout
+	}
+
+	return defaultPollTimeout
+}
+
 // dlqCloseTimeout returns the bound applied to the DLQ publisher flush+close on
 // shutdown, falling back to a conservative default when CloseTimeout is unset.
 func (c *consumerRuntime) dlqCloseTimeout() time.Duration {
@@ -1046,6 +1091,12 @@ func (c *consumerRuntime) dlqCloseTimeout() time.Duration {
 // Healthy reports consumer readiness: not closed, the poll loop has completed
 // at least one cycle (so the group is joined and fetching), and no partition is
 // wedged.
+//
+// "Completed a cycle" does NOT mean "received a record". An idle poll window —
+// the per-cycle deadline expiring with a joined group and no fetch errors — is a
+// completed, healthy cycle. It has to be: PollFetches blocks until records
+// arrive, so requiring traffic made readiness unreachable on an empty topic and
+// a first activation in any traffic-less environment could never go Ready.
 //
 // The third condition is the one that was missing. Polling cleanly is not the
 // same as making progress: a poison record whose DLQ publish keeps failing, or
@@ -1071,7 +1122,13 @@ func (c *consumerRuntime) Healthy(ctx context.Context) error {
 	return c.wedgedPartition()
 }
 
-// ErrNotReady is returned by Healthy before the first poll cycle completes.
+// ErrNotReady is returned by Healthy before the first poll cycle completes —
+// the consumer is still joining the group, or the most recent cycle ended in a
+// fetch error.
+//
+// It is NOT what a quiet topic reports. A cycle completes on the PollTimeout
+// deadline with zero records, so on an empty topic this clears within one poll
+// window rather than persisting until the first event is produced.
 var ErrNotReady = errors.New("streaming consumer: not ready (no completed poll cycle)")
 
 // noopConsumer is the disabled-mode (Enabled=false) Consumer. It mirrors the
