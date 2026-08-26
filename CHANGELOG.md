@@ -1,5 +1,17 @@
 # Lib-streaming Changelog
 
+## [3.1.0](https://github.com/LerianStudio/lib-streaming/releases/tag/v3.1.0)
+
+Features:
+- Provision declared topics at runtime construction, allowing for dynamic topic management during the initialization phase. (@fredcamaral)
+
+Fixes:
+- Allow an idle topic to complete poll cycles to ensure the Healthy status is maintained, preventing premature health check failures. (@fredcamaral)
+
+[Compare changes](https://github.com/LerianStudio/lib-streaming/compare/v3.0.0...v3.1.0)
+
+---
+
 ## [3.0.0](https://github.com/LerianStudio/lib-streaming/releases/tag/v3.0.0)
 
 Features:
