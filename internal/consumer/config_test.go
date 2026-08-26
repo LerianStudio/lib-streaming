@@ -47,7 +47,7 @@ func TestValidate(t *testing.T) {
 		{"negative halt backoff", func(c *ConsumerConfig) { c.HaltBackoff = -1 }, ErrInvalidConfigField},
 		{"zero retry budget is valid (no in-loop retry)", func(c *ConsumerConfig) { c.RetryBudget = 0 }, nil},
 		{"zero halt backoff is valid", func(c *ConsumerConfig) { c.HaltBackoff = 0 }, nil},
-		{"zero poll timeout is valid (block)", func(c *ConsumerConfig) { c.PollTimeout = 0 }, nil},
+		{"zero poll timeout is valid (resolves to default)", func(c *ConsumerConfig) { c.PollTimeout = 0 }, nil},
 		{"in-loop dwell above ceiling rejected", func(c *ConsumerConfig) { c.RetryInLoopMaxDwell = maxSafeRetryInLoopDwell + time.Second }, ErrInvalidConfigField},
 		{"in-loop dwell at ceiling is valid", func(c *ConsumerConfig) { c.RetryInLoopMaxDwell = maxSafeRetryInLoopDwell }, nil},
 	}

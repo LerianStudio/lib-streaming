@@ -9,7 +9,10 @@ import (
 	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kgo"
 
+	"github.com/LerianStudio/lib-observability/v2/log"
+
 	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v3/internal/kafkasec"
 	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
 )
 
@@ -52,6 +55,27 @@ func NewAdapterFromClient(client *kgo.Client) (*Adapter, error) {
 // Kind returns the transport kind implemented by this adapter.
 func (*Adapter) Kind() contract.TransportKind {
 	return contract.TransportKafkaLike
+}
+
+// EnsureTopics creates each named topic on this adapter's cluster when it is
+// absent, and never fails: an unauthorized or failed creation is a WARN and
+// construction proceeds. See kafkasec.EnsureTopics for the full rationale.
+//
+// It rides this adapter's OWN live franz-go client, so the broker dial (brokers,
+// TLS, SASL) is exactly the validated one this adapter already uses — no second
+// connection configuration to drift from, and no extra client to own or close.
+//
+// This method is deliberately NOT part of the transport.TransportAdapter port.
+// It is an OPTIONAL CAPABILITY that callers discover by interface assertion, so
+// the SQS, RabbitMQ, and EventBridge adapters need no stub and stay untouched —
+// their destinations are provisioned by their own cloud IaC, not by a Kafka
+// admin call. A custom Kafka-like adapter opts in simply by declaring it.
+func (a *Adapter) EnsureTopics(ctx context.Context, logger log.Logger, topics ...string) {
+	if a == nil || a.client == nil {
+		return
+	}
+
+	kafkasec.EnsureTopics(ctx, a.client, logger, topics...)
 }
 
 // Publish sends one message using franz-go async Produce plus ctx cancellation.
