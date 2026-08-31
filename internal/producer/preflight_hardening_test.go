@@ -14,7 +14,7 @@ import (
 
 	"github.com/LerianStudio/lib-commons/v6/commons/circuitbreaker"
 	"github.com/LerianStudio/lib-commons/v6/commons/outbox"
-	"github.com/LerianStudio/lib-observability/v2/log"
+	"github.com/LerianStudio/lib-observability/v4/log"
 )
 
 // --- Group 1.1: WithAllowSystemEvents opt-in ----------------------------------

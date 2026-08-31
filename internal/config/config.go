@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/LerianStudio/lib-commons/v6/commons"
-	"github.com/LerianStudio/lib-observability/v2/assert"
-	"github.com/LerianStudio/lib-observability/v2/log"
+	"github.com/LerianStudio/lib-observability/v4/assert"
+	"github.com/LerianStudio/lib-observability/v4/log"
 	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
 	"github.com/LerianStudio/lib-streaming/v3/internal/kafkasec"
 )

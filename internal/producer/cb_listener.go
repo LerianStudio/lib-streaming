@@ -6,9 +6,9 @@ import (
 	"encoding/hex"
 
 	"github.com/LerianStudio/lib-commons/v6/commons/circuitbreaker"
-	"github.com/LerianStudio/lib-observability/v2/assert"
-	"github.com/LerianStudio/lib-observability/v2/log"
-	"github.com/LerianStudio/lib-observability/v2/runtime"
+	"github.com/LerianStudio/lib-observability/v4/assert"
+	"github.com/LerianStudio/lib-observability/v4/log"
+	"github.com/LerianStudio/lib-observability/v4/runtime"
 )
 
 // streamingStateListener satisfies circuitbreaker.StateChangeListener for a

@@ -11,7 +11,7 @@ import (
 
 	"github.com/LerianStudio/lib-commons/v6/commons"
 	"github.com/LerianStudio/lib-commons/v6/commons/outbox"
-	"github.com/LerianStudio/lib-observability/v2/tracing"
+	"github.com/LerianStudio/lib-observability/v4/tracing"
 	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
 )
 

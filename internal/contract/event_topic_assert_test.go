@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/LerianStudio/lib-observability/v2/log"
+	"github.com/LerianStudio/lib-observability/v4/log"
 )
 
 // captureContractLogger records every Log call so the asserter trident's
@@ -23,15 +23,15 @@ func newCaptureContractLogger() *captureContractLogger {
 	return &captureContractLogger{}
 }
 
-func (c *captureContractLogger) Log(_ context.Context, _ log.Level, msg string, _ ...log.Field) {
+func (c *captureContractLogger) Log(_ context.Context, _ int, msg string, _ ...any) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.entries = append(c.entries, msg)
 }
 
-func (c *captureContractLogger) With(_ ...log.Field) log.Logger { return c }
+func (c *captureContractLogger) With(_ ...any) log.Logger { return c }
 func (c *captureContractLogger) WithGroup(_ string) log.Logger  { return c }
-func (c *captureContractLogger) Enabled(_ log.Level) bool       { return true }
+func (c *captureContractLogger) Enabled(_ int) bool       { return true }
 func (c *captureContractLogger) Sync(_ context.Context) error   { return nil }
 
 func (c *captureContractLogger) containsMessage(needle string) bool {

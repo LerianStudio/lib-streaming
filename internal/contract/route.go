@@ -14,8 +14,8 @@ import (
 
 	"github.com/LerianStudio/lib-commons/v6/commons/backoff"
 	"github.com/LerianStudio/lib-commons/v6/commons/security/ssrf"
-	"github.com/LerianStudio/lib-observability/v2/assert"
-	"github.com/LerianStudio/lib-observability/v2/log"
+	"github.com/LerianStudio/lib-observability/v4/assert"
+	"github.com/LerianStudio/lib-observability/v4/log"
 )
 
 // contractAsserterComponent is the component label for asserter trident

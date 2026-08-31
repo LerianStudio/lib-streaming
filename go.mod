@@ -29,18 +29,20 @@ require (
 )
 
 require (
+	github.com/XSAM/otelsql v0.43.0 // indirect
 	github.com/gofiber/fiber/v3 v3.4.0 // indirect
 	github.com/gofiber/schema v1.8.0 // indirect
 	github.com/gofiber/utils/v2 v2.1.1 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
 	github.com/tinylib/msgp v1.6.4 // indirect
+	go.opentelemetry.io/contrib/instrumentation/runtime v0.69.0 // indirect
 )
 
 require (
 	dario.cat/mergo v1.0.2 // indirect
 	github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c // indirect
 	github.com/LerianStudio/lib-commons/v6 v6.4.0
-	github.com/LerianStudio/lib-observability/v2 v2.1.0
+	github.com/LerianStudio/lib-observability/v4 v4.0.0
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/andybalholm/brotli v1.2.2 // indirect
 	github.com/bxcodec/dbresolver/v2 v2.3.0 // indirect
@@ -81,7 +83,7 @@ require (
 	github.com/mattn/go-colorable v0.1.15 // indirect
 	github.com/mattn/go-isatty v0.0.22 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
-	github.com/moby/go-archive v0.3.0 // indirect
+	github.com/moby/go-archive v0.3.3 // indirect
 	github.com/moby/moby/api v1.54.2 // indirect
 	github.com/moby/moby/client v0.4.1 // indirect
 	github.com/moby/patternmatcher v0.6.1 // indirect
@@ -122,13 +124,23 @@ require (
 	go.uber.org/mock v0.6.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.28.0 // indirect
-	golang.org/x/crypto v0.53.0 // indirect
-	golang.org/x/net v0.56.0 // indirect
-	golang.org/x/sys v0.46.0 // indirect
-	golang.org/x/text v0.40.0 // indirect
+	golang.org/x/crypto v0.55.0 // indirect
+	golang.org/x/net v0.57.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260630182238-925bb5da69e7 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260630182238-925bb5da69e7 // indirect
 	google.golang.org/grpc v1.82.1 // indirect
 	google.golang.org/protobuf v1.36.11
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+// lib-observability v4 is not published yet. Point at the local worktree that
+// carries the universal-signature boundary (PR #61).
+replace github.com/LerianStudio/lib-observability/v4 => /home/rodrigodh/Development/lo-v4
+
+// lib-commons v7 is not published yet. lib-streaming hands its logger to
+// circuitbreaker.NewManager, and only v7 accepts a universal logger there:
+// v6.4.0 still names lib-observability/v2's log.Logger, which no v4 logger
+// satisfies. lib-streaming v4 cannot ship before lib-commons v7.
+replace github.com/LerianStudio/lib-commons/v6 => /home/rodrigodh/Development/lc-v7-on-v4

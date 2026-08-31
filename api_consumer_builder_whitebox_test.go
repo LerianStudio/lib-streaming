@@ -11,8 +11,8 @@ import (
 
 	"github.com/twmb/franz-go/pkg/sasl/plain"
 
-	"github.com/LerianStudio/lib-observability/v2/log"
-	"github.com/LerianStudio/lib-observability/v2/metrics"
+	"github.com/LerianStudio/lib-observability/v4/log"
+	"github.com/LerianStudio/lib-observability/v4/metrics"
 	"go.opentelemetry.io/otel/trace/noop"
 
 	"github.com/LerianStudio/lib-streaming/v3/internal/consumer"

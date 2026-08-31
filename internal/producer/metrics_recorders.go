@@ -4,8 +4,8 @@ import (
 	"context"
 	"sync"
 
-	"github.com/LerianStudio/lib-observability/v2/log"
-	"github.com/LerianStudio/lib-observability/v2/metrics"
+	"github.com/LerianStudio/lib-observability/v4/log"
+	"github.com/LerianStudio/lib-observability/v4/metrics"
 )
 
 // This file holds the six record* methods that write to the OTEL

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/LerianStudio/lib-observability/v2/constants"
+	"github.com/LerianStudio/lib-observability/v4/constants"
 )
 
 // TestSanitizeBrokerURL verifies that credentials embedded in broker URLs,

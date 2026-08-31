@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/LerianStudio/lib-observability/v2/tracing"
+	"github.com/LerianStudio/lib-observability/v4/tracing"
 	"github.com/twmb/franz-go/pkg/kgo"
 
 	"github.com/LerianStudio/lib-streaming/v3/internal/cloudevents"

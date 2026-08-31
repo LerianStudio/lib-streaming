@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/LerianStudio/lib-observability/v2/assert"
-	"github.com/LerianStudio/lib-observability/v2/log"
+	"github.com/LerianStudio/lib-observability/v4/assert"
+	"github.com/LerianStudio/lib-observability/v4/log"
 )
 
 // TestNewAsserter_ProducesUsableAsserter pins the contract that

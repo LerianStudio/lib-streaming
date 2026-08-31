@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LerianStudio/lib-observability/v2/log"
+	"github.com/LerianStudio/lib-observability/v4/log"
 )
 
 // TestOptions_ApplyAllSetsFields threads every EmitterOption through an

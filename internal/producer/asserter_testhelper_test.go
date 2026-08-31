@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/LerianStudio/lib-observability/v2/log"
+	"github.com/LerianStudio/lib-observability/v4/log"
 )
 
 // captureLogger is a minimal log.Logger that records every Log call so tests
@@ -19,7 +19,7 @@ type captureLogger struct {
 }
 
 type captureEntry struct {
-	Level  log.Level
+	Level  int
 	Msg    string
 	Fields []log.Field
 }
@@ -28,21 +28,20 @@ func newCaptureLogger() *captureLogger {
 	return &captureLogger{}
 }
 
-func (c *captureLogger) Log(_ context.Context, level log.Level, msg string, fields ...log.Field) {
+func (c *captureLogger) Log(_ context.Context, level int, msg string, fields ...any) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	// Take a defensive copy of fields — the caller owns the backing slice and
 	// the assert package reuses builder slices in some paths.
-	f := make([]log.Field, len(fields))
-	copy(f, fields)
+	f := log.Fields(fields...)
 
 	c.entries = append(c.entries, captureEntry{Level: level, Msg: msg, Fields: f})
 }
 
-func (c *captureLogger) With(_ ...log.Field) log.Logger { return c }
+func (c *captureLogger) With(_ ...any) log.Logger { return c }
 func (c *captureLogger) WithGroup(_ string) log.Logger  { return c }
-func (c *captureLogger) Enabled(_ log.Level) bool       { return true }
+func (c *captureLogger) Enabled(_ int) bool       { return true }
 func (c *captureLogger) Sync(_ context.Context) error   { return nil }
 
 // containsAssertionFailure returns true if an asserter-emitted log line fired.

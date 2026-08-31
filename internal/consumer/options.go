@@ -1,8 +1,8 @@
 package consumer
 
 import (
-	"github.com/LerianStudio/lib-observability/v2/log"
-	"github.com/LerianStudio/lib-observability/v2/metrics"
+	"github.com/LerianStudio/lib-observability/v4/log"
+	"github.com/LerianStudio/lib-observability/v4/metrics"
 	"go.opentelemetry.io/otel/trace"
 )
 

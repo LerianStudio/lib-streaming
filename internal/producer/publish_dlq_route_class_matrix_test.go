@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/LerianStudio/lib-observability/v2/log"
+	"github.com/LerianStudio/lib-observability/v4/log"
 
 	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
 	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
