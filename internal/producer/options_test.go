@@ -31,8 +31,8 @@ func TestOptions_ApplyAllSetsFields(t *testing.T) {
 	opts := &emitterOptions{}
 	for _, apply := range []EmitterOption{
 		WithLogger(logger),
-		WithMetricsFactory(nil), // nil is a valid, supported value
-		WithTracer(nil),         // nil is a valid, supported value
+		WithMetricsRecorder(nil), // nil is a valid, supported value
+		WithTracer(nil),          // nil is a valid, supported value
 		WithCircuitBreakerManager(nil),
 		WithPartitionKey(partFn),
 		WithCloseTimeout(7 * time.Second),

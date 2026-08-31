@@ -39,10 +39,8 @@ func (c *captureLogger) Log(_ context.Context, level int, msg string, fields ...
 	c.entries = append(c.entries, captureEntry{Level: level, Msg: msg, Fields: f})
 }
 
-func (c *captureLogger) With(_ ...any) log.Logger { return c }
-func (c *captureLogger) WithGroup(_ string) log.Logger  { return c }
-func (c *captureLogger) Enabled(_ int) bool       { return true }
-func (c *captureLogger) Sync(_ context.Context) error   { return nil }
+func (c *captureLogger) Enabled(_ int) bool           { return true }
+func (c *captureLogger) Sync(_ context.Context) error { return nil }
 
 // containsAssertionFailure returns true if an asserter-emitted log line fired.
 func (c *captureLogger) containsAssertionFailure() bool {

@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/LerianStudio/lib-streaming/v3/obs"
+
 	"github.com/LerianStudio/lib-commons/v6/commons/backoff"
 	"github.com/LerianStudio/lib-commons/v6/commons/security/ssrf"
 	"github.com/LerianStudio/lib-observability/v4/assert"
@@ -41,10 +43,10 @@ const contractAsserterComponent = "streaming"
 // the pointer race-free. The earlier plain-var form was a data race against
 // parallel tests that swap the logger; production code never writes this
 // var, so the cost is one atomic load per asserter construction.
-var contractAsserterLogger atomic.Pointer[log.Logger]
+var contractAsserterLogger atomic.Pointer[obs.Logger]
 
 func init() {
-	nop := log.NewNop()
+	var nop obs.Logger = log.NewNop()
 	contractAsserterLogger.Store(&nop)
 }
 

@@ -1,434 +1,103 @@
 package producer
 
-import (
-	"context"
-	"sync"
+import "context"
 
-	"github.com/LerianStudio/lib-observability/v4/log"
-	"github.com/LerianStudio/lib-observability/v4/metrics"
-)
-
-// This file holds the six record* methods that write to the OTEL
-// instruments. Split from metrics.go so neither file crosses the 300-line
-// cap and so the ceremonial-but-verbose lazy-init pattern is easy to skim
-// top-down.
+// This file holds the eight per-instrument record methods. They are thin
+// wrappers over the addOne / setGauge / recordMS helpers in metrics.go, whose
+// job is to pin each instrument's name, description and label set in exactly
+// one place.
 //
-// Per-label-set builder caching (T6.1 hardening): the *Builder values
-// returned by (*MetricsFactory).Counter/Histogram/Gauge cache the
-// underlying OTEL instruments, but WithLabels/WithAttributes allocate a
-// fresh builder on every call. On a 10k-RPS service that produces ~40k
-// small heap objects per second. We cache a per-labelset builder keyed
-// by a stable string (strings are hashable; attribute-set keys would
-// require manual fingerprinting), reusing it across record calls.
-// Topic + outcome cardinality is bounded per-process, so the cache is
-// bounded too.
-
-// labelSetCache is a concurrency-safe map of stable-key → *Builder. The
-// concrete builder type is captured as `any` so the same cache shape
-// fits counters, histograms, and gauges without generics bleed-through.
-type labelSetCache struct {
-	// m is keyed by a composed string. Value is one of:
-	//   *metrics.CounterBuilder, *metrics.HistogramBuilder, *metrics.GaugeBuilder
-	// depending on which record* populated it.
-	m sync.Map
-}
+// The label sets are built per call. That is deliberate: the previous
+// implementation cached a *metrics.CounterBuilder per label tuple to dodge
+// the allocation, and paid for it by naming lib-observability builder types
+// throughout the package. Instrument caching now lives inside the recorder,
+// which is where it belongs; what remains per call is one small map.
 
 // recordEmitted increments streaming_emitted_total by 1 with the given
-// topic/outcome label set. The operation label is always "send". No-op when m
-// is nil or factory is nil
-// (latter also emits a WARN once).
+// topic/outcome label set. The operation label is always "send".
 func (m *streamingMetrics) recordEmitted(ctx context.Context, topic, outcome string) {
-	if m == nil {
-		return
-	}
-
-	if m.factory == nil {
-		m.warnNilFactoryOnce(ctx)
-
-		return
-	}
-
-	m.emittedOnce.Do(func() {
-		builder, err := m.factory.Counter(metrics.Metric{
-			Name:        metricNameEmitted,
-			Unit:        "1",
-			Description: "Total streaming emits by topic, operation, and outcome.",
-		})
-		if err != nil {
-			m.logger.Log(ctx, log.LevelError, "streaming: metrics: create emitted counter",
-				log.String("metric", metricNameEmitted), log.Err(err))
-
-			return
-		}
-
-		m.emittedCounter = builder
-	})
-
-	if m.emittedCounter == nil {
-		return
-	}
-
-	const operation = "send"
-
-	// Cache the labeled builder keyed by (topic, operation, outcome). The
-	// hot path re-uses a single *CounterBuilder per tuple instead of
-	// allocating one via WithLabels on every Add.
-	key := topic + "\x00" + operation + "\x00" + outcome
-
-	builder := m.getOrBuildCounter(&m.emittedCache, key, m.emittedCounter, func() map[string]string {
-		return map[string]string{
-			labelTopic:  topic,
-			"operation": operation,
-			"outcome":   outcome,
-		}
-	})
-	if builder == nil {
-		return
-	}
-
-	if err := builder.Add(ctx, 1); err != nil {
-		m.logger.Log(ctx, log.LevelWarn, "streaming: metrics: record emitted",
-			log.String("metric", metricNameEmitted), log.Err(err))
-	}
+	m.addOne(ctx, metricNameEmitted,
+		"Total streaming emits by topic, operation, and outcome.",
+		map[string]string{labelTopic: topic, "operation": "send", "outcome": outcome})
 }
 
 // recordEmitDuration adds a sample to streaming_emit_duration_ms. The unit is
-// milliseconds to match the TRD name; callers pass time.Since(start).Milliseconds().
+// milliseconds to match the TRD name; callers pass
+// time.Since(start).Milliseconds().
 func (m *streamingMetrics) recordEmitDuration(ctx context.Context, topic, outcome string, durationMs int64) {
-	if m == nil {
-		return
-	}
-
-	if m.factory == nil {
-		m.warnNilFactoryOnce(ctx)
-
-		return
-	}
-
-	m.emitDurationOnce.Do(func() {
-		builder, err := m.factory.Histogram(metrics.Metric{
-			Name:        metricNameEmitDurationMS,
-			Unit:        "ms",
-			Description: "Streaming emit duration in milliseconds by topic and outcome.",
-		})
-		if err != nil {
-			m.logger.Log(ctx, log.LevelError, "streaming: metrics: create duration histogram",
-				log.String("metric", metricNameEmitDurationMS), log.Err(err))
-
-			return
-		}
-
-		m.emitDurationHistogram = builder
-	})
-
-	if m.emitDurationHistogram == nil {
-		return
-	}
-
-	key := topic + "\x00" + outcome
-
-	builder := m.getOrBuildHistogram(&m.emitDurationCache, key, m.emitDurationHistogram, func() map[string]string {
-		return map[string]string{
-			labelTopic: topic,
-			"outcome":  outcome,
-		}
-	})
-	if builder == nil {
-		return
-	}
-
-	if err := builder.Record(ctx, durationMs); err != nil {
-		m.logger.Log(ctx, log.LevelWarn, "streaming: metrics: record duration",
-			log.String("metric", metricNameEmitDurationMS), log.Err(err))
-	}
+	m.recordMS(ctx, metricNameEmitDurationMS,
+		"Streaming emit duration in milliseconds by topic and outcome.",
+		map[string]string{labelTopic: topic, "outcome": outcome}, durationMs)
 }
 
-// recordDLQ increments streaming_dlq_total by 1. Called after a successful
-// DLQ publish; the error_class label encodes which of the 8 ErrorClass values
+// recordDLQ increments streaming_dlq_total by 1. Called after a successful DLQ
+// publish; the error_class label encodes which of the 8 ErrorClass values
 // caused the quarantine.
 func (m *streamingMetrics) recordDLQ(ctx context.Context, topic, errorClass string) {
-	if m == nil {
-		return
-	}
-
-	if m.factory == nil {
-		m.warnNilFactoryOnce(ctx)
-
-		return
-	}
-
-	m.dlqOnce.Do(func() {
-		builder, err := m.factory.Counter(metrics.Metric{
-			Name:        metricNameDLQTotal,
-			Unit:        "1",
-			Description: "Total events quarantined to the per-topic DLQ.",
-		})
-		if err != nil {
-			m.logger.Log(ctx, log.LevelError, "streaming: metrics: create dlq counter",
-				log.String("metric", metricNameDLQTotal), log.Err(err))
-
-			return
-		}
-
-		m.dlqCounter = builder
-	})
-
-	if m.dlqCounter == nil {
-		return
-	}
-
-	key := topic + "\x00" + errorClass
-
-	builder := m.getOrBuildCounter(&m.dlqCache, key, m.dlqCounter, func() map[string]string {
-		return map[string]string{
-			labelTopic:    topic,
-			"error_class": errorClass,
-		}
-	})
-	if builder == nil {
-		return
-	}
-
-	if err := builder.Add(ctx, 1); err != nil {
-		m.logger.Log(ctx, log.LevelWarn, "streaming: metrics: record dlq",
-			log.String("metric", metricNameDLQTotal), log.Err(err))
-	}
+	m.addOne(ctx, metricNameDLQTotal,
+		"Total events quarantined to the per-topic DLQ.",
+		map[string]string{labelTopic: topic, "error_class": errorClass})
 }
 
 // recordDLQFailed increments streaming_dlq_publish_failed_total by 1. Called
-// when the DLQ publish itself fails — the alerting signal operators watch
-// because a failing DLQ means correlated broker failure across both source
+// when the DLQ publish itself fails — the alerting signal operators watch,
+// because a failing DLQ means correlated broker failure across both the source
 // and DLQ topics.
 func (m *streamingMetrics) recordDLQFailed(ctx context.Context, topic string) {
-	if m == nil {
-		return
-	}
-
-	if m.factory == nil {
-		m.warnNilFactoryOnce(ctx)
-
-		return
-	}
-
-	m.dlqFailedOnce.Do(func() {
-		builder, err := m.factory.Counter(metrics.Metric{
-			Name:        metricNameDLQFailed,
-			Unit:        "1",
-			Description: "Total DLQ publish attempts that failed themselves.",
-		})
-		if err != nil {
-			m.logger.Log(ctx, log.LevelError, "streaming: metrics: create dlq_failed counter",
-				log.String("metric", metricNameDLQFailed), log.Err(err))
-
-			return
-		}
-
-		m.dlqFailedCounter = builder
-	})
-
-	if m.dlqFailedCounter == nil {
-		return
-	}
-
-	builder := m.getOrBuildCounter(&m.dlqFailedCache, topic, m.dlqFailedCounter, func() map[string]string {
-		return map[string]string{
-			labelTopic: topic,
-		}
-	})
-	if builder == nil {
-		return
-	}
-
-	if err := builder.Add(ctx, 1); err != nil {
-		m.logger.Log(ctx, log.LevelWarn, "streaming: metrics: record dlq_failed",
-			log.String("metric", metricNameDLQFailed), log.Err(err))
-	}
+	m.addOne(ctx, metricNameDLQFailed,
+		"Total DLQ publish attempts that failed themselves.",
+		map[string]string{labelTopic: topic})
 }
 
 // recordOutboxRouted increments streaming_outbox_routed_total by 1. Called
 // when a publish falls back to the outbox. reason is a closed set:
 // "circuit_open" (the only T6 caller) or "broker_error" (reserved for v1.1).
 func (m *streamingMetrics) recordOutboxRouted(ctx context.Context, topic, reason string) {
-	if m == nil {
-		return
-	}
-
-	if m.factory == nil {
-		m.warnNilFactoryOnce(ctx)
-
-		return
-	}
-
-	m.outboxRoutedOnce.Do(func() {
-		builder, err := m.factory.Counter(metrics.Metric{
-			Name:        metricNameOutboxRouted,
-			Unit:        "1",
-			Description: "Total events routed to the outbox fallback by topic and reason.",
-		})
-		if err != nil {
-			m.logger.Log(ctx, log.LevelError, "streaming: metrics: create outbox_routed counter",
-				log.String("metric", metricNameOutboxRouted), log.Err(err))
-
-			return
-		}
-
-		m.outboxRoutedCounter = builder
-	})
-
-	if m.outboxRoutedCounter == nil {
-		return
-	}
-
-	key := topic + "\x00" + reason
-
-	builder := m.getOrBuildCounter(&m.outboxRoutedCache, key, m.outboxRoutedCounter, func() map[string]string {
-		return map[string]string{
-			labelTopic: topic,
-			"reason":   reason,
-		}
-	})
-	if builder == nil {
-		return
-	}
-
-	if err := builder.Add(ctx, 1); err != nil {
-		m.logger.Log(ctx, log.LevelWarn, "streaming: metrics: record outbox_routed",
-			log.String("metric", metricNameOutboxRouted), log.Err(err))
-	}
+	m.addOne(ctx, metricNameOutboxRouted,
+		"Total events routed to the outbox fallback by topic and reason.",
+		map[string]string{labelTopic: topic, "reason": reason})
 }
 
 // recordOutboxReplayTargetUnknown increments
 // streaming_outbox_replay_target_unknown_total by 1. Called from
-// handleOutboxRow when an outbox replay row references a target name
-// that is no longer registered (typically a config rename between the
-// original failure and the replay attempt). The row returns an error so the
-// dispatcher preserves retry/failure semantics; this counter is the operator's
-// signal that replay is blocked on target configuration drift.
+// handleOutboxRow when an outbox replay row references a target name that is
+// no longer registered (typically a config rename between the original
+// failure and the replay attempt). The row returns an error so the dispatcher
+// preserves retry/failure semantics; this counter is the operator's signal
+// that replay is blocked on target configuration drift.
 //
 // Cardinality: target name is operator-controlled and bounded (typically
-// single-digit count per service). Same discipline as cb service-name
-// dimensions. No tenant_id label (PROJECT_RULES §13).
+// single-digit count per service). Same discipline as the cb service-name
+// dimension. No tenant_id label (PROJECT_RULES §13).
 func (m *streamingMetrics) recordOutboxReplayTargetUnknown(ctx context.Context, target string) {
-	if m == nil {
-		return
-	}
-
-	if m.factory == nil {
-		m.warnNilFactoryOnce(ctx)
-
-		return
-	}
-
-	m.outboxReplayTargetUnknownOnce.Do(func() {
-		builder, err := m.factory.Counter(metrics.Metric{
-			Name:        metricNameOutboxReplayTargetUnknown,
-			Unit:        "1",
-			Description: "Total outbox replay rows blocked because their target was not registered.",
-		})
-		if err != nil {
-			m.logger.Log(ctx, log.LevelError, "streaming: metrics: create outbox_replay_target_unknown counter",
-				log.String("metric", metricNameOutboxReplayTargetUnknown), log.Err(err))
-
-			return
-		}
-
-		m.outboxReplayTargetUnknownCounter = builder
-	})
-
-	if m.outboxReplayTargetUnknownCounter == nil {
-		return
-	}
-
-	builder := m.getOrBuildCounter(&m.outboxReplayTargetUnknownCache, target, m.outboxReplayTargetUnknownCounter, func() map[string]string {
-		return map[string]string{
-			"target": target,
-		}
-	})
-	if builder == nil {
-		return
-	}
-
-	if err := builder.Add(ctx, 1); err != nil {
-		m.logger.Log(ctx, log.LevelWarn, "streaming: metrics: record outbox_replay_target_unknown",
-			log.String("metric", metricNameOutboxReplayTargetUnknown), log.Err(err))
-	}
+	m.addOne(ctx, metricNameOutboxReplayTargetUnknown,
+		"Total outbox replay rows blocked because their target was not registered.",
+		map[string]string{"target": target})
 }
 
 // recordCircuitState sets the streaming_circuit_state gauge. state is one of
 // flagCBClosed / flagCBHalfOpen / flagCBOpen (0/1/2). The instrument has no
-// labels — a single gauge per-process is sufficient.
+// labels — a single gauge per process is sufficient.
 //
-// TRD §7.1 labels this "Int64UpDownCounter (gauge-like)". The underlying
-// metrics factory only exposes Int64Gauge; semantically equivalent (both
-// emit the current value, not a delta).
+// TRD §7.1 labels this "Int64UpDownCounter (gauge-like)"; the recorder only
+// exposes a gauge, which is semantically equivalent here (both emit the
+// current value, not a delta).
 func (m *streamingMetrics) recordCircuitState(ctx context.Context, state int32) {
-	if m == nil {
-		return
-	}
-
-	if m.factory == nil {
-		m.warnNilFactoryOnce(ctx)
-
-		return
-	}
-
-	m.circuitStateOnce.Do(func() {
-		builder, err := m.factory.Gauge(metrics.Metric{
-			Name:        metricNameCircuitState,
-			Unit:        "1",
-			Description: "Circuit breaker state: 0=closed, 1=half-open, 2=open.",
-		})
-		if err != nil {
-			m.logger.Log(ctx, log.LevelError, "streaming: metrics: create circuit_state gauge",
-				log.String("metric", metricNameCircuitState), log.Err(err))
-
-			return
-		}
-
-		m.circuitStateGauge = builder
-	})
-
-	if m.circuitStateGauge == nil {
-		return
-	}
-
-	// circuit_state has no labels, so there is nothing to cache; the
-	// labeled builder would be identical to the base builder.
-	if err := m.circuitStateGauge.Set(ctx, int64(state)); err != nil {
-		m.logger.Log(ctx, log.LevelWarn, "streaming: metrics: record circuit_state",
-			log.String("metric", metricNameCircuitState), log.Err(err))
-	}
+	m.setGauge(ctx, metricNameCircuitState,
+		"Circuit breaker state: 0=closed, 1=half-open, 2=open.", int64(state))
 }
 
 // recordCBRecoveryLiveness sets streaming_cb_recovery_liveness to 1 when the
 // per-Producer recovery goroutine is alive/fresh and 0 when it died or became
 // stale. No labels: this is intentionally one bounded process-local signal.
+//
+// Unlike every other record method this one stays SILENT when no recorder is
+// wired: it is called from the recovery goroutine's tick loop and from
+// producer construction, so routing it through the warn-once path would turn
+// "metrics are off" into a log line on a hot timer — and, worse, would make
+// producer construction depend on the logger not failing.
 func (m *streamingMetrics) recordCBRecoveryLiveness(ctx context.Context, alive bool) {
-	if m == nil {
-		return
-	}
-
-	if m.factory == nil {
-		return
-	}
-
-	m.cbRecoveryLivenessOnce.Do(func() {
-		builder, err := m.factory.Gauge(metrics.Metric{
-			Name:        metricNameCBRecoveryLiveness,
-			Unit:        "1",
-			Description: "Circuit-breaker recovery goroutine liveness: 1=alive, 0=dead or stale.",
-		})
-		if err != nil {
-			m.logger.Log(ctx, log.LevelError, "streaming: metrics: create cb_recovery_liveness gauge",
-				log.String("metric", metricNameCBRecoveryLiveness), log.Err(err))
-
-			return
-		}
-
-		m.cbRecoveryLivenessGauge = builder
-	})
-
-	if m.cbRecoveryLivenessGauge == nil {
+	if m == nil || m.recorder == nil {
 		return
 	}
 
@@ -437,81 +106,6 @@ func (m *streamingMetrics) recordCBRecoveryLiveness(ctx context.Context, alive b
 		value = 1
 	}
 
-	if err := m.cbRecoveryLivenessGauge.Set(ctx, value); err != nil {
-		m.logger.Log(ctx, log.LevelWarn, "streaming: metrics: record cb_recovery_liveness",
-			log.String("metric", metricNameCBRecoveryLiveness), log.Err(err))
-	}
-}
-
-// getOrBuildCounter returns a *CounterBuilder for the given labelset,
-// caching it in cache keyed by key. First-hit path calls buildLabels() to
-// materialize the labels map and builds a new *CounterBuilder via
-// WithLabels; subsequent hits reuse the same builder pointer WITHOUT
-// calling buildLabels — avoiding a per-call map[string]string allocation
-// on the hot path.
-//
-// buildLabels is a closure so callers defer the map allocation to the
-// miss path. Previously the labels map was built on every call, including
-// cache hits, adding ~80 KB/s of GC churn at 10k RPS.
-//
-// Returns nil if WithLabels returned a nil builder (shouldn't happen in
-// practice).
-func (m *streamingMetrics) getOrBuildCounter(
-	cache *labelSetCache,
-	key string,
-	base *metrics.CounterBuilder,
-	buildLabels func() map[string]string,
-) *metrics.CounterBuilder {
-	if cache == nil {
-		return nil
-	}
-
-	if v, ok := cache.m.Load(key); ok {
-		if builder, ok := v.(*metrics.CounterBuilder); ok {
-			return builder
-		}
-	}
-
-	built := base.WithLabels(buildLabels())
-	if built == nil {
-		return nil
-	}
-
-	actual, _ := cache.m.LoadOrStore(key, built)
-	if builder, ok := actual.(*metrics.CounterBuilder); ok {
-		return builder
-	}
-
-	return built
-}
-
-// getOrBuildHistogram mirrors getOrBuildCounter for histogram builders.
-// Same lazy-labels contract: buildLabels() only runs on cache miss.
-func (m *streamingMetrics) getOrBuildHistogram(
-	cache *labelSetCache,
-	key string,
-	base *metrics.HistogramBuilder,
-	buildLabels func() map[string]string,
-) *metrics.HistogramBuilder {
-	if cache == nil {
-		return nil
-	}
-
-	if v, ok := cache.m.Load(key); ok {
-		if builder, ok := v.(*metrics.HistogramBuilder); ok {
-			return builder
-		}
-	}
-
-	built := base.WithLabels(buildLabels())
-	if built == nil {
-		return nil
-	}
-
-	actual, _ := cache.m.LoadOrStore(key, built)
-	if builder, ok := actual.(*metrics.HistogramBuilder); ok {
-		return builder
-	}
-
-	return built
+	m.setGauge(ctx, metricNameCBRecoveryLiveness,
+		"Circuit-breaker recovery goroutine liveness: 1=alive, 0=dead or stale.", value)
 }

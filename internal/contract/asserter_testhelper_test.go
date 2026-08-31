@@ -2,7 +2,11 @@
 
 package contract
 
-import "github.com/LerianStudio/lib-observability/v4/log"
+import (
+	"github.com/LerianStudio/lib-observability/v4/log"
+
+	"github.com/LerianStudio/lib-streaming/v3/obs"
+)
 
 // setContractAsserterLogger overrides the package-default logger that
 // backs every contract-package asserter. Returns the previous logger so
@@ -11,7 +15,7 @@ import "github.com/LerianStudio/lib-observability/v4/log"
 //	prev := setContractAsserterLogger(captureLogger)
 //	t.Cleanup(func() { setContractAsserterLogger(prev) })
 //
-// The underlying var is an atomic.Pointer[log.Logger] (see route.go), so
+// The underlying var is an atomic.Pointer[obs.Logger] (see route.go), so
 // the swap+restore sequence is race-free even when multiple tests in the
 // same package run in parallel against unrelated assertion sites — though
 // any test that swaps the logger and then asserts on capture output MUST
@@ -20,7 +24,7 @@ import "github.com/LerianStudio/lib-observability/v4/log"
 //
 // Package-private test helper. Production callers cannot reach it because
 // it lives in a `_test.go` file (test-only build constraint).
-func setContractAsserterLogger(logger log.Logger) log.Logger {
+func setContractAsserterLogger(logger obs.Logger) obs.Logger {
 	if logger == nil {
 		logger = log.NewNop()
 	}

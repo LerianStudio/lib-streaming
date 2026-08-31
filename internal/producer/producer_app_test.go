@@ -337,7 +337,7 @@ func TestProducer_PostClose_Emit_RecordsCallerErrorMetric(t *testing.T) {
 
 	emitter, err := New(context.Background(), cfg,
 		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
-		WithMetricsFactory(factory),
+		WithMetricsRecorder(factory),
 	)
 	if err != nil {
 		t.Fatalf("New err = %v", err)
@@ -751,10 +751,8 @@ func (s *spyLaunchLogger) Log(_ context.Context, _ int, msg string, _ ...any) {
 	s.msgs = append(s.msgs, msg)
 }
 
-func (s *spyLaunchLogger) With(_ ...any) log.Logger { return s }
-func (s *spyLaunchLogger) WithGroup(_ string) log.Logger  { return s }
-func (s *spyLaunchLogger) Enabled(_ int) bool       { return true }
-func (s *spyLaunchLogger) Sync(_ context.Context) error   { return nil }
+func (s *spyLaunchLogger) Enabled(_ int) bool           { return true }
+func (s *spyLaunchLogger) Sync(_ context.Context) error { return nil }
 
 func (s *spyLaunchLogger) messages() []string {
 	s.mu.Lock()

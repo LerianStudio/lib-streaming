@@ -35,10 +35,8 @@ func (l *warnSpyLogger) Log(_ context.Context, level int, msg string, _ ...any) 
 	l.warns = append(l.warns, msg)
 }
 
-func (l *warnSpyLogger) With(...any) log.Logger { return l }
-func (l *warnSpyLogger) WithGroup(string) log.Logger  { return l }
-func (l *warnSpyLogger) Enabled(int) bool       { return true }
-func (l *warnSpyLogger) Sync(context.Context) error   { return nil }
+func (l *warnSpyLogger) Enabled(int) bool           { return true }
+func (l *warnSpyLogger) Sync(context.Context) error { return nil }
 
 func (l *warnSpyLogger) offTopicWarnings() int {
 	l.mu.Lock()

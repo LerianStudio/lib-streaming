@@ -1,10 +1,9 @@
 package producer
 
 import (
+	"github.com/LerianStudio/lib-streaming/v3/obs"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
-
-	"github.com/LerianStudio/lib-observability/v4/log"
 )
 
 // tracerName is the instrumentation-library name used when the caller did
@@ -86,7 +85,7 @@ func (p *Producer) setEmitSpanAttributes(span trace.Span, event Event, topic, de
 
 	span.SetAttributes(attrs...)
 
-	if p.logger.Enabled(log.LevelDebug) {
+	if p.logger.Enabled(obs.LevelDebug) {
 		span.SetAttributes(attribute.String("messaging.kafka.message.key", p.resolvePartitionKey(event)))
 	}
 }

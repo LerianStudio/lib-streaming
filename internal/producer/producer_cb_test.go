@@ -439,10 +439,8 @@ func (l *oneShotPanicLogger) Log(_ context.Context, _ int, _ string, _ ...any) {
 	// Subsequent calls (like the one from RecoverAndLog) no-op.
 }
 
-func (l *oneShotPanicLogger) With(_ ...any) log.Logger { return l }
-func (l *oneShotPanicLogger) WithGroup(_ string) log.Logger  { return l }
-func (l *oneShotPanicLogger) Enabled(_ int) bool       { return true }
-func (l *oneShotPanicLogger) Sync(_ context.Context) error   { return nil }
+func (l *oneShotPanicLogger) Enabled(_ int) bool           { return true }
+func (l *oneShotPanicLogger) Sync(_ context.Context) error { return nil }
 
 // TestProducer_CBListener_PanicSafe asserts that a logger panic inside the
 // listener does NOT propagate out of OnStateChange — the runtime.RecoverAndLog

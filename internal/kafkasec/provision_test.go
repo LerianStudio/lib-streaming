@@ -291,10 +291,8 @@ func (s *provisionSpyLogger) Log(_ context.Context, level int, msg string, field
 	s.entries = append(s.entries, provisionSpyEntry{level: level, msg: msg, fields: indexed})
 }
 
-func (s *provisionSpyLogger) With(...any) log.Logger { return s }
-func (s *provisionSpyLogger) WithGroup(string) log.Logger  { return s }
-func (s *provisionSpyLogger) Enabled(int) bool       { return true }
-func (s *provisionSpyLogger) Sync(context.Context) error   { return nil }
+func (s *provisionSpyLogger) Enabled(int) bool           { return true }
+func (s *provisionSpyLogger) Sync(context.Context) error { return nil }
 
 // TestLogProvisionVerdicts_Posture pins what an operator actually sees. The
 // message text is load-bearing, not decoration: an unauthorized creation is the

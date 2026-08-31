@@ -6,10 +6,11 @@ import (
 	"math"
 	"time"
 
+	"github.com/LerianStudio/lib-streaming/v3/obs"
+
 	"github.com/twmb/franz-go/pkg/kgo"
 
 	"github.com/LerianStudio/lib-commons/v6/commons/circuitbreaker"
-	"github.com/LerianStudio/lib-observability/v4/log"
 	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
 	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
 	"github.com/LerianStudio/lib-streaming/v3/internal/transport/kafka"
@@ -126,7 +127,7 @@ func NewProducerMulti(
 		cbConfig:           cbCfg,
 		tracer:             resolveTracer(resolvedOpts.tracer),
 		logger:             logger,
-		metrics:            newStreamingMetrics(resolvedOpts.metricsFactory, logger),
+		metrics:            newStreamingMetrics(resolvedOpts.metricsRecorder, logger),
 		producerID:         generateProducerID(),
 		partFn:             resolvedOpts.partitionKeyFn,
 		closeTimeout:       closeTimeout,
@@ -262,7 +263,7 @@ func NewProducerMulti(
 // distinguish "unknown target", "unknown definition", "kind mismatch",
 // "commands queue named by hand", and "orphan definition" without parsing
 // wrapped sentinels.
-func validateRoutesAgainstTargets(ctx context.Context, logger log.Logger, routes contract.RouteTable, targets []TargetSpec, catalog contract.Catalog, source string) error {
+func validateRoutesAgainstTargets(ctx context.Context, logger obs.Logger, routes contract.RouteTable, targets []TargetSpec, catalog contract.Catalog, source string) error {
 	targetByName := make(map[string]contract.TransportKind, len(targets))
 	for _, spec := range targets {
 		targetByName[spec.Name] = spec.Kind
@@ -466,7 +467,7 @@ type TransportAdapterFactory func(ctx context.Context, opts TransportAdapterOpti
 type TransportAdapterOptions struct {
 	Name    string
 	Brokers []string
-	Logger  log.Logger
+	Logger  obs.Logger
 	// Extra carries caller-supplied configuration data forwarded by the
 	// public Builder. Factories type-assert on the expected concrete type.
 	Extra any

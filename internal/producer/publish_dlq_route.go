@@ -2,11 +2,11 @@ package producer
 
 import (
 	"context"
+	"github.com/LerianStudio/lib-streaming/v3/obs"
 	"slices"
 	"strconv"
 	"time"
 
-	"github.com/LerianStudio/lib-observability/v4/log"
 	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
 	"github.com/LerianStudio/lib-streaming/v3/internal/dlqheader"
 	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
@@ -87,12 +87,12 @@ func (p *Producer) publishRouteDLQ(
 		// No DLQ configured and no derivable default — best-effort no-op.
 		// Log once at INFO level so operators can spot route-level DLQ
 		// gaps without alerting noise on every failed emit.
-		p.logger.Log(ctx, log.LevelInfo,
+		p.logger.Log(ctx, obs.LevelInfo,
 			"streaming: route DLQ skipped — no destination resolvable for non-Kafka transport",
-			log.String("producer_id", p.producerID),
-			log.String("route_key", route.Key),
-			log.String("target", route.Target),
-			log.String("transport", string(route.Destination.Kind)),
+			"producer_id", p.producerID,
+			"route_key", route.Key,
+			"target", route.Target,
+			"transport", string(route.Destination.Kind),
 		)
 
 		return false, nil
@@ -101,11 +101,11 @@ func (p *Producer) publishRouteDLQ(
 	if err := dlqDest.Validate(); err != nil {
 		// Configuration bug: surface in logs + counter, do not propagate.
 		p.metrics.recordDLQFailed(ctx, sourceLabel)
-		p.logger.Log(ctx, log.LevelError, "streaming: route DLQ destination invalid",
-			log.String("producer_id", p.producerID),
-			log.String("route_key", route.Key),
-			log.String("target", route.Target),
-			log.String("error", err.Error()),
+		p.logger.Log(ctx, obs.LevelError, "streaming: route DLQ destination invalid",
+			"producer_id", p.producerID,
+			"route_key", route.Key,
+			"target", route.Target,
+			"error", err.Error(),
 		)
 
 		return false, err
@@ -162,13 +162,13 @@ func (p *Producer) publishRouteDLQ(
 
 	if err != nil {
 		p.metrics.recordDLQFailed(ctx, sourceLabel)
-		p.logger.Log(ctx, log.LevelError, "streaming: route DLQ publish failed",
-			log.String("producer_id", p.producerID),
-			log.String("route_key", route.Key),
-			log.String("target", route.Target),
-			log.String("error_class", string(cls)),
-			log.String("dlq_destination", describeDestination(dlqDest)),
-			log.String("error", sanitizeBrokerURL(err.Error())),
+		p.logger.Log(ctx, obs.LevelError, "streaming: route DLQ publish failed",
+			"producer_id", p.producerID,
+			"route_key", route.Key,
+			"target", route.Target,
+			"error_class", string(cls),
+			"dlq_destination", describeDestination(dlqDest),
+			"error", sanitizeBrokerURL(err.Error()),
 		)
 
 		return false, err

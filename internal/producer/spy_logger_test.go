@@ -40,10 +40,8 @@ func (s *spyLogger) Log(_ context.Context, level int, msg string, fields ...any)
 	s.entries = append(s.entries, spyEntry{level: level, msg: msg, fields: indexed})
 }
 
-func (s *spyLogger) With(_ ...any) log.Logger { return s }
-func (s *spyLogger) WithGroup(_ string) log.Logger  { return s }
-func (s *spyLogger) Enabled(_ int) bool       { return true }
-func (s *spyLogger) Sync(_ context.Context) error   { return nil }
+func (s *spyLogger) Enabled(_ int) bool           { return true }
+func (s *spyLogger) Sync(_ context.Context) error { return nil }
 
 // firstErrorEntry returns the first ERROR-level entry whose message
 // contains the given substring. Returns nil when no such entry exists.

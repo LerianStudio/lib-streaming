@@ -198,7 +198,7 @@ func TestConsumerOptionPassthroughs(t *testing.T) {
 
 	opts := []ConsumerOption{
 		WithConsumerLogger(log.NewNop()),
-		WithConsumerMetricsFactory(&metrics.MetricsFactory{}),
+		WithConsumerMetricsRecorder(&metrics.MetricsFactory{}),
 		WithConsumerTracer(noop.NewTracerProvider().Tracer("t")),
 	}
 

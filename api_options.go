@@ -4,10 +4,10 @@ import (
 	"crypto/tls"
 	"time"
 
+	"github.com/LerianStudio/lib-streaming/v3/obs"
+
 	"github.com/LerianStudio/lib-commons/v6/commons/circuitbreaker"
 	"github.com/LerianStudio/lib-commons/v6/commons/outbox"
-	"github.com/LerianStudio/lib-observability/v4/log"
-	"github.com/LerianStudio/lib-observability/v4/metrics"
 	"github.com/twmb/franz-go/pkg/sasl"
 	"go.opentelemetry.io/otel/trace"
 
@@ -18,11 +18,15 @@ import (
 type EmitterOption = producer.EmitterOption
 
 // WithLogger sets the structured logger used by the producer.
-func WithLogger(l log.Logger) EmitterOption { return producer.WithLogger(l) }
+//
+// Any three-method logger goes in: one from lib-observability, one from
+// lib-commons, or one declared in your own package that imports neither.
+func WithLogger(l obs.Logger) EmitterOption { return producer.WithLogger(l) }
 
-// WithMetricsFactory wires the metrics factory used to register streaming instruments.
-func WithMetricsFactory(f *metrics.MetricsFactory) EmitterOption {
-	return producer.WithMetricsFactory(f)
+// WithMetricsRecorder wires the sink for the streaming instruments.
+// lib-observability's *metrics.MetricsFactory satisfies it directly.
+func WithMetricsRecorder(f obs.MetricsRecorder) EmitterOption {
+	return producer.WithMetricsRecorder(f)
 }
 
 // WithTracer overrides the tracer used for streaming emit spans.

@@ -6,6 +6,8 @@ import (
 	"math"
 	"time"
 
+	"github.com/LerianStudio/lib-streaming/v3/obs"
+
 	"github.com/twmb/franz-go/pkg/kadm"
 	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kgo"
@@ -188,7 +190,7 @@ type provisionVerdict struct {
 //
 // Kafka-only by construction: it takes a *kgo.Client, so the SQS, RabbitMQ, and
 // EventBridge adapters are untouched.
-func EnsureTopics(ctx context.Context, client *kgo.Client, logger log.Logger, topics ...string) {
+func EnsureTopics(ctx context.Context, client *kgo.Client, logger obs.Logger, topics ...string) {
 	cfg := LoadProvisionConfig()
 	if !cfg.Enabled || client == nil || len(topics) == 0 {
 		return
@@ -272,22 +274,22 @@ func classifyCreateErr(err error) provisionOutcome {
 //
 // Error text is passed through contract.SanitizeBrokerURL: a dial failure
 // renders the broker address, which may carry SASL credentials.
-func logProvisionVerdicts(ctx context.Context, logger log.Logger, cfg ProvisionConfig, verdicts []provisionVerdict) {
+func logProvisionVerdicts(ctx context.Context, logger obs.Logger, cfg ProvisionConfig, verdicts []provisionVerdict) {
 	for _, verdict := range verdicts {
 		switch verdict.Outcome {
 		case outcomeAlreadyExists:
 			continue
 
 		case outcomeCreated:
-			logger.Log(ctx, log.LevelInfo,
+			logger.Log(ctx, obs.LevelInfo,
 				"streaming: created Kafka topic automatically",
-				log.String("topic", verdict.Topic),
-				log.Int("partitions", int(cfg.Partitions)),
-				log.Int("replication_factor", int(cfg.ReplicationFactor)),
+				"topic", verdict.Topic,
+				"partitions", int(cfg.Partitions),
+				"replication_factor", int(cfg.ReplicationFactor),
 			)
 
 		case outcomeUnauthorized:
-			logger.Log(ctx, log.LevelWarn,
+			logger.Log(ctx, obs.LevelWarn,
 				"streaming: cannot auto-create Kafka topic — this credential lacks CreateTopics on it. "+
 					"Grant CREATE on the named topic (or on the CLUSTER) to the principal this service authenticates as, "+
 					"or pre-provision the topic through IaC and set STREAMING_TOPIC_AUTO_PROVISION=false to silence this. "+
@@ -295,22 +297,22 @@ func logProvisionVerdicts(ctx context.Context, logger log.Logger, cfg ProvisionC
 					"the error to the caller until it exists. If it is one this service CONSUMES, there is no later "+
 					"error and no metric — a missing topic looks exactly like an idle one, so this log line is the "+
 					"only signal and the service will report healthy while consuming nothing",
-				log.String("topic", verdict.Topic),
-				log.String("required_acl", "CREATE on TOPIC "+verdict.Topic),
-				log.String("opt_out", envAutoProvision+"=false"),
-				log.Err(sanitized(verdict.Err)),
+				"topic", verdict.Topic,
+				"required_acl", "CREATE on TOPIC "+verdict.Topic,
+				"opt_out", envAutoProvision+"=false",
+				"error", sanitized(verdict.Err),
 			)
 
 		default:
-			logger.Log(ctx, log.LevelWarn,
+			logger.Log(ctx, obs.LevelWarn,
 				"streaming: Kafka topic auto-creation failed — startup continues. A publish to this topic will "+
 					"fail and return the error to the caller until it exists; a SUBSCRIPTION to it fails silently "+
 					"instead (a missing topic is indistinguishable from an idle one), so this log line is the only "+
 					"signal on the consume side. Create the topic manually, or set "+
 					"STREAMING_TOPIC_AUTO_PROVISION=false if this environment provisions topics through IaC",
-				log.String("topic", verdict.Topic),
-				log.String("opt_out", envAutoProvision+"=false"),
-				log.Err(sanitized(verdict.Err)),
+				"topic", verdict.Topic,
+				"opt_out", envAutoProvision+"=false",
+				"error", sanitized(verdict.Err),
 			)
 		}
 	}

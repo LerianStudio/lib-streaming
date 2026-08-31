@@ -443,7 +443,7 @@ func TestProducer_Emit_CircuitOpen_OutboxFailure_MetricsOutboxFailed(t *testing.
 		context.Background(),
 		cfg,
 		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
-		WithMetricsFactory(factory),
+		WithMetricsRecorder(factory),
 		WithCircuitBreakerManager(fakeMgr),
 		WithOutboxRepository(fakeRepo),
 	)

@@ -642,7 +642,7 @@ func TestNewProducerMulti_AllOptionalFail_ReturnsNilButRecordsOptional(t *testin
 		catalog,
 		WithLogger(log.NewNop()),
 		WithCatalog(catalog),
-		WithMetricsFactory(factory),
+		WithMetricsRecorder(factory),
 	)
 	if err != nil {
 		t.Fatalf("NewProducerMulti() error = %v", err)
@@ -783,7 +783,7 @@ func TestNewProducerMulti_OptionalFailureRecordsMetricObservations(t *testing.T)
 		catalog,
 		WithLogger(log.NewNop()),
 		WithCatalog(catalog),
-		WithMetricsFactory(factory),
+		WithMetricsRecorder(factory),
 	)
 	if err != nil {
 		t.Fatalf("NewProducerMulti() error = %v", err)

@@ -2,9 +2,9 @@ package producer
 
 import (
 	"context"
+	"github.com/LerianStudio/lib-streaming/v3/obs"
 
 	libCommons "github.com/LerianStudio/lib-commons/v6/commons"
-	"github.com/LerianStudio/lib-observability/v4/log"
 )
 
 // Compile-time assertion: *Producer must satisfy commons.App. A missing
@@ -85,7 +85,7 @@ func (p *Producer) RunContext(ctx context.Context, launcher *libCommons.Launcher
 	}
 
 	if launcher != nil && launcher.Logger != nil {
-		launcher.Logger.Log(ctx, log.LevelInfo, "streaming producer started")
+		launcher.Logger.Log(ctx, obs.LevelInfo, "streaming producer started")
 	}
 
 	select {
@@ -108,7 +108,7 @@ func (p *Producer) RunContext(ctx context.Context, launcher *libCommons.Launcher
 	err := p.CloseContext(closeCtx)
 
 	if launcher != nil && launcher.Logger != nil {
-		launcher.Logger.Log(ctx, log.LevelInfo, "streaming producer stopped")
+		launcher.Logger.Log(ctx, obs.LevelInfo, "streaming producer stopped")
 	}
 
 	return err

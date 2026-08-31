@@ -7,6 +7,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/LerianStudio/lib-streaming/v3/obs"
+
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
@@ -73,10 +75,10 @@ type Producer struct {
 	// logger is the structured logger. Never nil; New substitutes
 	// log.NewNop() when none supplied, so internal log sites can call
 	// Log(ctx, ...) unguarded.
-	logger log.Logger
+	logger obs.Logger
 
 	// metrics holds lazy-initialised OTEL instruments. Never nil after
-	// NewProducer; when WithMetricsFactory is omitted (or passed nil) the
+	// NewProducer; when WithMetricsRecorder is omitted (or passed nil) the
 	// streamingMetrics still wraps a nil factory and degrades record* calls
 	// to a single WARN + silent no-ops. Kept non-nil so Emit can call
 	// p.metrics.recordEmitted unconditionally.

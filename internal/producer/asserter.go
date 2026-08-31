@@ -3,6 +3,8 @@ package producer
 import (
 	"context"
 
+	"github.com/LerianStudio/lib-streaming/v3/obs"
+
 	"github.com/LerianStudio/lib-observability/v4/assert"
 	"github.com/LerianStudio/lib-observability/v4/log"
 )
@@ -40,7 +42,7 @@ const asserterComponent = "streaming"
 // log.NewNop() so assertion calls at nil-guarded boundaries still return a
 // usable asserter rather than panicking.
 func (p *Producer) newAsserter(operation string) *assert.Asserter {
-	logger := log.NewNop()
+	var logger obs.Logger = log.NewNop()
 	if p != nil && p.logger != nil {
 		logger = p.logger
 	}
@@ -63,7 +65,7 @@ func (p *Producer) newAsserter(operation string) *assert.Asserter {
 // Nil logger collapses to log.NewNop() so the metric layer still fires
 // (after the consuming service initializes assertion metrics) but the log
 // layer stays silent until a logger is wired.
-func newAsserterForLogger(logger log.Logger, operation string) *assert.Asserter {
+func newAsserterForLogger(logger obs.Logger, operation string) *assert.Asserter {
 	if logger == nil {
 		logger = log.NewNop()
 	}

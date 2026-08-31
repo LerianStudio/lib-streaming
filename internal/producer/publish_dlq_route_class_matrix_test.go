@@ -394,7 +394,7 @@ func TestPublishRouteDLQ_PublishFailIncrementsCounter(t *testing.T) {
 		routes,
 		catalog,
 		WithLogger(log.NewNop()),
-		WithMetricsFactory(factory),
+		WithMetricsRecorder(factory),
 	)
 	if err != nil {
 		t.Fatalf("NewProducerMulti() error = %v", err)

@@ -9,7 +9,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/LerianStudio/lib-observability/v4/log"
 	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
 )
 
@@ -33,10 +32,8 @@ func (c *captureBuilderLogger) Log(_ context.Context, _ int, msg string, _ ...an
 	c.entries = append(c.entries, msg)
 }
 
-func (c *captureBuilderLogger) With(_ ...any) log.Logger { return c }
-func (c *captureBuilderLogger) WithGroup(_ string) log.Logger  { return c }
-func (c *captureBuilderLogger) Enabled(_ int) bool       { return true }
-func (c *captureBuilderLogger) Sync(_ context.Context) error   { return nil }
+func (c *captureBuilderLogger) Enabled(_ int) bool           { return true }
+func (c *captureBuilderLogger) Sync(_ context.Context) error { return nil }
 
 func (c *captureBuilderLogger) containsMessage(needle string) bool {
 	c.mu.Lock()
