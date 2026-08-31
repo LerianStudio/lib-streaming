@@ -91,7 +91,7 @@
 //	    TLSFromConfig(cfg).  // applies STREAMING_TLS_* (no-op when TLS disabled)
 //	    SASLFromConfig(cfg). // applies STREAMING_SASL_* (no-op when mechanism empty)
 //	    Logger(logger).
-//	    MetricsFactory(metricsRecorder).
+//	    MetricsRecorder(metricsRecorder).
 //	    Tracer(tracer).
 //	    CircuitBreakerManager(cbManager).
 //	    OutboxRepository(outboxRepo).
