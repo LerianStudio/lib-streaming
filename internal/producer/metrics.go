@@ -55,7 +55,7 @@ const labelTopic = "topic"
 // The recorder flattens instrument creation into the record call, so this
 // type holds no builders, no per-instrument sync.Once and no label-set cache:
 // caching instruments is the recorder implementation's job, and
-// lib-observability's obs.MetricsRecorder already does it.
+// lib-observability's *metrics.MetricsFactory already does it.
 //
 // Nil-safety rules, enforced by the three helpers below:
 //   - nil receiver   -> no-op, no panic
