@@ -219,4 +219,10 @@ grep -rl 'github.com/LerianStudio/lib-streaming/v3' \
 gofmt -l . && go build ./... && go test -tags unit -count=1 ./...
 ```
 
-Consumers change one import line per file and nothing else.
+The rename itself costs a consumer one import line per file. It is not the
+whole v4 migration: the renamed metrics entry points
+(`WithMetricsFactory` / `WithConsumerMetricsFactory` /
+`(*Builder).MetricsFactory` -> `…MetricsRecorder`) still have to be updated at
+each call site, and a consumer that implements its own logger has to widen the
+`Log` and `Enabled` signatures. See sections 3 and "If you implement a
+logger".

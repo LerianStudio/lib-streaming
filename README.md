@@ -104,8 +104,8 @@ for _, warning := range warnings {
     logger.Log(ctx, log.LevelWarn, warning)
 }
 
-runtime.InitPanicMetrics(metricsFactory)
-assert.InitAssertionMetrics(metricsFactory)
+runtime.InitPanicMetrics(metricsRecorder)
+assert.InitAssertionMetrics(metricsRecorder)
 // Scrubs panic value strings and truncates stack traces before they hit
 // log fields, span events, and ErrorReporter payloads — guards against
 // PII leakage from arbitrary panic arguments and OTel attribute bloat.
