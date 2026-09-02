@@ -135,7 +135,9 @@ func TestPublicAPI_DoesNotMentionLibObservability(t *testing.T) {
 
 		// Generated protobuf stubs and vendored trees are not
 		// hand-written API surface. They are indexed, not reported.
-		if dir == "billing" || strings.HasPrefix(dir, "billing/") || allowedPackages[dir] {
+		if dir == "billing" || strings.HasPrefix(dir, "billing/") ||
+			dir == "vendor" || strings.HasPrefix(dir, "vendor/") ||
+			allowedPackages[dir] {
 			return nil
 		}
 
