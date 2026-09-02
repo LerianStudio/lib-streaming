@@ -10,7 +10,7 @@ import (
 
 	"github.com/twmb/franz-go/pkg/sasl"
 
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
 )
 
 // adminTestPassword is the credential every case below feeds in, so each
