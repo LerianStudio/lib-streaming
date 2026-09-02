@@ -87,7 +87,7 @@ func handlerQuarantineCause(err error) quarantineCause {
 }
 
 // Consumer metric names (free-form labels kept off to bound cardinality; see
-// docs/design/consumer.md §6). Recorded best-effort — a metrics factory is
+// docs/design/consumer.md §6). Recorded best-effort — a metrics recorder is
 // optional, so recordMetric no-ops when none is wired.
 const (
 	metricDLQTotal           = "streaming_consumer_dlq_total"
@@ -1348,7 +1348,7 @@ func (c *consumerRuntime) alertHalted(ctx context.Context, halted map[topicParti
 	}
 }
 
-// recordMetric increments a counter best-effort. A metrics factory is optional;
+// recordMetric increments a counter best-effort. A metrics recorder is optional;
 // when none is wired (tests, disabled telemetry) this is a no-op. Errors from
 // the factory are swallowed — a metric failure must never break the poll loop.
 func (c *consumerRuntime) recordMetric(ctx context.Context, name string) {

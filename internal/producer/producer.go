@@ -79,7 +79,7 @@ type Producer struct {
 
 	// metrics holds lazy-initialised OTEL instruments. Never nil after
 	// NewProducer; when WithMetricsRecorder is omitted (or passed nil) the
-	// streamingMetrics still wraps a nil factory and degrades record* calls
+	// streamingMetrics still wraps a nil recorder and degrades record* calls
 	// to a single WARN + silent no-ops. Kept non-nil so Emit can call
 	// p.metrics.recordEmitted unconditionally.
 	metrics *streamingMetrics

@@ -200,7 +200,7 @@ func TestMetrics_LazyInit_NilFactory_NoPanic_WarnsOnce(t *testing.T) {
 
 	spy.mu.Lock()
 	for _, e := range spy.entries {
-		if e.level == log.LevelWarn && strings.Contains(e.msg, "metrics factory is nil") {
+		if e.level == log.LevelWarn && strings.Contains(e.msg, "metrics recorder is nil") {
 			warnCount++
 		}
 	}

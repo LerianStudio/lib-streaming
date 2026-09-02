@@ -99,7 +99,7 @@ func newStreamingMetrics(recorder obs.MetricsRecorder, logger obs.Logger) *strea
 func (m *streamingMetrics) warnNilRecorderOnce(ctx context.Context) {
 	m.warnOnce.Do(func() {
 		m.logger.Log(ctx, obs.LevelWarn,
-			"streaming: metrics factory is nil; metrics are disabled")
+			"streaming: metrics recorder is nil; metrics are disabled")
 	})
 }
 
