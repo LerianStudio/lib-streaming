@@ -104,9 +104,13 @@ type index struct {
 	// intra-module import from a third-party one.
 	modulePath string
 	// pkgDir maps an import path of this module to its module-relative
-	// directory, keyed by the package name actually declared there so a
-	// package whose name differs from its directory still resolves.
+	// directory.
 	pkgDir map[string]string
+	// pkgName maps an import path of this module to the package name
+	// actually declared there. Go only conventionally ties that name to the
+	// last path segment, so an unaliased import of such a package is
+	// referenced by a selector the path cannot predict.
+	pkgName map[string]string
 	// decls holds every package-level type declaration, keyed by
 	// module-relative directory then by type name.
 	decls map[string]map[string]typeDecl
@@ -234,11 +238,34 @@ func newIndex(root string) (*index, error) {
 	idx := &index{
 		modulePath: string(match[1]),
 		pkgDir:     map[string]string{},
+		pkgName:    map[string]string{},
 		decls:      map[string]map[string]typeDecl{},
 		leaks:      map[string]map[string]string{},
 	}
 
 	fset := token.NewFileSet()
+
+	// Learn every in-module package's declared name before resolving any
+	// import table, because an unaliased import of a package whose name
+	// differs from its directory is referenced by that name, not by the
+	// path's last segment. PackageClauseOnly stops at the package clause,
+	// so this pre-walk costs a header read per file.
+	err = walkGoFiles(root, func(path, rel string) error {
+		file, parseErr := parser.ParseFile(fset, path, nil, parser.PackageClauseOnly)
+		if parseErr != nil {
+			return parseErr
+		}
+
+		dir := filepath.ToSlash(filepath.Dir(rel))
+		importPath := idx.importPath(dir)
+		idx.pkgDir[importPath] = dir
+		idx.pkgName[importPath] = file.Name.Name
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
 
 	err = walkGoFiles(root, func(path, rel string) error {
 		file, parseErr := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
@@ -246,9 +273,7 @@ func newIndex(root string) (*index, error) {
 			return parseErr
 		}
 
-		dir := filepath.ToSlash(filepath.Dir(rel))
-		idx.pkgDir[idx.importPath(dir, file.Name.Name)] = dir
-		idx.collectTypeDecls(dir, file)
+		idx.collectTypeDecls(filepath.ToSlash(filepath.Dir(rel)), file)
 
 		return nil
 	})
@@ -262,25 +287,19 @@ func newIndex(root string) (*index, error) {
 }
 
 // importPath is the import path a package in dir is reached by. The directory
-// is authoritative except for the package name, which Go allows to differ.
-func (idx *index) importPath(dir, pkgName string) string {
+// alone determines it; the declared package name does not participate, which
+// is exactly why pkgName has to be indexed separately.
+func (idx *index) importPath(dir string) string {
 	if dir == "." {
 		return idx.modulePath
 	}
 
-	path := idx.modulePath + "/" + dir
-	if filepath.Base(dir) == pkgName {
-		return path
-	}
-
-	// A package whose name differs from its directory is still imported by
-	// path; record the path so selector resolution finds it either way.
-	return path
+	return idx.modulePath + "/" + dir
 }
 
 // collectTypeDecls records every package-level type declaration in file.
 func (idx *index) collectTypeDecls(dir string, file *ast.File) {
-	imports := fileImports(file)
+	imports := idx.fileImports(file)
 
 	for _, decl := range file.Decls {
 		gen, ok := decl.(*ast.GenDecl)
@@ -373,7 +392,7 @@ func (idx *index) scanFile(path, rel, dir string) ([]violation, error) {
 		return nil, err
 	}
 
-	imports := fileImports(file)
+	imports := idx.fileImports(file)
 
 	var violations []violation
 
@@ -489,7 +508,16 @@ func symbolName(decl *ast.FuncDecl) string {
 
 // fileImports maps every import of file to its path under the local name it is
 // referenced by. Blank and dot imports contribute no name to resolve against.
-func fileImports(file *ast.File) map[string]string {
+//
+// An unaliased import is referenced by the name in the imported package's
+// package clause, which Go only conventionally ties to the last path segment.
+// Guessing the segment mis-keys every in-module package that breaks the
+// convention - this module has two, `billing/.../v1` declaring `billingv1` and
+// the root declaring `streaming` under a `/v3` path - and a mis-keyed entry
+// makes the selector resolve to the empty path, i.e. silently to no violation.
+// So for imports of this module the declared name comes from the index.
+// Third-party paths are not indexed and keep the segment guess.
+func (idx *index) fileImports(file *ast.File) map[string]string {
 	imports := map[string]string{}
 
 	for _, imp := range file.Imports {
@@ -499,6 +527,9 @@ func fileImports(file *ast.File) map[string]string {
 		}
 
 		name := path[strings.LastIndex(path, "/")+1:]
+		if declared, ok := idx.pkgName[path]; ok {
+			name = declared
+		}
 
 		if imp.Name != nil {
 			if imp.Name.Name == "_" || imp.Name.Name == "." {
