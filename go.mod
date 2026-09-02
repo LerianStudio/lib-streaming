@@ -41,8 +41,8 @@ require (
 require (
 	dario.cat/mergo v1.0.2 // indirect
 	github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c // indirect
-	github.com/LerianStudio/lib-commons/v6 v6.4.0
-	github.com/LerianStudio/lib-observability/v4 v4.0.0
+	github.com/LerianStudio/lib-commons/v6 v6.9.0-beta.2
+	github.com/LerianStudio/lib-observability/v4 v4.0.0-beta.1
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/andybalholm/brotli v1.2.2 // indirect
 	github.com/bxcodec/dbresolver/v2 v2.3.0 // indirect
@@ -134,13 +134,3 @@ require (
 	google.golang.org/protobuf v1.36.11
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-// lib-observability v4 is not published yet. Point at the local worktree that
-// carries the universal-signature boundary (PR #61).
-replace github.com/LerianStudio/lib-observability/v4 => /home/rodrigodh/Development/lo-v4
-
-// lib-commons v7 is not published yet. lib-streaming hands its logger to
-// circuitbreaker.NewManager, and only v7 accepts a universal logger there:
-// v6.4.0 still names lib-observability/v2's log.Logger, which no v4 logger
-// satisfies. lib-streaming v4 cannot ship before lib-commons v7.
-replace github.com/LerianStudio/lib-commons/v6 => /home/rodrigodh/Development/lc-v7-on-v4
