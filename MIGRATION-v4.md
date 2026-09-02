@@ -204,16 +204,16 @@ Run it as a separate, reviewable-by-inspection commit:
 
 ```bash
 # 1. the module declaration
-sed -i 's|^module github.com/LerianStudio/lib-streaming/v3$|module github.com/LerianStudio/lib-streaming/v4|' go.mod
+sed -i 's|^module github.com/LerianStudio/lib-streaming/v4$|module github.com/LerianStudio/lib-streaming/v4|' go.mod
 
 # 2. every self-import in Go source (and the doc comments that name them)
-grep -rl 'github.com/LerianStudio/lib-streaming/v3' --include='*.go' . \
-  | xargs sed -i 's|github.com/LerianStudio/lib-streaming/v3|github.com/LerianStudio/lib-streaming/v4|g'
+grep -rl 'github.com/LerianStudio/lib-streaming/v4' --include='*.go' . \
+  | xargs sed -i 's|github.com/LerianStudio/lib-streaming/v4|github.com/LerianStudio/lib-streaming/v4|g'
 
 # 3. docs, examples and generated protobuf go_package options
-grep -rl 'github.com/LerianStudio/lib-streaming/v3' \
+grep -rl 'github.com/LerianStudio/lib-streaming/v4' \
     --include='*.md' --include='*.yaml' --include='*.yml' --include='*.proto' . \
-  | xargs sed -i 's|github.com/LerianStudio/lib-streaming/v3|github.com/LerianStudio/lib-streaming/v4|g'
+  | xargs sed -i 's|github.com/LerianStudio/lib-streaming/v4|github.com/LerianStudio/lib-streaming/v4|g'
 
 # 4. verify
 gofmt -l . && go build ./... && go test -tags unit -count=1 ./...

@@ -78,7 +78,7 @@ Improvements:
 
 ## [Unreleased] — v3.0.0 (event-streaming contract redesign)
 
-Module path is now `github.com/LerianStudio/lib-streaming/v3`.
+Module path is now `github.com/LerianStudio/lib-streaming/v4`.
 
 This is a full break with the v2 wire contract. Update every import path, and
 read the migration notes below before deploying: v3 producers and v2 consumers

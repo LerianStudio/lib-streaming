@@ -13,10 +13,10 @@ import (
 	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kgo"
 
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v3/internal/dlqheader"
-	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
-	"github.com/LerianStudio/lib-streaming/v3/internal/transport/fake"
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/dlqheader"
+	"github.com/LerianStudio/lib-streaming/v4/internal/transport"
+	"github.com/LerianStudio/lib-streaming/v4/internal/transport/fake"
 )
 
 // cappedAdapter models a real broker's per-record size limit: any message whose

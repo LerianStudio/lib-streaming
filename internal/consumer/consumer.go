@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/LerianStudio/lib-streaming/v3/obs"
+	"github.com/LerianStudio/lib-streaming/v4/obs"
 
 	"github.com/twmb/franz-go/pkg/kgo"
 
@@ -17,9 +17,9 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
-	"github.com/LerianStudio/lib-streaming/v3/internal/transport/kafka"
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/transport"
+	"github.com/LerianStudio/lib-streaming/v4/internal/transport/kafka"
 )
 
 // DLQ cause kinds, stamped on x-lerian-dlq-cause-kind. Low-cardinality by

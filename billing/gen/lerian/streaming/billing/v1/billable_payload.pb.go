@@ -3,7 +3,7 @@
 // "lerian.streaming.billing.recorded-value".
 //
 // This schema is the protobuf successor to the shipped Go BillablePayload
-// (github.com/LerianStudio/lib-streaming/v3/billing) and mirrors its JSON field
+// (github.com/LerianStudio/lib-streaming/v4/billing) and mirrors its JSON field
 // semantics one-to-one so producers and consumers share a single, registry-
 // enforced source of truth. Field names, numbers, and optionality below ARE the
 // wire contract — do not renumber or repurpose an existing field. New fields
@@ -245,7 +245,7 @@ const file_lerian_streaming_billing_v1_billable_payload_proto_rawDesc = "" +
 	"\fstring_value\x18\x01 \x01(\tH\x00R\vstringValue\x12#\n" +
 	"\fnumber_value\x18\x02 \x01(\x01H\x00R\vnumberValueB\a\n" +
 	"\x05valueB\xa2\x02\n" +
-	"\x1fcom.lerian.streaming.billing.v1B\x14BillablePayloadProtoP\x01ZZgithub.com/LerianStudio/lib-streaming/v3/billing/gen/lerian/streaming/billing/v1;billingv1\xa2\x02\x03LSB\xaa\x02\x1bLerian.Streaming.Billing.V1\xca\x02\x1bLerian\\Streaming\\Billing\\V1\xe2\x02'Lerian\\Streaming\\Billing\\V1\\GPBMetadata\xea\x02\x1eLerian::Streaming::Billing::V1b\x06proto3"
+	"\x1fcom.lerian.streaming.billing.v1B\x14BillablePayloadProtoP\x01ZZgithub.com/LerianStudio/lib-streaming/v4/billing/gen/lerian/streaming/billing/v1;billingv1\xa2\x02\x03LSB\xaa\x02\x1bLerian.Streaming.Billing.V1\xca\x02\x1bLerian\\Streaming\\Billing\\V1\xe2\x02'Lerian\\Streaming\\Billing\\V1\\GPBMetadata\xea\x02\x1eLerian::Streaming::Billing::V1b\x06proto3"
 
 var (
 	file_lerian_streaming_billing_v1_billable_payload_proto_rawDescOnce sync.Once

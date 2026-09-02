@@ -11,8 +11,8 @@ import (
 
 	"github.com/LerianStudio/lib-observability/v4/log"
 
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v3/internal/transport/fake"
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/transport/fake"
 )
 
 type singleEnvelopeTransactionalWriter struct {

@@ -6,8 +6,8 @@ import (
 	"context"
 	"testing"
 
-	streaming "github.com/LerianStudio/lib-streaming/v3"
-	"github.com/LerianStudio/lib-streaming/v3/internal/transport/fake"
+	streaming "github.com/LerianStudio/lib-streaming/v4"
+	"github.com/LerianStudio/lib-streaming/v4/internal/transport/fake"
 )
 
 // fakeSQSClient is a test double for streaming.SQSPublisherClient that

@@ -14,9 +14,9 @@ import (
 	"github.com/twmb/franz-go/pkg/kfake"
 
 	"github.com/LerianStudio/lib-observability/v4/log"
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v3/internal/transport/fake"
-	"github.com/LerianStudio/lib-streaming/v3/internal/transport/kafka"
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/transport/fake"
+	"github.com/LerianStudio/lib-streaming/v4/internal/transport/kafka"
 )
 
 // --- GROUP G: streaming benchmarks. ---

@@ -3,7 +3,7 @@ package consumer
 import (
 	"slices"
 
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
 )
 
 // ownedTopics returns the topics THIS consumer is entitled to create, derived

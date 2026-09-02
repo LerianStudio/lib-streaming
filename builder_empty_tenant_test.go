@@ -10,9 +10,9 @@ import (
 
 	"github.com/LerianStudio/lib-observability/v4/log"
 
-	streaming "github.com/LerianStudio/lib-streaming/v3"
-	"github.com/LerianStudio/lib-streaming/v3/internal/producer"
-	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
+	streaming "github.com/LerianStudio/lib-streaming/v4"
+	"github.com/LerianStudio/lib-streaming/v4/internal/producer"
+	"github.com/LerianStudio/lib-streaming/v4/internal/transport"
 )
 
 // captureEmptyTenantAdapter records every published message so the test can

@@ -15,7 +15,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/LerianStudio/lib-streaming/v3/billing"
+	"github.com/LerianStudio/lib-streaming/v4/billing"
 )
 
 // newBillingSerializer wires a Serializer against an in-memory schema registry

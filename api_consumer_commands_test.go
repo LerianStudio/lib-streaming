@@ -8,8 +8,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/LerianStudio/lib-streaming/v3/internal/consumer"
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/consumer"
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
 )
 
 // commandsBuilder is the rail-consumer shape: this application's identity, the

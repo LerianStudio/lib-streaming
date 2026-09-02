@@ -14,7 +14,7 @@ import (
 	"github.com/LerianStudio/lib-observability/v4/log"
 	"github.com/google/uuid"
 
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
 )
 
 type nonBatchOutboxRepo struct {

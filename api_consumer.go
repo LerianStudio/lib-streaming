@@ -6,14 +6,14 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/LerianStudio/lib-streaming/v3/obs"
+	"github.com/LerianStudio/lib-streaming/v4/obs"
 
 	"github.com/twmb/franz-go/pkg/sasl"
 
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/LerianStudio/lib-streaming/v3/internal/consumer"
-	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
+	"github.com/LerianStudio/lib-streaming/v4/internal/consumer"
+	"github.com/LerianStudio/lib-streaming/v4/internal/transport"
 )
 
 // Handler is the only interface a consuming service implements. The library

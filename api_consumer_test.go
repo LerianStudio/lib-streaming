@@ -6,7 +6,7 @@ import (
 	"context"
 	"testing"
 
-	streaming "github.com/LerianStudio/lib-streaming/v3"
+	streaming "github.com/LerianStudio/lib-streaming/v4"
 )
 
 // noopHandler is a do-nothing Handler for builder-construction tests.

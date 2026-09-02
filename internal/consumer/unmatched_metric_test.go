@@ -13,7 +13,7 @@ import (
 	"github.com/LerianStudio/lib-observability/v4/log"
 	libMetrics "github.com/LerianStudio/lib-observability/v4/metrics"
 
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
 )
 
 // newUnmatchedMeterSetup builds a real SDK ManualReader-backed MetricsFactory

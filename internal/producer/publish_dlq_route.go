@@ -2,14 +2,14 @@ package producer
 
 import (
 	"context"
-	"github.com/LerianStudio/lib-streaming/v3/obs"
+	"github.com/LerianStudio/lib-streaming/v4/obs"
 	"slices"
 	"strconv"
 	"time"
 
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v3/internal/dlqheader"
-	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/dlqheader"
+	"github.com/LerianStudio/lib-streaming/v4/internal/transport"
 )
 
 // publishRouteDLQ writes the original payload to the route's DLQ destination
