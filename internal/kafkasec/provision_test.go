@@ -15,7 +15,7 @@ import (
 	"github.com/twmb/franz-go/pkg/kadm"
 	"github.com/twmb/franz-go/pkg/kerr"
 
-	"github.com/LerianStudio/lib-observability/v2/log"
+	"github.com/LerianStudio/lib-observability/v4/log"
 )
 
 // Not parallel, and neither are its subtests: t.Setenv mutates process state and
@@ -274,27 +274,25 @@ type provisionSpyLogger struct {
 }
 
 type provisionSpyEntry struct {
-	level  log.Level
+	level  int
 	msg    string
 	fields map[string]any
 }
 
-func (s *provisionSpyLogger) Log(_ context.Context, level log.Level, msg string, fields ...log.Field) {
+func (s *provisionSpyLogger) Log(_ context.Context, level int, msg string, fields ...any) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	indexed := make(map[string]any, len(fields))
-	for _, f := range fields {
+	for _, f := range log.Fields(fields...) {
 		indexed[f.Key] = f.Value
 	}
 
 	s.entries = append(s.entries, provisionSpyEntry{level: level, msg: msg, fields: indexed})
 }
 
-func (s *provisionSpyLogger) With(...log.Field) log.Logger { return s }
-func (s *provisionSpyLogger) WithGroup(string) log.Logger  { return s }
-func (s *provisionSpyLogger) Enabled(log.Level) bool       { return true }
-func (s *provisionSpyLogger) Sync(context.Context) error   { return nil }
+func (s *provisionSpyLogger) Enabled(int) bool           { return true }
+func (s *provisionSpyLogger) Sync(context.Context) error { return nil }
 
 // TestLogProvisionVerdicts_Posture pins what an operator actually sees. The
 // message text is load-bearing, not decoration: an unauthorized creation is the

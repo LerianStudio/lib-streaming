@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/LerianStudio/lib-observability/v2/log"
+	"github.com/LerianStudio/lib-observability/v4/log"
 
 	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
 	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
@@ -394,7 +394,7 @@ func TestPublishRouteDLQ_PublishFailIncrementsCounter(t *testing.T) {
 		routes,
 		catalog,
 		WithLogger(log.NewNop()),
-		WithMetricsFactory(factory),
+		WithMetricsRecorder(factory),
 	)
 	if err != nil {
 		t.Fatalf("NewProducerMulti() error = %v", err)

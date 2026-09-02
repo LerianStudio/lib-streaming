@@ -213,7 +213,7 @@ Architectural constraints and design decisions for the `lib-streaming` codebase.
 - Assertion labels use `component="streaming"` and a stable operation name.
 - Assertion failures must preserve the public API contract: record the trident signal and still return the documented sentinel/error.
 - Do not put tenant IDs on assertion metrics.
-- Consuming services must call `assert.InitAssertionMetrics(metricsFactory)` during bootstrap if they want assertion failure metrics to alert.
+- Consuming services must call `assert.InitAssertionMetrics(metricsRecorder)` during bootstrap if they want assertion failure metrics to alert.
 - Consuming services should call `runtime.SetProductionMode(env == "production")` during bootstrap to scrub panic value strings and truncate stack traces in telemetry payloads.
 
 ## 14. Concurrency and Nil-Safety

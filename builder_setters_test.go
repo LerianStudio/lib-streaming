@@ -5,10 +5,11 @@ package streaming_test
 import (
 	"context"
 	"errors"
+	"github.com/LerianStudio/lib-streaming/v3/obs"
 	"testing"
 	"time"
 
-	"github.com/LerianStudio/lib-observability/v2/log"
+	"github.com/LerianStudio/lib-observability/v4/log"
 
 	streaming "github.com/LerianStudio/lib-streaming/v3"
 	"github.com/LerianStudio/lib-streaming/v3/internal/producer"
@@ -28,7 +29,7 @@ type captureLoggerSentinel struct {
 // captureFactoryAdapter records the TransportAdapterOptions the factory
 // receives so the test can inspect what flowed through Builder plumbing.
 type captureFactoryAdapter struct {
-	gotLogger log.Logger
+	gotLogger obs.Logger
 	gotName   string
 }
 

@@ -17,7 +17,7 @@ import (
 	libCommons "github.com/LerianStudio/lib-commons/v6/commons"
 	commonsHttp "github.com/LerianStudio/lib-commons/v6/commons/net/http"
 	"github.com/LerianStudio/lib-commons/v6/commons/outbox"
-	"github.com/LerianStudio/lib-observability/v2/log"
+	"github.com/LerianStudio/lib-observability/v4/log"
 )
 
 // --- T7: commons.App integration, paired lifecycle, close semantics. ---
@@ -337,7 +337,7 @@ func TestProducer_PostClose_Emit_RecordsCallerErrorMetric(t *testing.T) {
 
 	emitter, err := New(context.Background(), cfg,
 		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
-		WithMetricsFactory(factory),
+		WithMetricsRecorder(factory),
 	)
 	if err != nil {
 		t.Fatalf("New err = %v", err)
@@ -744,17 +744,15 @@ type spyLaunchLogger struct {
 
 func newSpyLaunchLogger() *spyLaunchLogger { return &spyLaunchLogger{} }
 
-func (s *spyLaunchLogger) Log(_ context.Context, _ log.Level, msg string, _ ...log.Field) {
+func (s *spyLaunchLogger) Log(_ context.Context, _ int, msg string, _ ...any) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.msgs = append(s.msgs, msg)
 }
 
-func (s *spyLaunchLogger) With(_ ...log.Field) log.Logger { return s }
-func (s *spyLaunchLogger) WithGroup(_ string) log.Logger  { return s }
-func (s *spyLaunchLogger) Enabled(_ log.Level) bool       { return true }
-func (s *spyLaunchLogger) Sync(_ context.Context) error   { return nil }
+func (s *spyLaunchLogger) Enabled(_ int) bool           { return true }
+func (s *spyLaunchLogger) Sync(_ context.Context) error { return nil }
 
 func (s *spyLaunchLogger) messages() []string {
 	s.mu.Lock()

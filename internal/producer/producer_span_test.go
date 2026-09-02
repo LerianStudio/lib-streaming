@@ -15,7 +15,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/LerianStudio/lib-observability/v2/log"
+	"github.com/LerianStudio/lib-observability/v4/log"
 )
 
 // newSpanRecorder builds a TracerProvider backed by an in-memory exporter
@@ -47,33 +47,29 @@ type debugLogger struct {
 	entries []spyEntry
 }
 
-func (d *debugLogger) Log(_ context.Context, level log.Level, msg string, fields ...log.Field) {
+func (d *debugLogger) Log(_ context.Context, level int, msg string, fields ...any) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
 	indexed := make(map[string]any, len(fields))
-	for _, f := range fields {
+	for _, f := range log.Fields(fields...) {
 		indexed[f.Key] = f.Value
 	}
 
 	d.entries = append(d.entries, spyEntry{level: level, msg: msg, fields: indexed})
 }
 
-func (d *debugLogger) With(_ ...log.Field) log.Logger { return d }
-func (d *debugLogger) WithGroup(_ string) log.Logger  { return d }
-func (d *debugLogger) Enabled(_ log.Level) bool       { return true }
-func (d *debugLogger) Sync(_ context.Context) error   { return nil }
+func (d *debugLogger) Enabled(_ int) bool           { return true }
+func (d *debugLogger) Sync(_ context.Context) error { return nil }
 
 // infoLogger is a log.Logger whose Enabled returns true only for levels
 // with LESS numeric value than Debug (i.e., it treats itself as INFO-level,
 // so Debug is suppressed). Lets the span test verify the key-attr gating.
 type infoLogger struct{}
 
-func (i *infoLogger) Log(context.Context, log.Level, string, ...log.Field) {}
-func (i *infoLogger) With(...log.Field) log.Logger                         { return i }
-func (i *infoLogger) WithGroup(string) log.Logger                          { return i }
-func (i *infoLogger) Enabled(l log.Level) bool                             { return l < log.LevelDebug }
-func (i *infoLogger) Sync(context.Context) error                           { return nil }
+func (i *infoLogger) Log(context.Context, int, string, ...any) {}
+func (i *infoLogger) Enabled(l int) bool                       { return l < log.LevelDebug }
+func (i *infoLogger) Sync(context.Context) error               { return nil }
 
 // requireStreamingEmitSpan returns the single span named "streaming.emit"
 // from the spans slice, failing the test if 0 or 2+ are present. The

@@ -5,8 +5,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/LerianStudio/lib-observability/v2/constants"
-	"github.com/LerianStudio/lib-observability/v2/redaction"
+	"github.com/LerianStudio/lib-observability/v4/constants"
+	"github.com/LerianStudio/lib-observability/v4/redaction"
 )
 
 var streamingSensitiveFieldExtras = []string{

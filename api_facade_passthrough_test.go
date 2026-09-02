@@ -64,7 +64,7 @@ func TestProducerOption_Constructors(t *testing.T) {
 	t.Parallel()
 
 	opts := map[string]streaming.EmitterOption{
-		"WithMetricsFactory":        streaming.WithMetricsFactory(nil),
+		"WithMetricsRecorder":       streaming.WithMetricsRecorder(nil),
 		"WithTracer":                streaming.WithTracer(nil),
 		"WithCircuitBreakerManager": streaming.WithCircuitBreakerManager(nil),
 		"WithOutboxWriter":          streaming.WithOutboxWriter(nil),

@@ -13,7 +13,7 @@ import (
 	"github.com/twmb/franz-go/pkg/sasl/plain"
 
 	"github.com/LerianStudio/lib-commons/v6/commons/circuitbreaker"
-	"github.com/LerianStudio/lib-observability/v2/log"
+	"github.com/LerianStudio/lib-observability/v4/log"
 )
 
 // TestProducer_New_DisabledReturnsNoop proves the fail-safe: cfg.Enabled=false

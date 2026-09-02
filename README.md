@@ -104,8 +104,8 @@ for _, warning := range warnings {
     logger.Log(ctx, log.LevelWarn, warning)
 }
 
-runtime.InitPanicMetrics(metricsFactory)
-assert.InitAssertionMetrics(metricsFactory)
+runtime.InitPanicMetrics(metricsRecorder)
+assert.InitAssertionMetrics(metricsRecorder)
 // Scrubs panic value strings and truncates stack traces before they hit
 // log fields, span events, and ErrorReporter payloads — guards against
 // PII leakage from arbitrary panic arguments and OTel attribute bloat.
@@ -160,7 +160,7 @@ emitter, err := streaming.NewBuilder().
         Brokers: cfg.Brokers,
     }).
     Logger(logger).
-    MetricsFactory(metricsFactory).
+    MetricsRecorder(metricsRecorder).
     Tracer(tracer).
     CircuitBreakerManager(cbManager).
     OutboxRepository(outboxRepo).
@@ -483,7 +483,7 @@ emitter, err := streaming.NewBuilder().
     }).
     SQSTarget("sqs-shadow", sqsClient, "https://sqs.us-east-1.amazonaws.com/123/q").
     Logger(logger).
-    MetricsFactory(metricsFactory).
+    MetricsRecorder(metricsRecorder).
     Tracer(tracer).
     OutboxRepository(outboxRepo).
     Build(ctx)
@@ -761,7 +761,7 @@ go doc github.com/LerianStudio/lib-streaming
 
 Key public API areas:
 
-- **Builder** — `NewBuilder`, `Source`, `Catalog`, `Routes`, `Target`, `TargetExtra`, `RegisterTransport`, `CBFailureRatio`, `CBMinRequests`, `CBTimeout`, `CloseTimeout`, `Logger`, `MetricsFactory`, `Tracer`, `CircuitBreakerManager`, `OutboxRepository`, `OutboxWriter`, `TLSConfig`, `SASL`, `AllowPlaintextSASL`, `AllowSystemEvents`, `PartitionKey`, `SQSTarget`, `RabbitMQTarget`, `EventBridgeTarget`, `Build`.
+- **Builder** — `NewBuilder`, `Source`, `Catalog`, `Routes`, `Target`, `TargetExtra`, `RegisterTransport`, `CBFailureRatio`, `CBMinRequests`, `CBTimeout`, `CloseTimeout`, `Logger`, `MetricsRecorder`, `Tracer`, `CircuitBreakerManager`, `OutboxRepository`, `OutboxWriter`, `TLSConfig`, `SASL`, `AllowPlaintextSASL`, `AllowSystemEvents`, `PartitionKey`, `SQSTarget`, `RabbitMQTarget`, `EventBridgeTarget`, `Build`.
 - **Routes & destinations** — `TargetConfig`, `RouteDefinition`, `RouteTable`, `Destination`, `TransportKind`, `RouteRequirement`, `KafkaTopic`, `SQSQueueURL`, `RabbitMQRoute`, `EventBridgeBus`.
 - **Topic naming** — `AppTopic`, `AppDLQTopic`, `AppCommandsTopic`, `ValidateSource`, `TopicPrefix`, `DLQTopicSuffix`, `CommandsTopicSuffix`, `MaxKafkaTopicNameBytes`.
 - **Consumer dispatch** — `NewConsumer().Source(...)`, `.Apps(...)`, `.Commands(...)`, `.OnFrom(app, "<resourceType>.<eventType>", handler)`, `.On(...)` (single-app shorthand), `.UnmatchedPolicy(...)`, `.ExpectSources(...)`, `HandlerFunc`, `UnmatchedIgnore`, `UnmatchedError`, `ErrUnhandledEvent`, `ErrUnexpectedSource`, `ErrBareOnWithMultipleApps`, `ErrUnknownDispatchApp`, `ErrConsumerMissingSource`, `ErrConsumerPartitionHalted`, `ErrHandlerAndCommandsBothSet`.

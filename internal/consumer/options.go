@@ -1,8 +1,7 @@
 package consumer
 
 import (
-	"github.com/LerianStudio/lib-observability/v2/log"
-	"github.com/LerianStudio/lib-observability/v2/metrics"
+	"github.com/LerianStudio/lib-streaming/v3/obs"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -12,14 +11,14 @@ import (
 type Option func(*consumerRuntime)
 
 // WithLogger sets the structured logger.
-func WithLogger(l log.Logger) Option {
+func WithLogger(l obs.Logger) Option {
 	return func(c *consumerRuntime) { c.logger = l }
 }
 
-// WithMetricsFactory wires the metrics factory for consumer instruments
+// WithMetricsRecorder wires the sink for the consumer instruments
 // (streaming_consumer_handled_total, _retry_total, _dlq_total, _commit_total,
 // _seek_back_total, _fetch_error_total, _poll_duration_ms).
-func WithMetricsFactory(f *metrics.MetricsFactory) Option {
+func WithMetricsRecorder(f obs.MetricsRecorder) Option {
 	return func(c *consumerRuntime) { c.metrics = f }
 }
 

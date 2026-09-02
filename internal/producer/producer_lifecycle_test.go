@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LerianStudio/lib-observability/v2/log"
+	"github.com/LerianStudio/lib-observability/v4/log"
 )
 
 // TestProducer_EmitClosed: after Close, Emit returns ErrEmitterClosed

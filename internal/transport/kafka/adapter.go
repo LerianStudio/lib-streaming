@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"net"
 
+	"github.com/LerianStudio/lib-streaming/v3/obs"
+
 	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kgo"
-
-	"github.com/LerianStudio/lib-observability/v2/log"
 
 	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
 	"github.com/LerianStudio/lib-streaming/v3/internal/kafkasec"
@@ -70,7 +70,7 @@ func (*Adapter) Kind() contract.TransportKind {
 // the SQS, RabbitMQ, and EventBridge adapters need no stub and stay untouched —
 // their destinations are provisioned by their own cloud IaC, not by a Kafka
 // admin call. A custom Kafka-like adapter opts in simply by declaring it.
-func (a *Adapter) EnsureTopics(ctx context.Context, logger log.Logger, topics ...string) {
+func (a *Adapter) EnsureTopics(ctx context.Context, logger obs.Logger, topics ...string) {
 	if a == nil || a.client == nil {
 		return
 	}

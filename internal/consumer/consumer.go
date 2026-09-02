@@ -9,10 +9,11 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/LerianStudio/lib-streaming/v3/obs"
+
 	"github.com/twmb/franz-go/pkg/kgo"
 
-	"github.com/LerianStudio/lib-observability/v2/log"
-	"github.com/LerianStudio/lib-observability/v2/metrics"
+	"github.com/LerianStudio/lib-observability/v4/log"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
@@ -86,7 +87,7 @@ func handlerQuarantineCause(err error) quarantineCause {
 }
 
 // Consumer metric names (free-form labels kept off to bound cardinality; see
-// docs/design/consumer.md §6). Recorded best-effort — a metrics factory is
+// docs/design/consumer.md §6). Recorded best-effort — a metrics recorder is
 // optional, so recordMetric no-ops when none is wired.
 const (
 	metricDLQTotal           = "streaming_consumer_dlq_total"
@@ -204,8 +205,8 @@ type consumerRuntime struct {
 	classifier Classifier
 	codec      codecFunc
 
-	logger  log.Logger
-	metrics *metrics.MetricsFactory
+	logger  obs.Logger
+	metrics obs.MetricsRecorder
 	tracer  trace.Tracer
 
 	// stop is closed by Close to break the poll loop. closeOnce makes Close
@@ -328,8 +329,8 @@ func (c *consumerRuntime) recordUnmatched(ctx context.Context, eventKey string) 
 			label = unmatchedEventKeyOverflow
 
 			c.unmatchedOverflowOnce.Do(func() {
-				c.logger.Log(ctx, log.LevelWarn, unmatchedLabelOverflowMessage,
-					log.Int("distinct_event_keys", maxUnmatchedEventKeyLabels),
+				c.logger.Log(ctx, obs.LevelWarn, unmatchedLabelOverflowMessage,
+					"distinct_event_keys", maxUnmatchedEventKeyLabels,
 				)
 			})
 
@@ -341,9 +342,9 @@ func (c *consumerRuntime) recordUnmatched(ctx context.Context, eventKey string) 
 		} else if _, loaded := c.unmatchedSeen.LoadOrStore(eventKey, struct{}{}); !loaded {
 			c.unmatchedCount.Add(1)
 
-			c.logger.Log(ctx, log.LevelWarn, unmatchedNoHandlerMessage,
-				log.String("event_key", eventKey),
-				log.String("policy", string(c.unmatchedPolicy())),
+			c.logger.Log(ctx, obs.LevelWarn, unmatchedNoHandlerMessage,
+				"event_key", eventKey,
+				"policy", string(c.unmatchedPolicy()),
 			)
 		}
 	}
@@ -381,10 +382,10 @@ func (c *consumerRuntime) logOverflowKey(ctx context.Context, eventKey string) {
 		return
 	}
 
-	c.logger.Log(ctx, log.LevelWarn, unmatchedOverflowKeyMessage,
-		log.String("event_key", eventKey),
-		log.String("policy", string(c.unmatchedPolicy())),
-		log.Int("distinct_event_keys_capped_at", maxUnmatchedEventKeyLabels),
+	c.logger.Log(ctx, obs.LevelWarn, unmatchedOverflowKeyMessage,
+		"event_key", eventKey,
+		"policy", string(c.unmatchedPolicy()),
+		"distinct_event_keys_capped_at", maxUnmatchedEventKeyLabels,
 	)
 }
 
@@ -949,10 +950,10 @@ func (c *consumerRuntime) routeDLQ(ctx context.Context, rec *kgo.Record, retryCo
 
 	if err := c.dlq.PublishDLQ(ctx, rec, cause.err, kind, retryCount); err != nil {
 		c.seekBack(rec)
-		c.logger.Log(ctx, log.LevelError, "streaming consumer: DLQ publish failed",
-			log.String("topic", rec.Topic),
-			log.Int("partition", int(rec.Partition)),
-			log.Err(sanitize(err)),
+		c.logger.Log(ctx, obs.LevelError, "streaming consumer: DLQ publish failed",
+			"topic", rec.Topic,
+			"partition", int(rec.Partition),
+			"error", sanitize(err),
 		)
 		c.recordMetric(ctx, metricDLQPublishFailed)
 
@@ -1014,10 +1015,10 @@ func (c *consumerRuntime) drainFetchErrors(ctx context.Context, fetches kgo.Fetc
 				// Unrecoverable but MUST be observable: franz-go detected the
 				// offset out of range and auto-reset the cursor past lost data.
 				c.recordMetric(ctx, metricFetchErrorDataLoss)
-				c.logger.Log(ctx, log.LevelError, "streaming consumer: DATA LOSS — cursor auto-reset past lost records (unrecoverable, ALERT)",
-					log.String("topic", topic),
-					log.Int("partition", int(partition)),
-					log.Err(sanitize(err)),
+				c.logger.Log(ctx, obs.LevelError, "streaming consumer: DATA LOSS — cursor auto-reset past lost records (unrecoverable, ALERT)",
+					"topic", topic,
+					"partition", int(partition),
+					"error", sanitize(err),
 				)
 
 				return
@@ -1025,10 +1026,10 @@ func (c *consumerRuntime) drainFetchErrors(ctx context.Context, fetches kgo.Fetc
 
 			// auth / batch-parse / group-session and other fetch errors.
 			c.recordMetric(ctx, metricFetchError)
-			c.logger.Log(ctx, log.LevelError, "streaming consumer: fetch error",
-				log.String("topic", topic),
-				log.Int("partition", int(partition)),
-				log.Err(sanitize(err)),
+			c.logger.Log(ctx, obs.LevelError, "streaming consumer: fetch error",
+				"topic", topic,
+				"partition", int(partition),
+				"error", sanitize(err),
 			)
 		}
 	})
@@ -1063,8 +1064,8 @@ func (c *consumerRuntime) Close() error {
 			defer cancel()
 
 			if err := c.dlq.Close(ctx); err != nil {
-				c.logger.Log(ctx, log.LevelError, "streaming consumer: DLQ publisher close failed",
-					log.Err(sanitize(err)),
+				c.logger.Log(ctx, obs.LevelError, "streaming consumer: DLQ publisher close failed",
+					"error", sanitize(err),
 				)
 
 				closeErr = fmt.Errorf("close DLQ publisher: %w", err)
@@ -1219,8 +1220,8 @@ func (c *consumerRuntime) commitStaged(ctx context.Context, staged map[topicPart
 	if err := c.client.CommitRecords(ctx, recs...); err != nil {
 		// A failed commit is not fatal: the records re-deliver next session and
 		// are re-processed (at-least-once). Log so it is never silent.
-		c.logger.Log(ctx, log.LevelError, "streaming consumer: commit failed",
-			log.Err(sanitize(err)),
+		c.logger.Log(ctx, obs.LevelError, "streaming consumer: commit failed",
+			"error", sanitize(err),
 		)
 	}
 }
@@ -1252,9 +1253,9 @@ func (c *consumerRuntime) sleep(ctx context.Context, d time.Duration) bool {
 // event. The counter just labels the platform-level subset.
 func (c *consumerRuntime) recordSystemEvent(ctx context.Context, ev contract.Event) {
 	c.recordMetric(ctx, metricSystemEvent)
-	c.logger.Log(ctx, log.LevelInfo, "streaming consumer: system event dispatched (empty tenant)",
-		log.String("resource_type", ev.ResourceType),
-		log.String("event_type", ev.EventType),
+	c.logger.Log(ctx, obs.LevelInfo, "streaming consumer: system event dispatched (empty tenant)",
+		"resource_type", ev.ResourceType,
+		"event_type", ev.EventType,
 	)
 }
 
@@ -1339,15 +1340,15 @@ func (c *consumerRuntime) alertHalted(ctx context.Context, halted map[topicParti
 		// DLQ path, and a shutdown have three different owners.
 		c.recordMetricWithLabels(ctx, metricPartitionHalted, map[string]string{"reason": reason})
 
-		c.logger.Log(ctx, log.LevelWarn, "streaming consumer: partition halted (head-of-line blocked, ALERT)",
-			log.String("topic", tp.topic),
-			log.Int("partition", int(tp.partition)),
-			log.String("reason", reason),
+		c.logger.Log(ctx, obs.LevelWarn, "streaming consumer: partition halted (head-of-line blocked, ALERT)",
+			"topic", tp.topic,
+			"partition", int(tp.partition),
+			"reason", reason,
 		)
 	}
 }
 
-// recordMetric increments a counter best-effort. A metrics factory is optional;
+// recordMetric increments a counter best-effort. A metrics recorder is optional;
 // when none is wired (tests, disabled telemetry) this is a no-op. Errors from
 // the factory are swallowed — a metric failure must never break the poll loop.
 func (c *consumerRuntime) recordMetric(ctx context.Context, name string) {
@@ -1361,12 +1362,7 @@ func (c *consumerRuntime) recordMetricWithLabels(ctx context.Context, name strin
 		return
 	}
 
-	counter, err := c.metrics.Counter(metrics.Metric{Name: name})
-	if err != nil || counter == nil {
-		return
-	}
-
-	_ = counter.WithLabels(labels).Add(ctx, 1)
+	_ = c.metrics.AddCounter(ctx, name, "", "1", labels, 1)
 }
 
 // errSource names the ORIGIN of a non-nil error so classify can apply the

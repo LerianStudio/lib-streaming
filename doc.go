@@ -35,7 +35,7 @@
 //
 //	cfg, warnings, err := streaming.LoadConfig()
 //	if err != nil { return err }
-//	for _, w := range warnings { logger.Log(ctx, log.LevelWarn, w) }
+//	for _, w := range warnings { logger.Log(ctx, obs.LevelWarn, w) }
 //	catalog, err := streaming.NewCatalog(streaming.EventDefinition{
 //	    Key:          "transaction.created",
 //	    ResourceType: "transaction",
@@ -49,8 +49,8 @@
 //	// scrubs panic value strings and truncates stack traces before they
 //	// reach log fields, span events, and ErrorReporter payloads — without
 //	// it, arbitrary panic arguments flow verbatim into telemetry.
-//	runtime.InitPanicMetrics(metricsFactory)
-//	assert.InitAssertionMetrics(metricsFactory)
+//	runtime.InitPanicMetrics(metricsRecorder)
+//	assert.InitAssertionMetrics(metricsRecorder)
 //	runtime.SetProductionMode(appCfg.Env == "production")
 //
 //	// Disabled-feature-flag fallback FIRST. Use NoopEmitter only for an
@@ -91,7 +91,7 @@
 //	    TLSFromConfig(cfg).  // applies STREAMING_TLS_* (no-op when TLS disabled)
 //	    SASLFromConfig(cfg). // applies STREAMING_SASL_* (no-op when mechanism empty)
 //	    Logger(logger).
-//	    MetricsFactory(metricsFactory).
+//	    MetricsRecorder(metricsRecorder).
 //	    Tracer(tracer).
 //	    CircuitBreakerManager(cbManager).
 //	    OutboxRepository(outboxRepo).

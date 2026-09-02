@@ -14,7 +14,7 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 
 	"github.com/LerianStudio/lib-commons/v6/commons/circuitbreaker"
-	"github.com/LerianStudio/lib-observability/v2/log"
+	"github.com/LerianStudio/lib-observability/v4/log"
 )
 
 // --- Fake circuitbreaker.Manager + CircuitBreaker for deterministic CB
@@ -432,17 +432,15 @@ type oneShotPanicLogger struct {
 	fired atomic.Bool
 }
 
-func (l *oneShotPanicLogger) Log(_ context.Context, _ log.Level, _ string, _ ...log.Field) {
+func (l *oneShotPanicLogger) Log(_ context.Context, _ int, _ string, _ ...any) {
 	if l.fired.CompareAndSwap(false, true) {
 		panic("oneShotPanicLogger: intentional first-call panic for test")
 	}
 	// Subsequent calls (like the one from RecoverAndLog) no-op.
 }
 
-func (l *oneShotPanicLogger) With(_ ...log.Field) log.Logger { return l }
-func (l *oneShotPanicLogger) WithGroup(_ string) log.Logger  { return l }
-func (l *oneShotPanicLogger) Enabled(_ log.Level) bool       { return true }
-func (l *oneShotPanicLogger) Sync(_ context.Context) error   { return nil }
+func (l *oneShotPanicLogger) Enabled(_ int) bool           { return true }
+func (l *oneShotPanicLogger) Sync(_ context.Context) error { return nil }
 
 // TestProducer_CBListener_PanicSafe asserts that a logger panic inside the
 // listener does NOT propagate out of OnStateChange — the runtime.RecoverAndLog

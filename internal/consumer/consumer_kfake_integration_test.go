@@ -12,7 +12,7 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 	"go.uber.org/goleak"
 
-	"github.com/LerianStudio/lib-observability/v2/log"
+	"github.com/LerianStudio/lib-observability/v4/log"
 
 	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
 )
