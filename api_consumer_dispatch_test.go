@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/LerianStudio/lib-streaming/v3/internal/consumer"
+	"github.com/LerianStudio/lib-streaming/v4/internal/consumer"
 )
 
 // trackingHandler returns a HandlerFunc and a pointer to the flag it flips.

@@ -6,14 +6,14 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/LerianStudio/lib-streaming/v3/obs"
+	"github.com/LerianStudio/lib-streaming/v4/obs"
 
 	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kgo"
 
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v3/internal/kafkasec"
-	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/kafkasec"
+	"github.com/LerianStudio/lib-streaming/v4/internal/transport"
 )
 
 // Adapter is the Kafka transport implementation backed by franz-go.

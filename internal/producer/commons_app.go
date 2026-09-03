@@ -2,7 +2,7 @@ package producer
 
 import (
 	"context"
-	"github.com/LerianStudio/lib-streaming/v3/obs"
+	"github.com/LerianStudio/lib-streaming/v4/obs"
 
 	libCommons "github.com/LerianStudio/lib-commons/v6/commons"
 )

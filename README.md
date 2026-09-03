@@ -15,7 +15,7 @@ It does not replace `github.com/LerianStudio/lib-commons/v6/commons/rabbitmq`, w
 
 | | |
 |---|---|
-| **Module** | `github.com/LerianStudio/lib-streaming/v3` |
+| **Module** | `github.com/LerianStudio/lib-streaming/v4` |
 | **Go** | `1.26.3` |
 | **License** | Elastic License 2.0. See [LICENSE](./LICENSE) |
 
@@ -90,7 +90,7 @@ It does not replace `github.com/LerianStudio/lib-commons/v6/commons/rabbitmq`, w
 ### 1. Install
 
 ```bash
-go get github.com/LerianStudio/lib-streaming/v3@latest
+go get github.com/LerianStudio/lib-streaming/v4@latest
 ```
 
 ### 2. Bootstrap a Producer

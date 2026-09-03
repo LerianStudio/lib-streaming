@@ -6,7 +6,7 @@ import (
 
 	"github.com/LerianStudio/lib-observability/v4/log"
 
-	"github.com/LerianStudio/lib-streaming/v3/obs"
+	"github.com/LerianStudio/lib-streaming/v4/obs"
 )
 
 // Outcome label values. The "outcome" label on streaming metrics is a closed

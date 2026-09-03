@@ -7,7 +7,7 @@ import (
 	"errors"
 	"testing"
 
-	streaming "github.com/LerianStudio/lib-streaming/v3"
+	streaming "github.com/LerianStudio/lib-streaming/v4"
 )
 
 // TestProducer_NilReceiverGuards proves every lifecycle method on the public

@@ -5,7 +5,7 @@ package producer
 import (
 	"testing"
 
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
 )
 
 // The canonical merge-semantics table test lives in

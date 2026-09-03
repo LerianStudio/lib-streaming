@@ -8,7 +8,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
 )
 
 // ErrUnhandledEvent is returned for an event whose (app, event key) pair has no

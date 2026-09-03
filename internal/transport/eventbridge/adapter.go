@@ -37,8 +37,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/transport"
 )
 
 // MaxBodyBytes is the EventBridge per-entry size cap (256 KiB). The adapter

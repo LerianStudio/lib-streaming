@@ -3,7 +3,7 @@ package producer
 import (
 	"encoding/json"
 
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
 )
 
 // resolvedEvent is the internal output of resolving an EmitRequest against the

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
+	"github.com/LerianStudio/lib-streaming/v4/internal/transport"
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 

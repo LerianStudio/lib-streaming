@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v3/internal/transport/fake"
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/transport/fake"
 )
 
 // TestEmitMulti_PayloadCap_FiresAssertion pins T3 site (a): the per-route

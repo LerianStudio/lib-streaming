@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
 )
 
 // validBaseConfig returns a Config that passes every existing

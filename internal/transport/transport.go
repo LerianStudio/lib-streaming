@@ -5,7 +5,7 @@ import (
 	"maps"
 	"reflect"
 
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
 )
 
 // IsNilInterface reports whether v is a nil interface, including the

@@ -5,15 +5,15 @@ package streaming_test
 import (
 	"context"
 	"errors"
-	"github.com/LerianStudio/lib-streaming/v3/obs"
+	"github.com/LerianStudio/lib-streaming/v4/obs"
 	"testing"
 	"time"
 
 	"github.com/LerianStudio/lib-observability/v4/log"
 
-	streaming "github.com/LerianStudio/lib-streaming/v3"
-	"github.com/LerianStudio/lib-streaming/v3/internal/producer"
-	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
+	streaming "github.com/LerianStudio/lib-streaming/v4"
+	"github.com/LerianStudio/lib-streaming/v4/internal/producer"
+	"github.com/LerianStudio/lib-streaming/v4/internal/transport"
 )
 
 // captureLoggerSentinel is a no-op logger that wraps log.NewNop so a test

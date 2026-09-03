@@ -3,7 +3,7 @@ package producer
 import (
 	"context"
 
-	"github.com/LerianStudio/lib-streaming/v3/obs"
+	"github.com/LerianStudio/lib-streaming/v4/obs"
 
 	"github.com/LerianStudio/lib-observability/v4/assert"
 	"github.com/LerianStudio/lib-observability/v4/log"

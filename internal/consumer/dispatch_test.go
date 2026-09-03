@@ -7,7 +7,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
 )
 
 func dispatchEvent(source, resourceType, eventType string) contract.Event {

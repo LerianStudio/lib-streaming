@@ -5,7 +5,7 @@ package contract
 import (
 	"github.com/LerianStudio/lib-observability/v4/log"
 
-	"github.com/LerianStudio/lib-streaming/v3/obs"
+	"github.com/LerianStudio/lib-streaming/v4/obs"
 )
 
 // setContractAsserterLogger overrides the package-default logger that

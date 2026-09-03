@@ -13,8 +13,8 @@ import (
 	tmcore "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/core"
 	"github.com/LerianStudio/lib-observability/v4/log"
 
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v3/internal/transport/fake"
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/transport/fake"
 )
 
 func TestProducer_TenantAwareCircuitBreakersIsolateTenants(t *testing.T) {

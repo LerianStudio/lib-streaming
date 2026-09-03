@@ -7,7 +7,7 @@ import (
 
 	"github.com/twmb/franz-go/pkg/kerr"
 
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
 )
 
 // The two headers that mark a DLQ entry whose payload was dropped so the record

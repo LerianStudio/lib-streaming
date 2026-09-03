@@ -5,7 +5,7 @@ package streaming_test
 import (
 	"testing"
 
-	streaming "github.com/LerianStudio/lib-streaming/v3"
+	streaming "github.com/LerianStudio/lib-streaming/v4"
 )
 
 // TestCloudEventsType_ComposesTheWireValue pins the ce-type the root facade

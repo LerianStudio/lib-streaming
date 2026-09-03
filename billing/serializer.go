@@ -11,7 +11,7 @@ import (
 	"github.com/twmb/franz-go/pkg/sr"
 	"google.golang.org/protobuf/proto"
 
-	billingv1 "github.com/LerianStudio/lib-streaming/v3/billing/gen/lerian/streaming/billing/v1"
+	billingv1 "github.com/LerianStudio/lib-streaming/v4/billing/gen/lerian/streaming/billing/v1"
 )
 
 // schemaSubject is the Schema Registry subject the billable-payload schema is

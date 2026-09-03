@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	streaming "github.com/LerianStudio/lib-streaming/v3"
+	streaming "github.com/LerianStudio/lib-streaming/v4"
 )
 
 var _ streaming.TransactionalBatchEmitter = (*streaming.Producer)(nil)

@@ -10,7 +10,7 @@ import (
 	"github.com/twmb/franz-go/pkg/kadm"
 	"github.com/twmb/franz-go/pkg/kfake"
 
-	streaming "github.com/LerianStudio/lib-streaming/v3"
+	streaming "github.com/LerianStudio/lib-streaming/v4"
 )
 
 // This file drives streaming.NewAdminClient against a real broker protocol.

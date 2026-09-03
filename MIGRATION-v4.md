@@ -198,26 +198,18 @@ v7 — but the field itself is lib-commons' boundary to fix, not this one.
 
 ## 6. The module path rename
 
-**This branch does NOT rename the module path.** The rename is mechanical and
-touches every file, which would bury the review of the actual boundary change.
-Run it as a separate, reviewable-by-inspection commit:
+**Done.** The path is now `github.com/LerianStudio/lib-streaming/v4`.
 
-```bash
-# 1. the module declaration
-sed -i 's|^module github.com/LerianStudio/lib-streaming/v3$|module github.com/LerianStudio/lib-streaming/v4|' go.mod
+It was deliberately left out of the boundary PR (#105) so the review would show
+the API change rather than hundreds of rewritten import lines, and landed
+separately in #106. That ordering turned out to be a mistake: semantic-release
+tagged `v4.0.0-beta.1` on the still-`/v3` path the moment #105 merged, and Go
+rejects that combination outright — `module path includes a major version
+suffix, so major version must match` — so the released version was not
+installable by anyone until #106 landed.
 
-# 2. every self-import in Go source (and the doc comments that name them)
-grep -rl 'github.com/LerianStudio/lib-streaming/v3' --include='*.go' . \
-  | xargs sed -i 's|github.com/LerianStudio/lib-streaming/v3|github.com/LerianStudio/lib-streaming/v4|g'
-
-# 3. docs, examples and generated protobuf go_package options
-grep -rl 'github.com/LerianStudio/lib-streaming/v3' \
-    --include='*.md' --include='*.yaml' --include='*.yml' --include='*.proto' . \
-  | xargs sed -i 's|github.com/LerianStudio/lib-streaming/v3|github.com/LerianStudio/lib-streaming/v4|g'
-
-# 4. verify
-gofmt -l . && go build ./... && go test -tags unit -count=1 ./...
-```
+On a repository with automated releases, the path rename belongs in the same PR
+as the break, or the release has to be held.
 
 The rename itself costs a consumer one import line per file. It is not the
 whole v4 migration: the renamed metrics entry points

@@ -5,8 +5,8 @@ package billing_test
 import (
 	"context"
 
-	streaming "github.com/LerianStudio/lib-streaming/v3"
-	"github.com/LerianStudio/lib-streaming/v3/billing"
+	streaming "github.com/LerianStudio/lib-streaming/v4"
+	"github.com/LerianStudio/lib-streaming/v4/billing"
 )
 
 // Example_billingSerializer is the documented producer-side handoff for the

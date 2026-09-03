@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/LerianStudio/lib-observability/v4/log"
-	streaming "github.com/LerianStudio/lib-streaming/v3"
+	streaming "github.com/LerianStudio/lib-streaming/v4"
 )
 
 // warnSpyLogger records Warn-level messages so a test can assert the build

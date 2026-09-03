@@ -4,10 +4,10 @@ import (
 	"github.com/twmb/franz-go/pkg/kadm"
 	"github.com/twmb/franz-go/pkg/sr"
 
-	"github.com/LerianStudio/lib-streaming/v3/internal/config"
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v3/internal/kafkasec"
-	"github.com/LerianStudio/lib-streaming/v3/internal/manifest"
+	"github.com/LerianStudio/lib-streaming/v4/internal/config"
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/kafkasec"
+	"github.com/LerianStudio/lib-streaming/v4/internal/manifest"
 )
 
 type (

@@ -11,7 +11,7 @@ import (
 	"github.com/LerianStudio/lib-observability/v4/log"
 	"github.com/twmb/franz-go/pkg/kgo"
 
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
 )
 
 // spyLogger records log message strings so a test can assert observability

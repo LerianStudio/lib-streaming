@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	streaming "github.com/LerianStudio/lib-streaming/v3"
+	streaming "github.com/LerianStudio/lib-streaming/v4"
 )
 
 // adminPassword is fed into every failing case below so each assertion can also

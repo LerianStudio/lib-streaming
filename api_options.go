@@ -4,14 +4,14 @@ import (
 	"crypto/tls"
 	"time"
 
-	"github.com/LerianStudio/lib-streaming/v3/obs"
+	"github.com/LerianStudio/lib-streaming/v4/obs"
 
 	"github.com/LerianStudio/lib-commons/v6/commons/circuitbreaker"
 	"github.com/LerianStudio/lib-commons/v6/commons/outbox"
 	"github.com/twmb/franz-go/pkg/sasl"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/LerianStudio/lib-streaming/v3/internal/producer"
+	"github.com/LerianStudio/lib-streaming/v4/internal/producer"
 )
 
 // EmitterOption configures a Producer at construction time.

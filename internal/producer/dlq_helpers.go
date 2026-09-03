@@ -1,6 +1,6 @@
 package producer
 
-import "github.com/LerianStudio/lib-streaming/v3/internal/contract"
+import "github.com/LerianStudio/lib-streaming/v4/internal/contract"
 
 // The six DLQ forensic header keys live in internal/dlqheader so the
 // consumer's DLQ publisher (later wave) reuses the exact same string values

@@ -50,7 +50,7 @@ Architectural constraints and design decisions for the `lib-streaming` codebase.
 
 ## 3. Required Libraries
 
-- Module path: `github.com/LerianStudio/lib-streaming/v3` — the `/vN` suffix is required from v2 onward by Go's semantic-import-versioning rules, and `go.mod` declares it.
+- Module path: `github.com/LerianStudio/lib-streaming/v4` — the `/vN` suffix is required from v2 onward by Go's semantic-import-versioning rules, and `go.mod` declares it.
 - Go version: `1.26.3` as declared in `go.mod`.
 - Commons: use `github.com/LerianStudio/lib-commons/v6` primitives where they are the Lerian standard.
 - Assertions: use `github.com/LerianStudio/lib-observability/assert` for post-construction internal invariants.
@@ -299,7 +299,7 @@ Build tags are the authoritative test type discriminator:
 
 ## 20. Versioning and Compatibility
 
-- Semantic import path is `github.com/LerianStudio/lib-streaming/v3`; all install docs and examples must use this exact path, matching the `module` directive in `go.mod`. Cutting the next path-major (e.g. `/v4`) moves every import in the codebase, every example in the docs, and the `module` directive together in one change.
+- Semantic import path is `github.com/LerianStudio/lib-streaming/v4`; all install docs and examples must use this exact path, matching the `module` directive in `go.mod`. Cutting the next path-major (e.g. `/v4`) moves every import in the codebase, every example in the docs, and the `module` directive together in one change.
 - Breaking changes require a `CHANGELOG.md` entry and a migration note.
 - New exported identifiers require Go doc comments.
 - Behavior changes in exported functions require tests and documentation updates.

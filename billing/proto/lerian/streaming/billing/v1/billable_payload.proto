@@ -3,7 +3,7 @@
 // "lerian.streaming.billing.recorded-value".
 //
 // This schema is the protobuf successor to the shipped Go BillablePayload
-// (github.com/LerianStudio/lib-streaming/v3/billing) and mirrors its JSON field
+// (github.com/LerianStudio/lib-streaming/v4/billing) and mirrors its JSON field
 // semantics one-to-one so producers and consumers share a single, registry-
 // enforced source of truth. Field names, numbers, and optionality below ARE the
 // wire contract — do not renumber or repurpose an existing field. New fields

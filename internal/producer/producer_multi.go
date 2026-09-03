@@ -6,14 +6,14 @@ import (
 	"math"
 	"time"
 
-	"github.com/LerianStudio/lib-streaming/v3/obs"
+	"github.com/LerianStudio/lib-streaming/v4/obs"
 
 	"github.com/twmb/franz-go/pkg/kgo"
 
 	"github.com/LerianStudio/lib-commons/v6/commons/circuitbreaker"
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
-	"github.com/LerianStudio/lib-streaming/v3/internal/transport/kafka"
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/transport"
+	"github.com/LerianStudio/lib-streaming/v4/internal/transport/kafka"
 )
 
 // TargetSpec is the per-target wiring fed to NewProducerMulti. The

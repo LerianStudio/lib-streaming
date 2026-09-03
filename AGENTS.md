@@ -4,10 +4,10 @@ This file provides repository-specific guidance for coding agents working on `li
 
 ## Project snapshot
 
-- Module: `github.com/LerianStudio/lib-streaming/v3`
+- Module: `github.com/LerianStudio/lib-streaming/v4`
 - Language: Go
 - Go version: `1.26.3` (see `go.mod`)
-- Current API version: 3.x (module path carries the `/v3` suffix — cut by the event-streaming contract redesign: one topic per producing application, strict `ce-source`, the app segment in `ce-type`, schema version out of the topic, underscores in route keys, and the app-stream consumer surface. Import paths are `github.com/LerianStudio/lib-streaming/v3/...`. See `CHANGELOG.md` for tagged history and the v2→v3 migration.)
+- Current API version: 4.x (module path carries the `/v4` suffix — cut by the universal observability boundary, which removed lib-observability types from the public API. The `/v3` line was cut by the event-streaming contract redesign: one topic per producing application, strict `ce-source`, the app segment in `ce-type`, schema version out of the topic, underscores in route keys, and the app-stream consumer surface. Import paths are `github.com/LerianStudio/lib-streaming/v4/...`. See `CHANGELOG.md` for tagged history, `MIGRATION-v4.md` for the v3→v4 move, and the v2→v3 migration notes.)
 - Layout: public root facade at the repository root (`package streaming`) with implementation in internal packages (`internal/contract`, `internal/config`, `internal/manifest`, `internal/cloudevents`, `internal/emitter`, `internal/producer`, `internal/transport`). Public test helpers live in `streamingtest`. Scaffolding (`docs/`, `.github/`, `scripts/`) stays in subdirectories.
 
 ## Primary objective for changes
