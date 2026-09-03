@@ -1,5 +1,17 @@
 # Lib-streaming Changelog
 
+## [Unreleased]
+
+Features:
+- Add `streaming.NewAdminClient(cfg Config) (*kadm.Client, error)`, a public constructor for a Kafka admin client that dials brokers with the same TLS/SASL posture the producer and consumer use. It exists so a service can run admin round-trips — `DescribeTopicConfigs` for a retention check, `ListTopics`, describe-groups — without re-implementing the SASL mechanism mapping and the fail-closed transport rules, which live in an internal package. Mirrors `NewSchemaRegistryClient`: it takes the loaded `Config` and inherits every fail-closed guard (empty brokers → `ErrProducerMissingBrokers`; malformed CA → `ErrInvalidTLSConfig`; unsupported mechanism or a half credential → `ErrInvalidSASLMechanism`; SASL over plaintext without the opt-in → `ErrPlaintextSASLNotAllowed`). Construction performs no broker I/O, and the SASL password never reaches the returned error. **The caller owns the returned client and must `Close()` it** — that closes the underlying `*kgo.Client` this constructor created, unlike the runtime's internal provisioning path, which wraps a client it does not own and therefore never closes.
+
+Improvements:
+- Collapse the broker-dial security options onto one shared assembly (`internal/kafkasec.SecurityKgoOpts`). The producer, the consumer (and its produce-only DLQ client), and the new admin client each carried their own copy of the validate → TLS-1.2-floor → typed-nil-normalize → SASL-requires-TLS sequence; they now call one. No behavior change — one copy means a hardening change or a CVE response lands on every client at once.
+
+[Compare changes](https://github.com/LerianStudio/lib-streaming/compare/v3.1.0...HEAD)
+
+---
+
 ## [3.1.0](https://github.com/LerianStudio/lib-streaming/releases/tag/v3.1.0)
 
 Features:
