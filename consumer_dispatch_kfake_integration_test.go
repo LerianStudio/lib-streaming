@@ -13,8 +13,8 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/twmb/franz-go/pkg/kmsg"
 
-	"github.com/LerianStudio/lib-observability/v2/log"
-	streaming "github.com/LerianStudio/lib-streaming/v3"
+	"github.com/LerianStudio/lib-observability/v4/log"
+	streaming "github.com/LerianStudio/lib-streaming/v4"
 )
 
 // This file drives the WHOLE consumer contract through the PUBLIC surface

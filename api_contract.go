@@ -1,12 +1,13 @@
 package streaming
 
 import (
+	"github.com/twmb/franz-go/pkg/kadm"
 	"github.com/twmb/franz-go/pkg/sr"
 
-	"github.com/LerianStudio/lib-streaming/v3/internal/config"
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v3/internal/kafkasec"
-	"github.com/LerianStudio/lib-streaming/v3/internal/manifest"
+	"github.com/LerianStudio/lib-streaming/v4/internal/config"
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/kafkasec"
+	"github.com/LerianStudio/lib-streaming/v4/internal/manifest"
 )
 
 type (
@@ -258,4 +259,57 @@ func NewHealthError(state HealthState, cause error) *HealthError {
 // registry password.
 func NewSchemaRegistryClient(cfg Config) (*sr.Client, error) {
 	return kafkasec.BuildSchemaRegistryClient(cfg.SchemaRegistryURL, cfg.SchemaRegistryUsername, cfg.SchemaRegistryPassword)
+}
+
+// NewAdminClient builds a Kafka admin client from cfg's broker, TLS, and SASL
+// fields — the SAME dial posture the producer and consumer use — so a service
+// can run admin round-trips (DescribeTopicConfigs, ListTopics, describe groups)
+// against its own cluster without re-implementing the transport-security wiring.
+//
+// It exists for the same reason NewSchemaRegistryClient does: the SASL mechanism
+// builder and the fail-closed TLS/SASL gate live in an internal package, so
+// without this door a caller would have to hand-roll the mechanism mapping and
+// the plaintext rules. That second copy would drift from the producer's on the
+// first hardening change — and a drifted admin client is one that reads a
+// cluster the producer cannot write, or authenticates in a way the producer does
+// not.
+//
+// The motivating case is retention verification. A rail whose lifecycle events
+// are money facts must confirm at boot that its application topic and DLQ are
+// provisioned with unlimited retention: a client-provisioned topic left on the
+// broker's 7-day default would prune those facts silently. Derive the names to
+// check with AppTopic / AppDLQTopic / AppCommandsTopic — the same helpers the
+// runtime derives them from — and read the configs back through this client.
+//
+// Fail-closed guards, inherited verbatim from the internal builder:
+//   - cfg.Brokers empty: an error wrapping ErrProducerMissingBrokers, rather
+//     than a client silently pinned to franz-go's localhost:9092 default.
+//   - a malformed base64 CA in cfg.TLSCACert: ErrInvalidTLSConfig.
+//   - a SASL mechanism outside PLAIN / SCRAM-SHA-256 / SCRAM-SHA-512, or one
+//     configured with only a username or only a password:
+//     ErrInvalidSASLMechanism (the both-or-neither rule).
+//   - SASL configured without TLS and without cfg.SASLAllowPlaintext:
+//     ErrPlaintextSASLNotAllowed.
+//
+// Constructing the client performs no broker I/O; franz-go dials lazily, so an
+// unreachable cluster surfaces on the first admin request.
+//
+// LIFECYCLE: the caller owns the returned client and MUST Close it —
+// `defer admin.Close()`. That closes the *kgo.Client this constructor created
+// for it. (Contrast the runtime's internal provisioning path, which wraps an
+// already-live client it does not own and therefore never closes.)
+//
+// The returned error never includes the SASL password.
+func NewAdminClient(cfg Config) (*kadm.Client, error) {
+	tlsConfig, err := cfg.BuildTLSConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	mechanism, err := kafkasec.BuildSASLMechanism(cfg.SASLMechanism, cfg.SASLUsername, cfg.SASLPassword)
+	if err != nil {
+		return nil, err
+	}
+
+	return kafkasec.BuildAdminClient(cfg.Brokers, cfg.ClientID, tlsConfig, mechanism, cfg.SASLAllowPlaintext)
 }

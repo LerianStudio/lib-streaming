@@ -83,7 +83,7 @@ There is therefore **no public DLQ knob at all**. The DLQ topic is always
 topic (§6).
 
 Optional knobs via `ConsumerOption`: `WithConsumerLogger`,
-`WithConsumerMetricsFactory`, `WithConsumerTracer`, plus internal
+`WithConsumerMetricsRecorder`, `WithConsumerTracer`, plus internal
 `WithClassifier`/`WithDLQPublisher`/`WithCodec` seams used by tests.
 
 Boundary discipline matches the producer: public types are **aliases** in

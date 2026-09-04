@@ -8,10 +8,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/LerianStudio/lib-observability/v2/log"
+	"github.com/LerianStudio/lib-observability/v4/log"
 	"github.com/twmb/franz-go/pkg/kgo"
 
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
 )
 
 // spyLogger records log message strings so a test can assert observability
@@ -27,12 +27,12 @@ type spyLogger struct {
 
 func newSpyLogger() *spyLogger { return &spyLogger{Logger: log.NewNop()} }
 
-func (s *spyLogger) Log(_ context.Context, _ log.Level, msg string, fields ...log.Field) {
+func (s *spyLogger) Log(_ context.Context, _ int, msg string, fields ...any) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.msg = append(s.msg, msg)
-	s.fields = append(s.fields, append([]log.Field(nil), fields...))
+	s.fields = append(s.fields, log.Fields(fields...))
 }
 
 // fieldValues returns the values recorded under key on every line whose message

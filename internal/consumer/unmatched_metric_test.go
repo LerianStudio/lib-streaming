@@ -10,10 +10,10 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
-	"github.com/LerianStudio/lib-observability/v2/log"
-	libMetrics "github.com/LerianStudio/lib-observability/v2/metrics"
+	"github.com/LerianStudio/lib-observability/v4/log"
+	libMetrics "github.com/LerianStudio/lib-observability/v4/metrics"
 
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
 )
 
 // newUnmatchedMeterSetup builds a real SDK ManualReader-backed MetricsFactory
@@ -108,7 +108,7 @@ func TestRecordUnmatched_CapsTheEventKeyLabelCardinality(t *testing.T) {
 	spy := newSpyLogger()
 
 	r := newTestRuntime(t, newFakeGroupClient(), &fakeHandler{}, &fakeDLQ{},
-		WithMetricsFactory(factory), WithLogger(spy))
+		WithMetricsRecorder(factory), WithLogger(spy))
 
 	// One key past the cap: the first `cap` keep their own label, the last one
 	// must not mint a label of its own.
@@ -193,7 +193,7 @@ func TestRecordUnmatched_LogsOncePerKeyWhileMeteringPerRecord(t *testing.T) {
 	dispatcher := NewDispatcher().On("loan.settled", func(context.Context, contract.Event, []byte) error { return nil })
 
 	r := newTestRuntime(t, newFakeGroupClient(), dispatcher, &fakeDLQ{},
-		WithMetricsFactory(factory), WithLogger(spy))
+		WithMetricsRecorder(factory), WithLogger(spy))
 
 	unread := contract.Event{Source: "lender", ResourceType: "loan", EventType: "disbursed"}
 
@@ -234,7 +234,7 @@ func TestRecordUnmatched_NamesKeysPastTheLabelCap(t *testing.T) {
 	spy := newSpyLogger()
 
 	r := newTestRuntime(t, newFakeGroupClient(), &fakeHandler{}, &fakeDLQ{},
-		WithMetricsFactory(factory), WithLogger(spy))
+		WithMetricsRecorder(factory), WithLogger(spy))
 
 	for i := range maxUnmatchedEventKeyLabels {
 		r.recordUnmatched(ctx, "resource.evt_"+strconv.Itoa(i))

@@ -1,6 +1,6 @@
 package manifest
 
-import "github.com/LerianStudio/lib-streaming/v3/internal/contract"
+import "github.com/LerianStudio/lib-streaming/v4/internal/contract"
 
 // ManifestVersion is the wire-version of the JSON document returned by
 // BuildManifest / NewStreamingHandler. Follows semver:

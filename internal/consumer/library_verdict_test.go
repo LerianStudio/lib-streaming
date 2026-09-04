@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
 )
 
 // errMyBusinessRule stands in for the one error a service's classifier actually

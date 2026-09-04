@@ -6,18 +6,19 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/LerianStudio/lib-commons/v6/commons/circuitbreaker"
-	"github.com/LerianStudio/lib-commons/v6/commons/outbox"
-	"github.com/LerianStudio/lib-observability/v2/assert"
-	"github.com/LerianStudio/lib-observability/v2/log"
-	"github.com/LerianStudio/lib-observability/v2/metrics"
+	"github.com/LerianStudio/lib-streaming/v4/obs"
+
+	"github.com/LerianStudio/lib-commons/v7/commons/circuitbreaker"
+	"github.com/LerianStudio/lib-commons/v7/commons/outbox"
+	"github.com/LerianStudio/lib-observability/v4/assert"
+	"github.com/LerianStudio/lib-observability/v4/log"
 	"github.com/twmb/franz-go/pkg/sasl"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v3/internal/kafkasec"
-	"github.com/LerianStudio/lib-streaming/v3/internal/producer"
-	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/kafkasec"
+	"github.com/LerianStudio/lib-streaming/v4/internal/producer"
+	"github.com/LerianStudio/lib-streaming/v4/internal/transport"
 )
 
 // builderAsserterComponent is the component label every Builder asserter
@@ -94,7 +95,7 @@ type Builder struct {
 	// target adapters. Stored here in addition to the WithLogger entry
 	// in extraOptions because closure-stored options cannot be
 	// inspected portably from buildTargetSpecs.
-	logger log.Logger
+	logger obs.Logger
 
 	// sqsHelpers / rabbitmqHelpers / eventbridgeHelpers carry the
 	// per-target client/publisher bindings registered by the
@@ -396,7 +397,7 @@ func (b *Builder) SASLFromConfig(cfg Config) *Builder {
 // scanning extraOptions — which always returned log.NewNop() because
 // closure state is not portably inspectable. Persisting the logger
 // directly fixes that.
-func (b *Builder) Logger(logger log.Logger) *Builder {
+func (b *Builder) Logger(logger obs.Logger) *Builder {
 	if b == nil {
 		return b
 	}
@@ -407,13 +408,16 @@ func (b *Builder) Logger(logger log.Logger) *Builder {
 	return b
 }
 
-// MetricsFactory wires the metrics factory.
-func (b *Builder) MetricsFactory(factory *metrics.MetricsFactory) *Builder {
+// MetricsRecorder wires the sink for the streaming instruments.
+//
+// lib-observability's *metrics.MetricsFactory satisfies obs.MetricsRecorder
+// directly, and so does any three-method type of your own.
+func (b *Builder) MetricsRecorder(recorder obs.MetricsRecorder) *Builder {
 	if b == nil {
 		return b
 	}
 
-	b.extraOptions = append(b.extraOptions, WithMetricsFactory(factory))
+	b.extraOptions = append(b.extraOptions, WithMetricsRecorder(recorder))
 
 	return b
 }
@@ -606,7 +610,7 @@ func (b *Builder) buildMulti(ctx context.Context, routeTable RouteTable) (Emitte
 // EventBridge adapters simply do not satisfy this interface, and a custom
 // Kafka-like adapter opts in by declaring the method.
 type topicEnsurer interface {
-	EnsureTopics(ctx context.Context, logger log.Logger, topics ...string)
+	EnsureTopics(ctx context.Context, logger obs.Logger, topics ...string)
 }
 
 // producerOwnedTopics returns the topics a producer writes UNDER ITS OWN SOURCE
@@ -716,14 +720,14 @@ func (b *Builder) warnOffAppTopicKafkaRoutes(ctx context.Context, routeTable Rou
 			continue
 		}
 
-		logger.Log(ctx, log.LevelWarn,
+		logger.Log(ctx, obs.LevelWarn,
 			"streaming: Kafka route destination is outside this application's own topic names — one topic per producing application is the convention, and a Kafka ACL scoped to those names will reject this publish",
-			log.String("route_key", route.Key),
-			log.String("target", route.Target),
-			log.String("destination", route.Destination.Name),
-			log.String("app_topic", appTopic),
-			log.String("app_commands_topic", appCommandsTopic),
-			log.String("app_dlq_topic", appDLQTopic),
+			"route_key", route.Key,
+			"target", route.Target,
+			"destination", route.Destination.Name,
+			"app_topic", appTopic,
+			"app_commands_topic", appCommandsTopic,
+			"app_dlq_topic", appDLQTopic,
 		)
 	}
 }
@@ -964,7 +968,7 @@ func (b *Builder) resolveCloseTimeout() time.Duration {
 // resolveLogger no longer needs to scan extraOptions (which previously
 // always returned log.NewNop because closure state cannot be inspected
 // portably).
-func (b *Builder) resolveLogger() log.Logger {
+func (b *Builder) resolveLogger() obs.Logger {
 	if b == nil || transport.IsNilInterface(b.logger) {
 		return log.NewNop()
 	}
@@ -994,7 +998,7 @@ func (b *Builder) newAsserter(operation string) *assert.Asserter {
 	return assert.New(context.Background(), logger, builderAsserterComponent, operation)
 }
 
-func (b *Builder) buildDefaultKafkaAdapter(ctx context.Context, target TargetConfig, logger log.Logger) (TransportAdapter, error) {
+func (b *Builder) buildDefaultKafkaAdapter(ctx context.Context, target TargetConfig, logger obs.Logger) (TransportAdapter, error) {
 	// Per-target adapter does not own the CloudEventsSource envelope
 	// (the multi-target Producer does), so we pass "" for source.
 	cfg := kafkaTargetConfig(target, "")

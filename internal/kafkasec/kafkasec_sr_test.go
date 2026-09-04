@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
 )
 
 func TestBuildSchemaRegistryClient_ValidURLReturnsClient(t *testing.T) {

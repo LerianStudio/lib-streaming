@@ -11,11 +11,11 @@
 
 **lib-streaming** is Lerian Studio's event publication AND consumption library for CloudEvents-framed domain events. It gives Go services a catalog-driven `Emitter` API with multi-transport routing across Kafka, SQS, RabbitMQ, and EventBridge, per-target tenant-aware circuit breakers, route-aware outbox fallback, per-route DLQ, and observability contracts designed for financial infrastructure — plus a hardened at-least-once group `Consumer` that subscribes by producing application, dispatches by event key, verifies `ce-source`, and owns commit, retry, seek-back, DLQ, tenant propagation, and rebalance safety.
 
-It does not replace `github.com/LerianStudio/lib-commons/v6/commons/rabbitmq`, which remains the internal command-queue primitive. The two are orthogonal: lib-streaming carries past-tense business facts, lib-commons carries internal commands.
+It does not replace `github.com/LerianStudio/lib-commons/v7/commons/rabbitmq`, which remains the internal command-queue primitive. The two are orthogonal: lib-streaming carries past-tense business facts, lib-commons carries internal commands.
 
 | | |
 |---|---|
-| **Module** | `github.com/LerianStudio/lib-streaming/v3` |
+| **Module** | `github.com/LerianStudio/lib-streaming/v4` |
 | **Go** | `1.26.3` |
 | **License** | Elastic License 2.0. See [LICENSE](./LICENSE) |
 
@@ -90,7 +90,7 @@ It does not replace `github.com/LerianStudio/lib-commons/v6/commons/rabbitmq`, w
 ### 1. Install
 
 ```bash
-go get github.com/LerianStudio/lib-streaming/v3@latest
+go get github.com/LerianStudio/lib-streaming/v4@latest
 ```
 
 ### 2. Bootstrap a Producer
@@ -104,8 +104,8 @@ for _, warning := range warnings {
     logger.Log(ctx, log.LevelWarn, warning)
 }
 
-runtime.InitPanicMetrics(metricsFactory)
-assert.InitAssertionMetrics(metricsFactory)
+runtime.InitPanicMetrics(metricsRecorder)
+assert.InitAssertionMetrics(metricsRecorder)
 // Scrubs panic value strings and truncates stack traces before they hit
 // log fields, span events, and ErrorReporter payloads — guards against
 // PII leakage from arbitrary panic arguments and OTel attribute bloat.
@@ -160,7 +160,7 @@ emitter, err := streaming.NewBuilder().
         Brokers: cfg.Brokers,
     }).
     Logger(logger).
-    MetricsFactory(metricsFactory).
+    MetricsRecorder(metricsRecorder).
     Tracer(tracer).
     CircuitBreakerManager(cbManager).
     OutboxRepository(outboxRepo).
@@ -483,7 +483,7 @@ emitter, err := streaming.NewBuilder().
     }).
     SQSTarget("sqs-shadow", sqsClient, "https://sqs.us-east-1.amazonaws.com/123/q").
     Logger(logger).
-    MetricsFactory(metricsFactory).
+    MetricsRecorder(metricsRecorder).
     Tracer(tracer).
     OutboxRepository(outboxRepo).
     Build(ctx)
@@ -522,7 +522,7 @@ The SQS and EventBridge adapters reject provider wire messages larger than 256 K
 
 ### RabbitMQ is events-only
 
-The lib-streaming RabbitMQ adapter is for **business events** aimed at third-party / SaaS subscribers. Internal command queues remain on `github.com/LerianStudio/lib-commons/v6/commons/rabbitmq`. The two are orthogonal — neither replaces the other.
+The lib-streaming RabbitMQ adapter is for **business events** aimed at third-party / SaaS subscribers. Internal command queues remain on `github.com/LerianStudio/lib-commons/v7/commons/rabbitmq`. The two are orthogonal — neither replaces the other.
 
 ### Custom transports
 
@@ -761,7 +761,7 @@ go doc github.com/LerianStudio/lib-streaming
 
 Key public API areas:
 
-- **Builder** — `NewBuilder`, `Source`, `Catalog`, `Routes`, `Target`, `TargetExtra`, `RegisterTransport`, `CBFailureRatio`, `CBMinRequests`, `CBTimeout`, `CloseTimeout`, `Logger`, `MetricsFactory`, `Tracer`, `CircuitBreakerManager`, `OutboxRepository`, `OutboxWriter`, `TLSConfig`, `SASL`, `AllowPlaintextSASL`, `AllowSystemEvents`, `PartitionKey`, `SQSTarget`, `RabbitMQTarget`, `EventBridgeTarget`, `Build`.
+- **Builder** — `NewBuilder`, `Source`, `Catalog`, `Routes`, `Target`, `TargetExtra`, `RegisterTransport`, `CBFailureRatio`, `CBMinRequests`, `CBTimeout`, `CloseTimeout`, `Logger`, `MetricsRecorder`, `Tracer`, `CircuitBreakerManager`, `OutboxRepository`, `OutboxWriter`, `TLSConfig`, `SASL`, `AllowPlaintextSASL`, `AllowSystemEvents`, `PartitionKey`, `SQSTarget`, `RabbitMQTarget`, `EventBridgeTarget`, `Build`.
 - **Routes & destinations** — `TargetConfig`, `RouteDefinition`, `RouteTable`, `Destination`, `TransportKind`, `RouteRequirement`, `KafkaTopic`, `SQSQueueURL`, `RabbitMQRoute`, `EventBridgeBus`.
 - **Topic naming** — `AppTopic`, `AppDLQTopic`, `AppCommandsTopic`, `ValidateSource`, `TopicPrefix`, `DLQTopicSuffix`, `CommandsTopicSuffix`, `MaxKafkaTopicNameBytes`.
 - **Consumer dispatch** — `NewConsumer().Source(...)`, `.Apps(...)`, `.Commands(...)`, `.OnFrom(app, "<resourceType>.<eventType>", handler)`, `.On(...)` (single-app shorthand), `.UnmatchedPolicy(...)`, `.ExpectSources(...)`, `HandlerFunc`, `UnmatchedIgnore`, `UnmatchedError`, `ErrUnhandledEvent`, `ErrUnexpectedSource`, `ErrBareOnWithMultipleApps`, `ErrUnknownDispatchApp`, `ErrConsumerMissingSource`, `ErrConsumerPartitionHalted`, `ErrHandlerAndCommandsBothSet`.

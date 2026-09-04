@@ -9,8 +9,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/LerianStudio/lib-observability/v2/log"
-	streaming "github.com/LerianStudio/lib-streaming/v3"
+	"github.com/LerianStudio/lib-observability/v4/log"
+	streaming "github.com/LerianStudio/lib-streaming/v4"
 )
 
 // warnSpyLogger records Warn-level messages so a test can assert the build
@@ -24,7 +24,7 @@ type warnSpyLogger struct {
 
 func newWarnSpy() *warnSpyLogger { return &warnSpyLogger{Logger: log.NewNop()} }
 
-func (l *warnSpyLogger) Log(_ context.Context, level log.Level, msg string, _ ...log.Field) {
+func (l *warnSpyLogger) Log(_ context.Context, level int, msg string, _ ...any) {
 	if level != log.LevelWarn {
 		return
 	}
@@ -35,10 +35,8 @@ func (l *warnSpyLogger) Log(_ context.Context, level log.Level, msg string, _ ..
 	l.warns = append(l.warns, msg)
 }
 
-func (l *warnSpyLogger) With(...log.Field) log.Logger { return l }
-func (l *warnSpyLogger) WithGroup(string) log.Logger  { return l }
-func (l *warnSpyLogger) Enabled(log.Level) bool       { return true }
-func (l *warnSpyLogger) Sync(context.Context) error   { return nil }
+func (l *warnSpyLogger) Enabled(int) bool           { return true }
+func (l *warnSpyLogger) Sync(context.Context) error { return nil }
 
 func (l *warnSpyLogger) offTopicWarnings() int {
 	l.mu.Lock()

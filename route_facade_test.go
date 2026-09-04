@@ -6,7 +6,7 @@ import (
 	"errors"
 	"testing"
 
-	streaming "github.com/LerianStudio/lib-streaming/v3"
+	streaming "github.com/LerianStudio/lib-streaming/v4"
 )
 
 func TestFacade_RouteHelpersReturnExpectedDestinations(t *testing.T) {

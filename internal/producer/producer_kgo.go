@@ -5,7 +5,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/LerianStudio/lib-streaming/v3/internal/kafkasec"
+	"github.com/LerianStudio/lib-streaming/v4/internal/kafkasec"
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
@@ -107,37 +107,17 @@ func buildKgoOpts(cfg Config, opts emitterOptions) ([]kgo.Opt, error) {
 		kgoOpts = append(kgoOpts, kgo.ClientID(cfg.ClientID))
 	}
 
-	if err := kafkasec.ValidateTLSConfig(opts.tlsConfig); err != nil {
+	// Transport security (T8) comes from the ONE shared assembly in
+	// internal/kafkasec, so the producer, the consumer, and the admin client
+	// cannot drift on a hardening change: validation, the TLS 1.2 floor, the
+	// typed-nil normalization, and the fail-closed SASL-requires-TLS gate all
+	// happen there.
+	securityOpts, err := kafkasec.SecurityKgoOpts(opts.tlsConfig, opts.saslMechanism, opts.allowPlaintextSASL)
+	if err != nil {
 		return nil, err
 	}
 
-	tlsConfig := kafkasec.CloneTLSConfigWithDefaults(opts.tlsConfig)
-
-	saslMechanism := opts.saslMechanism
-	if isNilInterface(saslMechanism) {
-		saslMechanism = nil
-	}
-
-	if err := kafkasec.SASLRequiresTLS(saslMechanism != nil, tlsConfig != nil, opts.allowPlaintextSASL); err != nil {
-		return nil, err
-	}
-
-	// TLS configuration. franz-go's DialTLSConfig clones the config per-dial and
-	// auto-fills ServerName from the broker host; callers rarely need to set it.
-	// We still pass our own validated clone so caller mutations after option
-	// application cannot weaken transport security before the first dial.
-	if tlsConfig != nil {
-		kgoOpts = append(kgoOpts, kgo.DialTLSConfig(tlsConfig))
-	}
-
-	// SASL mechanism (T8). kgo.SASL is variadic; we always pass exactly one
-	// mechanism in v1. Multi-mechanism fallback (negotiate the first
-	// broker-supported one) is out of scope until a real auth flow ships.
-	if saslMechanism != nil {
-		kgoOpts = append(kgoOpts, kgo.SASL(saslMechanism))
-	}
-
-	return kgoOpts, nil
+	return append(kgoOpts, securityOpts...), nil
 }
 
 // resolveCompression maps the Config string to a kgo.CompressionCodec. The

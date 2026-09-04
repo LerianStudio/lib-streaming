@@ -11,12 +11,12 @@ import (
 
 	"github.com/twmb/franz-go/pkg/sasl/plain"
 
-	"github.com/LerianStudio/lib-observability/v2/log"
-	"github.com/LerianStudio/lib-observability/v2/metrics"
+	"github.com/LerianStudio/lib-observability/v4/log"
+	"github.com/LerianStudio/lib-observability/v4/metrics"
 	"go.opentelemetry.io/otel/trace/noop"
 
-	"github.com/LerianStudio/lib-streaming/v3/internal/consumer"
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/consumer"
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
 )
 
 // noopHandler is a do-nothing Handler for white-box builder-construction tests
@@ -198,7 +198,7 @@ func TestConsumerOptionPassthroughs(t *testing.T) {
 
 	opts := []ConsumerOption{
 		WithConsumerLogger(log.NewNop()),
-		WithConsumerMetricsFactory(&metrics.MetricsFactory{}),
+		WithConsumerMetricsRecorder(&metrics.MetricsFactory{}),
 		WithConsumerTracer(noop.NewTracerProvider().Tracer("t")),
 	}
 

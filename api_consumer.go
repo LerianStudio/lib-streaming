@@ -6,14 +6,14 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/LerianStudio/lib-streaming/v4/obs"
+
 	"github.com/twmb/franz-go/pkg/sasl"
 
-	"github.com/LerianStudio/lib-observability/v2/log"
-	"github.com/LerianStudio/lib-observability/v2/metrics"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/LerianStudio/lib-streaming/v3/internal/consumer"
-	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
+	"github.com/LerianStudio/lib-streaming/v4/internal/consumer"
+	"github.com/LerianStudio/lib-streaming/v4/internal/transport"
 )
 
 // Handler is the only interface a consuming service implements. The library
@@ -120,11 +120,11 @@ var (
 )
 
 // WithConsumerLogger sets the structured logger.
-func WithConsumerLogger(l log.Logger) ConsumerOption { return consumer.WithLogger(l) }
+func WithConsumerLogger(l obs.Logger) ConsumerOption { return consumer.WithLogger(l) }
 
-// WithConsumerMetricsFactory wires the metrics factory for consumer instruments.
-func WithConsumerMetricsFactory(f *metrics.MetricsFactory) ConsumerOption {
-	return consumer.WithMetricsFactory(f)
+// WithConsumerMetricsRecorder wires the sink for the consumer instruments.
+func WithConsumerMetricsRecorder(f obs.MetricsRecorder) ConsumerOption {
+	return consumer.WithMetricsRecorder(f)
 }
 
 // WithConsumerTracer overrides the tracer used for poll/handle spans.

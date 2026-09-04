@@ -16,9 +16,9 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
-	"github.com/LerianStudio/lib-commons/v6/commons/circuitbreaker"
-	"github.com/LerianStudio/lib-observability/v2/log"
-	libMetrics "github.com/LerianStudio/lib-observability/v2/metrics"
+	"github.com/LerianStudio/lib-commons/v7/commons/circuitbreaker"
+	"github.com/LerianStudio/lib-observability/v4/log"
+	libMetrics "github.com/LerianStudio/lib-observability/v4/metrics"
 )
 
 // --- Shared T6 helpers. ---
@@ -200,7 +200,7 @@ func TestMetrics_LazyInit_NilFactory_NoPanic_WarnsOnce(t *testing.T) {
 
 	spy.mu.Lock()
 	for _, e := range spy.entries {
-		if e.level == log.LevelWarn && strings.Contains(e.msg, "metrics factory is nil") {
+		if e.level == log.LevelWarn && strings.Contains(e.msg, "metrics recorder is nil") {
 			warnCount++
 		}
 	}
@@ -252,7 +252,7 @@ func TestMetrics_Emit_RecordsEmittedCounterWithOutcomeProduced(t *testing.T) {
 
 	emitter, err := New(context.Background(), cfg,
 		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
-		WithMetricsFactory(factory),
+		WithMetricsRecorder(factory),
 	)
 	if err != nil {
 		t.Fatalf("New err = %v", err)
@@ -302,7 +302,7 @@ func TestMetrics_Emit_RecordsDurationHistogram(t *testing.T) {
 
 	emitter, err := New(context.Background(), cfg,
 		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
-		WithMetricsFactory(factory),
+		WithMetricsRecorder(factory),
 	)
 	if err != nil {
 		t.Fatalf("New err = %v", err)
@@ -339,7 +339,7 @@ func TestMetrics_Emit_PreflightFailure_RecordsCallerErrorOutcome(t *testing.T) {
 
 	emitter, err := New(context.Background(), cfg,
 		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
-		WithMetricsFactory(factory),
+		WithMetricsRecorder(factory),
 	)
 	if err != nil {
 		t.Fatalf("New err = %v", err)
@@ -386,7 +386,7 @@ func TestMetrics_Emit_UnknownDefinitionUsesBoundedMetricTopic(t *testing.T) {
 
 	emitter, err := New(context.Background(), cfg,
 		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
-		WithMetricsFactory(factory),
+		WithMetricsRecorder(factory),
 	)
 	if err != nil {
 		t.Fatalf("New err = %v", err)
@@ -426,7 +426,7 @@ func TestMetrics_DLQ_RecordsDlqCounter(t *testing.T) {
 
 	emitter, err := New(context.Background(), cfg,
 		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
-		WithMetricsFactory(factory),
+		WithMetricsRecorder(factory),
 	)
 	if err != nil {
 		t.Fatalf("New err = %v", err)
@@ -503,7 +503,7 @@ func TestMetrics_DLQFailed_RecordsCounter(t *testing.T) {
 
 	emitter, err := New(context.Background(), cfg,
 		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
-		WithMetricsFactory(factory),
+		WithMetricsRecorder(factory),
 	)
 	if err != nil {
 		t.Fatalf("New err = %v", err)
@@ -554,7 +554,7 @@ func TestMetrics_OutboxRouted_RecordsCounter(t *testing.T) {
 
 	emitter, err := New(context.Background(), cfg,
 		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
-		WithMetricsFactory(factory),
+		WithMetricsRecorder(factory),
 		WithOutboxRepository(repo),
 	)
 	if err != nil {
@@ -630,7 +630,7 @@ func TestMetrics_CircuitOpen_NoOutbox_RecordsCircuitOpenOutcome(t *testing.T) {
 
 	emitter, err := New(context.Background(), cfg,
 		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
-		WithMetricsFactory(factory),
+		WithMetricsRecorder(factory),
 	)
 	if err != nil {
 		t.Fatalf("New err = %v", err)
@@ -672,7 +672,7 @@ func TestMetrics_CircuitState_UpdatedByListener(t *testing.T) {
 
 	emitter, err := New(context.Background(), cfg,
 		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
-		WithMetricsFactory(factory),
+		WithMetricsRecorder(factory),
 	)
 	if err != nil {
 		t.Fatalf("New err = %v", err)
@@ -728,7 +728,7 @@ func TestMetrics_CircuitState_UnknownStateDoesNotRecord(t *testing.T) {
 
 	emitter, err := New(context.Background(), cfg,
 		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
-		WithMetricsFactory(factory),
+		WithMetricsRecorder(factory),
 	)
 	if err != nil {
 		t.Fatalf("New err = %v", err)
@@ -811,7 +811,7 @@ func TestMetrics_NoTenantIDLabel_10kEmits(t *testing.T) {
 
 	emitter, err := New(context.Background(), cfg,
 		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
-		WithMetricsFactory(factory),
+		WithMetricsRecorder(factory),
 	)
 	if err != nil {
 		t.Fatalf("New err = %v", err)

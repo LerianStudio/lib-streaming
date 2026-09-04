@@ -7,14 +7,16 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/LerianStudio/lib-streaming/v4/obs"
+
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/LerianStudio/lib-commons/v6/commons"
-	"github.com/LerianStudio/lib-commons/v6/commons/circuitbreaker"
-	"github.com/LerianStudio/lib-observability/v2/log"
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-commons/v7/commons"
+	"github.com/LerianStudio/lib-commons/v7/commons/circuitbreaker"
+	"github.com/LerianStudio/lib-observability/v4/log"
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
 )
 
 // tracerName + emitSpanName live in emit_span.go (colocated with the
@@ -73,11 +75,11 @@ type Producer struct {
 	// logger is the structured logger. Never nil; New substitutes
 	// log.NewNop() when none supplied, so internal log sites can call
 	// Log(ctx, ...) unguarded.
-	logger log.Logger
+	logger obs.Logger
 
 	// metrics holds lazy-initialised OTEL instruments. Never nil after
-	// NewProducer; when WithMetricsFactory is omitted (or passed nil) the
-	// streamingMetrics still wraps a nil factory and degrades record* calls
+	// NewProducer; when WithMetricsRecorder is omitted (or passed nil) the
+	// streamingMetrics still wraps a nil recorder and degrades record* calls
 	// to a single WARN + silent no-ops. Kept non-nil so Emit can call
 	// p.metrics.recordEmitted unconditionally.
 	metrics *streamingMetrics

@@ -10,10 +10,10 @@ import (
 
 	"github.com/twmb/franz-go/pkg/kgo"
 
-	"github.com/LerianStudio/lib-observability/v2/log"
+	"github.com/LerianStudio/lib-observability/v4/log"
 
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v3/internal/transport/fake"
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/transport/fake"
 )
 
 // TestDefaultBuilderConfig proves the root builder seed is ENABLED and carries
@@ -266,7 +266,7 @@ func TestKgoGroupClient_NilGuards(t *testing.T) {
 }
 
 // TestConsumerOptions proves the construction-time options write the right
-// runtime field. WithMetricsFactory/WithTracer/WithCodec are otherwise only
+// runtime field. WithMetricsRecorder/WithTracer/WithCodec are otherwise only
 // reachable via the root facade aliases, so they show 0% in this package.
 func TestConsumerOptions(t *testing.T) {
 	t.Parallel()
@@ -280,7 +280,7 @@ func TestConsumerOptions(t *testing.T) {
 	r := &consumerRuntime{}
 
 	WithLogger(log.NewNop())(r)
-	WithMetricsFactory(nil)(r)
+	WithMetricsRecorder(nil)(r)
 	WithTracer(nil)(r)
 	WithClassifier(func(error) bool { return true })(r)
 	WithCodec(codec)(r)

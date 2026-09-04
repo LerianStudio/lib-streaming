@@ -4,12 +4,12 @@ import (
 	"crypto/tls"
 	"time"
 
-	"github.com/LerianStudio/lib-commons/v6/commons/circuitbreaker"
-	"github.com/LerianStudio/lib-commons/v6/commons/outbox"
-	"github.com/LerianStudio/lib-observability/v2/log"
-	"github.com/LerianStudio/lib-observability/v2/metrics"
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v3/internal/kafkasec"
+	"github.com/LerianStudio/lib-streaming/v4/obs"
+
+	"github.com/LerianStudio/lib-commons/v7/commons/circuitbreaker"
+	"github.com/LerianStudio/lib-commons/v7/commons/outbox"
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/kafkasec"
 	"github.com/twmb/franz-go/pkg/sasl"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -28,11 +28,11 @@ type EmitterOption func(*emitterOptions)
 // beyond construction.
 type emitterOptions struct {
 	// logger is the structured logger. Defaults to log.NewNop() when nil.
-	logger log.Logger
+	logger obs.Logger
 
-	// metricsFactory produces OTEL instruments. Nil is valid — the Producer
+	// metricsRecorder produces OTEL instruments. Nil is valid — the Producer
 	// falls back to a no-op recorder, logs a single warning at first Emit.
-	metricsFactory *metrics.MetricsFactory
+	metricsRecorder obs.MetricsRecorder
 
 	// tracer is the OTEL tracer for streaming.emit spans. Nil falls back to
 	// the global tracer provider.
@@ -90,19 +90,18 @@ type emitterOptions struct {
 // WithLogger sets the structured logger used across the package. When not
 // supplied, the Producer uses log.NewNop() so lib-commons stays silent by
 // default in library code.
-func WithLogger(l log.Logger) EmitterOption {
+func WithLogger(l obs.Logger) EmitterOption {
 	return func(o *emitterOptions) {
 		o.logger = l
 	}
 }
 
-// WithMetricsFactory wires the OTEL metrics factory used to register the 6
-// streaming instruments (see metrics.go in T6). Passing nil is supported —
-// the Producer switches to a no-op recorder and logs a single warning on
-// the first Emit.
-func WithMetricsFactory(f *metrics.MetricsFactory) EmitterOption {
+// WithMetricsRecorder wires the sink for the streaming instruments (see
+// metrics.go). Passing nil is supported — the Producer switches to a no-op
+// recorder and logs a single warning on the first Emit.
+func WithMetricsRecorder(f obs.MetricsRecorder) EmitterOption {
 	return func(o *emitterOptions) {
-		o.metricsFactory = f
+		o.metricsRecorder = f
 	}
 }
 

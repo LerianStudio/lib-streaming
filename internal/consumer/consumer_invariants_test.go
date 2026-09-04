@@ -10,7 +10,7 @@ import (
 
 	"github.com/twmb/franz-go/pkg/kgo"
 
-	"github.com/LerianStudio/lib-streaming/v3/internal/cloudevents"
+	"github.com/LerianStudio/lib-streaming/v4/internal/cloudevents"
 )
 
 // runUntilClosed drives Run to completion. The fake serves the script then a

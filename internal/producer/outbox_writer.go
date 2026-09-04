@@ -5,11 +5,13 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/LerianStudio/lib-commons/v6/commons/outbox"
-	"github.com/LerianStudio/lib-observability/v2/assert"
-	"github.com/LerianStudio/lib-observability/v2/log"
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
+	"github.com/LerianStudio/lib-streaming/v4/obs"
+
+	"github.com/LerianStudio/lib-commons/v7/commons/outbox"
+	"github.com/LerianStudio/lib-observability/v4/assert"
+	"github.com/LerianStudio/lib-observability/v4/log"
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/transport"
 )
 
 // OutboxWriter is the minimal durable-write boundary lib-streaming needs.
@@ -41,7 +43,7 @@ type TransactionalBatchOutboxWriter interface {
 
 type libCommonsOutboxWriter struct {
 	repo   outbox.OutboxRepository
-	logger log.Logger
+	logger obs.Logger
 }
 
 // asserterLogger returns the logger bound to this writer instance, falling
@@ -49,7 +51,7 @@ type libCommonsOutboxWriter struct {
 // nop fallback keeps the asserter usable on hand-built fixtures while the
 // production path always carries the Producer's logger (wired in NewProducer
 // via the WithOutboxRepository adapter).
-func (w *libCommonsOutboxWriter) asserterLogger() log.Logger {
+func (w *libCommonsOutboxWriter) asserterLogger() obs.Logger {
 	if w != nil && w.logger != nil {
 		return w.logger
 	}

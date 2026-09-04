@@ -10,7 +10,7 @@ import (
 
 	"github.com/twmb/franz-go/pkg/kerr"
 
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
 )
 
 // TestTruncateErrorMessage_BoundsTheHeaderBudget pins the bound on

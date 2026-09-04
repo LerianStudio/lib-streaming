@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/LerianStudio/lib-commons/v6/commons/circuitbreaker"
+	"github.com/LerianStudio/lib-commons/v7/commons/circuitbreaker"
 )
 
 // TestCBListener_NilProducer_FiresAssertion pins T-002: OnStateChange must

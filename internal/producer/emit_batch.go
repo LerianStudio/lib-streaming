@@ -5,10 +5,10 @@ import (
 	"database/sql"
 	"fmt"
 
-	libTracing "github.com/LerianStudio/lib-observability/v2/tracing"
+	libTracing "github.com/LerianStudio/lib-observability/v4/tracing"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
 )
 
 const emitBatchSpanName = "producer.outbox.emit_batch"

@@ -12,9 +12,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/LerianStudio/lib-commons/v6/commons/circuitbreaker"
-	"github.com/LerianStudio/lib-commons/v6/commons/outbox"
-	"github.com/LerianStudio/lib-observability/v2/log"
+	"github.com/LerianStudio/lib-commons/v7/commons/circuitbreaker"
+	"github.com/LerianStudio/lib-commons/v7/commons/outbox"
+	"github.com/LerianStudio/lib-observability/v4/log"
 )
 
 // --- Group 1.1: WithAllowSystemEvents opt-in ----------------------------------
@@ -443,7 +443,7 @@ func TestProducer_Emit_CircuitOpen_OutboxFailure_MetricsOutboxFailed(t *testing.
 		context.Background(),
 		cfg,
 		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
-		WithMetricsFactory(factory),
+		WithMetricsRecorder(factory),
 		WithCircuitBreakerManager(fakeMgr),
 		WithOutboxRepository(fakeRepo),
 	)

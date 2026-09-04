@@ -13,11 +13,11 @@ import (
 	"github.com/stretchr/testify/require"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 
-	"github.com/LerianStudio/lib-commons/v6/commons"
-	"github.com/LerianStudio/lib-commons/v6/commons/outbox"
-	outboxpg "github.com/LerianStudio/lib-commons/v6/commons/outbox/postgres"
-	libPostgres "github.com/LerianStudio/lib-commons/v6/commons/postgres"
-	"github.com/LerianStudio/lib-observability/v2/log"
+	"github.com/LerianStudio/lib-commons/v7/commons"
+	"github.com/LerianStudio/lib-commons/v7/commons/outbox"
+	outboxpg "github.com/LerianStudio/lib-commons/v7/commons/outbox/postgres"
+	libPostgres "github.com/LerianStudio/lib-commons/v7/commons/postgres"
+	"github.com/LerianStudio/lib-observability/v4/log"
 )
 
 func TestIntegration_Producer_EmitBatchCommitsAndRollsBackAtomically(t *testing.T) {

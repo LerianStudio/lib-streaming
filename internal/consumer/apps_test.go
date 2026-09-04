@@ -7,7 +7,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
 )
 
 func appsConfig(mutate func(*ConsumerConfig)) ConsumerConfig {

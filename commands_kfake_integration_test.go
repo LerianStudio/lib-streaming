@@ -11,8 +11,8 @@ import (
 	"github.com/twmb/franz-go/pkg/kfake"
 	"github.com/twmb/franz-go/pkg/kgo"
 
-	"github.com/LerianStudio/lib-observability/v2/log"
-	streaming "github.com/LerianStudio/lib-streaming/v3"
+	"github.com/LerianStudio/lib-observability/v4/log"
+	streaming "github.com/LerianStudio/lib-streaming/v4"
 )
 
 // This file drives the COMMANDS QUEUE end to end against a real broker

@@ -4,8 +4,9 @@ import (
 	"context"
 	"sync"
 
-	"github.com/LerianStudio/lib-observability/v2/log"
-	"github.com/LerianStudio/lib-observability/v2/metrics"
+	"github.com/LerianStudio/lib-observability/v4/log"
+
+	"github.com/LerianStudio/lib-streaming/v4/obs"
 )
 
 // Outcome label values. The "outcome" label on streaming metrics is a closed
@@ -48,99 +49,104 @@ const (
 
 const labelTopic = "topic"
 
-// streamingMetrics holds lazy-initialised OTEL instruments for the streaming
-// package. Mirrors the pattern in github.com/LerianStudio/lib-commons/v6/commons/circuitbreaker/manager.go:85-103
-// but per-instrument-lazy (instead of one-shot init) so a nil factory logs
-// once and subsequent callers pay zero cost beyond the sync.Once check.
+// streamingMetrics records the streaming instrument set through the
+// caller-supplied obs.MetricsRecorder.
 //
-// Nil-safety rules (every exported record* method enforces these):
-//   - nil receiver → no-op, no panic
-//   - nil factory  → warn-once log, then no-op forever after
-//   - builder creation error → log at ERROR level, record is a no-op; we
-//     do NOT retry because a creation failure indicates a misconfigured
-//     meter that retries won't fix
+// The recorder flattens instrument creation into the record call, so this
+// type holds no builders, no per-instrument sync.Once and no label-set cache:
+// caching instruments is the recorder implementation's job, and
+// lib-observability's *metrics.MetricsFactory already does it.
 //
-// Concurrency: sync.Once protects each instrument's first build. Reads of
-// the *Builder pointer after the Once runs are safe because sync.Once
-// establishes happens-before for the write.
-//
-// Per-instrument record methods live in metrics_recorders.go — split from
-// this file to keep both under the 300-line cap.
+// Nil-safety rules, enforced by the three helpers below:
+//   - nil receiver   -> no-op, no panic
+//   - nil recorder   -> one WARN, then no-op forever after
+//   - record failure -> WARN naming the metric; never propagated to the
+//     caller, because a metrics outage must not fail an emit
 type streamingMetrics struct {
-	// factory is the user-supplied metrics factory. MAY be nil — see warnOnce.
-	factory *metrics.MetricsFactory
+	// recorder is the caller-supplied metrics sink. MAY be nil.
+	recorder obs.MetricsRecorder
 
-	// logger is never nil — newStreamingMetrics substitutes log.NewNop() when
-	// the caller passes nil, mirroring the broader package convention.
-	logger log.Logger
+	// logger is never nil - newStreamingMetrics substitutes a no-op logger
+	// when the caller passes nil, mirroring the broader package convention.
+	logger obs.Logger
 
-	// Instrument builders + their once-guards. A separate Once per instrument
-	// keeps build failures isolated: if histogram creation fails, counters
-	// still work.
-	emittedOnce    sync.Once
-	emittedCounter *metrics.CounterBuilder
-	emittedCache   labelSetCache // topic+operation+outcome → labeled builder
-
-	emitDurationOnce      sync.Once
-	emitDurationHistogram *metrics.HistogramBuilder
-	emitDurationCache     labelSetCache // topic+outcome → labeled builder
-
-	dlqOnce    sync.Once
-	dlqCounter *metrics.CounterBuilder
-	dlqCache   labelSetCache // topic+error_class → labeled builder
-
-	dlqFailedOnce    sync.Once
-	dlqFailedCounter *metrics.CounterBuilder
-	dlqFailedCache   labelSetCache // topic → labeled builder
-
-	outboxRoutedOnce    sync.Once
-	outboxRoutedCounter *metrics.CounterBuilder
-	outboxRoutedCache   labelSetCache // topic+reason → labeled builder
-
-	outboxReplayTargetUnknownOnce    sync.Once
-	outboxReplayTargetUnknownCounter *metrics.CounterBuilder
-	outboxReplayTargetUnknownCache   labelSetCache // target → labeled builder
-
-	circuitStateOnce  sync.Once
-	circuitStateGauge *metrics.GaugeBuilder
-
-	cbRecoveryLivenessOnce  sync.Once
-	cbRecoveryLivenessGauge *metrics.GaugeBuilder
-
-	// warnOnce guards the single "metrics disabled" WARN the Producer emits
-	// when factory == nil at first-record time. Subsequent calls are silent.
+	// warnOnce guards the single "metrics disabled" WARN emitted when
+	// recorder is nil at first-record time. Subsequent calls are silent.
 	warnOnce sync.Once
 }
 
 // newStreamingMetrics constructs a streamingMetrics whose behaviour is
-// determined by factory:
+// determined by recorder:
 //
-//   - factory != nil → real recording; instruments build lazily on first touch.
-//   - factory == nil → all record* methods are no-ops after a single WARN log.
+//   - recorder != nil -> real recording.
+//   - recorder == nil -> all record* methods are no-ops after a single WARN.
 //
-// logger is substituted with log.NewNop() when nil so record* methods can
-// unconditionally call logger.Log without guarding.
-func newStreamingMetrics(factory *metrics.MetricsFactory, logger log.Logger) *streamingMetrics {
-	if logger == nil {
+// logger is substituted with a no-op when nil so record* methods can call
+// logger.Log unconditionally.
+func newStreamingMetrics(recorder obs.MetricsRecorder, logger obs.Logger) *streamingMetrics {
+	if isNilInterface(logger) {
 		logger = log.NewNop()
 	}
 
-	return &streamingMetrics{
-		factory: factory,
-		logger:  logger,
+	if isNilInterface(recorder) {
+		recorder = nil
 	}
+
+	return &streamingMetrics{recorder: recorder, logger: logger}
 }
 
-// warnNilFactoryOnce emits a single WARN log when the metrics factory is nil.
-// Subsequent calls are silent. The guard lives inside sync.Once so repeated
-// nil-factory record* calls don't spam logs.
-func (m *streamingMetrics) warnNilFactoryOnce(ctx context.Context) {
+// warnNilRecorderOnce emits a single WARN when the metrics recorder is nil.
+func (m *streamingMetrics) warnNilRecorderOnce(ctx context.Context) {
+	m.warnOnce.Do(func() {
+		m.logger.Log(ctx, obs.LevelWarn,
+			"streaming: metrics recorder is nil; metrics are disabled")
+	})
+}
+
+// ready reports whether m can record, warning once when it cannot.
+func (m *streamingMetrics) ready(ctx context.Context) bool {
 	if m == nil {
+		return false
+	}
+
+	if m.recorder == nil {
+		m.warnNilRecorderOnce(ctx)
+
+		return false
+	}
+
+	return true
+}
+
+// addOne increments the named counter by 1.
+func (m *streamingMetrics) addOne(ctx context.Context, name, description string, attrs map[string]string) {
+	if !m.ready(ctx) {
 		return
 	}
 
-	m.warnOnce.Do(func() {
-		m.logger.Log(ctx, log.LevelWarn,
-			"streaming: metrics factory is nil; metrics are disabled")
-	})
+	if err := m.recorder.AddCounter(ctx, name, description, "1", attrs, 1); err != nil {
+		m.logger.Log(ctx, obs.LevelWarn, "streaming: metrics: record counter", "metric", name, "error", err)
+	}
+}
+
+// setGauge sets the named gauge to value.
+func (m *streamingMetrics) setGauge(ctx context.Context, name, description string, value int64) {
+	if !m.ready(ctx) {
+		return
+	}
+
+	if err := m.recorder.SetGauge(ctx, name, description, "1", nil, value); err != nil {
+		m.logger.Log(ctx, obs.LevelWarn, "streaming: metrics: record gauge", "metric", name, "error", err)
+	}
+}
+
+// recordMS records a millisecond duration on the named histogram.
+func (m *streamingMetrics) recordMS(ctx context.Context, name, description string, attrs map[string]string, ms int64) {
+	if !m.ready(ctx) {
+		return
+	}
+
+	if err := m.recorder.RecordHistogram(ctx, name, description, "ms", attrs, float64(ms), nil); err != nil {
+		m.logger.Log(ctx, obs.LevelWarn, "streaming: metrics: record histogram", "metric", name, "error", err)
+	}
 }

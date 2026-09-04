@@ -8,7 +8,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
 )
 
 // ErrUnhandledEvent is returned for an event whose (app, event key) pair has no
@@ -107,7 +107,7 @@ type Dispatcher struct {
 	unmatched UnmatchedPolicy
 	// observeUnmatched, when set, is called for every event whose key has no
 	// registered handler. The consumer runtime wires it at Build so the
-	// dispatcher can meter and log without owning a metrics factory of its
+	// dispatcher can meter and log without owning a metrics recorder of its
 	// own. Nil is the valid standalone-dispatcher case.
 	//
 	// Ignoring unmatched events is the correct DEFAULT — an app stream carries

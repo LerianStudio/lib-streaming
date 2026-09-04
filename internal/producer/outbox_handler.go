@@ -4,13 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/LerianStudio/lib-streaming/v4/obs"
 
-	"github.com/LerianStudio/lib-commons/v6/commons/outbox"
-	"github.com/LerianStudio/lib-observability/v2/log"
-	"github.com/LerianStudio/lib-observability/v2/tracing"
+	"github.com/LerianStudio/lib-commons/v7/commons/outbox"
+	"github.com/LerianStudio/lib-observability/v4/tracing"
 
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/transport"
 )
 
 // RegisterOutboxRelay registers the stable streaming outbox relay handler.
@@ -78,10 +78,10 @@ func (p *Producer) handleOutboxRow(ctx context.Context, row *outbox.OutboxEvent)
 		// choice: an error would cause the Dispatcher to mark the row
 		// FAILED, which is destructive for a row that wasn't ours in
 		// the first place.
-		p.logger.Log(ctx, log.LevelWarn, "streaming: outbox row routed to streaming handler but EventType is not the stable relay type",
-			log.String("row_id", row.ID.String()),
-			log.String("event_type", row.EventType),
-			log.String("expected_event_type", StreamingOutboxEventType),
+		p.logger.Log(ctx, obs.LevelWarn, "streaming: outbox row routed to streaming handler but EventType is not the stable relay type",
+			"row_id", row.ID.String(),
+			"event_type", row.EventType,
+			"expected_event_type", StreamingOutboxEventType,
 		)
 
 		return nil
@@ -113,11 +113,11 @@ func (p *Producer) handleOutboxRow(ctx context.Context, row *outbox.OutboxEvent)
 		// operator-controlled target names (typically <10 in real
 		// deployments).
 		p.metrics.recordOutboxReplayTargetUnknown(ctx, envelope.Target)
-		p.logger.Log(ctx, log.LevelWarn, "streaming: outbox replay skipped — target not registered",
-			log.String("row_id", row.ID.String()),
-			log.String("route_key", envelope.RouteKey),
-			log.String("target", envelope.Target),
-			log.String("transport", string(envelope.Transport)),
+		p.logger.Log(ctx, obs.LevelWarn, "streaming: outbox replay skipped — target not registered",
+			"row_id", row.ID.String(),
+			"route_key", envelope.RouteKey,
+			"target", envelope.Target,
+			"transport", string(envelope.Transport),
 		)
 
 		return fmt.Errorf("streaming: replay outbox row %s: target %q is not registered: %w", row.ID, envelope.Target, contract.ErrMissingTarget)

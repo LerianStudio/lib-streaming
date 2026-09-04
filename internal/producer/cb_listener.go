@@ -5,10 +5,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 
-	"github.com/LerianStudio/lib-commons/v6/commons/circuitbreaker"
-	"github.com/LerianStudio/lib-observability/v2/assert"
-	"github.com/LerianStudio/lib-observability/v2/log"
-	"github.com/LerianStudio/lib-observability/v2/runtime"
+	"github.com/LerianStudio/lib-streaming/v4/obs"
+
+	"github.com/LerianStudio/lib-commons/v7/commons/circuitbreaker"
+	"github.com/LerianStudio/lib-observability/v4/assert"
+	"github.com/LerianStudio/lib-observability/v4/log"
+	"github.com/LerianStudio/lib-observability/v4/runtime"
 )
 
 // streamingStateListener satisfies circuitbreaker.StateChangeListener for a
@@ -62,7 +64,7 @@ type streamingStateListener struct {
 	// log.NewNop() in that case. Tests that intentionally construct a
 	// listener with producer=nil set this to a capture logger to observe the
 	// assertion firing.
-	fallbackLogger log.Logger
+	fallbackLogger obs.Logger
 }
 
 // OnStateChange is invoked by the circuit-breaker Manager on every state
@@ -161,9 +163,11 @@ func (l *streamingStateListener) onStateChange(
 	// so ops tooling can correlate CB transitions with emit log lines. The
 	// "service" field remains for back-compat with any pre-existing
 	// dashboards that key on it.
-	producerIDField := log.String("producer_id", l.producer.producerID)
-	targetField := log.String("target", targetRT.name)
-	tenantHashField := log.String("tenant_hash", hashTenantIDForLog(tenantID))
+	identity := []any{
+		"producer_id", l.producer.producerID,
+		"target", targetRT.name,
+		"tenant_hash", hashTenantIDForLog(tenantID),
+	}
 
 	if !recognized {
 		// Unknown state shouldn't happen for a registered breaker; log a
@@ -171,13 +175,12 @@ func (l *streamingStateListener) onStateChange(
 		// introduces a new state without updating this switch. NOT writing
 		// to the metric gauge here — writing an unknown numeric would
 		// corrupt the gauge semantics (0/1/2 closed/half-open/open).
-		l.producer.logger.Log(ctx, log.LevelWarn, "streaming: circuit state unknown",
-			producerIDField,
-			targetField,
-			tenantHashField,
-			log.String("service", serviceName),
-			log.String("from", string(from)),
-			log.String("to", string(to)),
+		l.producer.logger.Log(ctx, obs.LevelWarn, "streaming: circuit state unknown",
+			append(identity,
+				"service", serviceName,
+				"from", string(from),
+				"to", string(to),
+			)...,
 		)
 
 		return
@@ -201,14 +204,14 @@ func (l *streamingStateListener) onStateChange(
 		}
 	}
 
-	level := log.LevelInfo
+	level := obs.LevelInfo
 	msg := "streaming: circuit closed"
 
 	switch to {
 	case circuitbreaker.StateHalfOpen:
 		msg = "streaming: circuit half-open"
 	case circuitbreaker.StateOpen:
-		level = log.LevelWarn
+		level = obs.LevelWarn
 		msg = "streaming: circuit open"
 	case circuitbreaker.StateClosed:
 		// default msg already set
@@ -217,12 +220,11 @@ func (l *streamingStateListener) onStateChange(
 	}
 
 	l.producer.logger.Log(ctx, level, msg,
-		producerIDField,
-		targetField,
-		tenantHashField,
-		log.String("service", serviceName),
-		log.String("from", string(from)),
-		log.String("to", string(to)),
+		append(identity,
+			"service", serviceName,
+			"from", string(from),
+			"to", string(to),
+		)...,
 	)
 }
 

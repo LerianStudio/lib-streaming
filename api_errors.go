@@ -1,9 +1,9 @@
 package streaming
 
 import (
-	"github.com/LerianStudio/lib-streaming/v3/internal/cloudevents"
-	"github.com/LerianStudio/lib-streaming/v3/internal/consumer"
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/cloudevents"
+	"github.com/LerianStudio/lib-streaming/v4/internal/consumer"
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
 )
 
 type (

@@ -7,7 +7,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
 )
 
 func dispatchEvent(source, resourceType, eventType string) contract.Event {
@@ -244,7 +244,7 @@ func TestRuntime_WiresUnmatchedObservation(t *testing.T) {
 		t.Fatal("the runtime did not wire unmatched observation onto the dispatcher")
 	}
 
-	// The wired callback must be safe to call with no metrics factory and no
+	// The wired callback must be safe to call with no metrics recorder and no
 	// logger configured — observability is optional, never a panic source.
 	d.observeUnmatched(context.Background(), "audit.logged")
 }

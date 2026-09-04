@@ -6,15 +6,15 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/LerianStudio/lib-observability/v2/tracing"
+	"github.com/LerianStudio/lib-observability/v4/tracing"
 	"github.com/twmb/franz-go/pkg/kgo"
 
-	"github.com/LerianStudio/lib-streaming/v3/internal/cloudevents"
-	"github.com/LerianStudio/lib-streaming/v3/internal/config"
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v3/internal/emitter"
-	"github.com/LerianStudio/lib-streaming/v3/internal/manifest"
-	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
+	"github.com/LerianStudio/lib-streaming/v4/internal/cloudevents"
+	"github.com/LerianStudio/lib-streaming/v4/internal/config"
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/emitter"
+	"github.com/LerianStudio/lib-streaming/v4/internal/manifest"
+	"github.com/LerianStudio/lib-streaming/v4/internal/transport"
 )
 
 type (

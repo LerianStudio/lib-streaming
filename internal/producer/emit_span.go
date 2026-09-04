@@ -1,15 +1,14 @@
 package producer
 
 import (
+	"github.com/LerianStudio/lib-streaming/v4/obs"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
-
-	"github.com/LerianStudio/lib-observability/v2/log"
 )
 
 // tracerName is the instrumentation-library name used when the caller did
 // not supply a tracer via WithTracer. Matches the per-package convention
-// (see github.com/LerianStudio/lib-commons/v6/commons/rabbitmq/rabbitmq.go: otel.Tracer("rabbitmq")) so operators
+// (see github.com/LerianStudio/lib-commons/v7/commons/rabbitmq/rabbitmq.go: otel.Tracer("rabbitmq")) so operators
 // can filter on this library in tracing backends.
 const tracerName = "streaming"
 
@@ -86,7 +85,7 @@ func (p *Producer) setEmitSpanAttributes(span trace.Span, event Event, topic, de
 
 	span.SetAttributes(attrs...)
 
-	if p.logger.Enabled(log.LevelDebug) {
+	if p.logger.Enabled(obs.LevelDebug) {
 		span.SetAttributes(attribute.String("messaging.kafka.message.key", p.resolvePartitionKey(event)))
 	}
 }

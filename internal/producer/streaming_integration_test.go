@@ -36,14 +36,14 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/LerianStudio/lib-commons/v6/commons"
-	"github.com/LerianStudio/lib-commons/v6/commons/circuitbreaker"
-	"github.com/LerianStudio/lib-commons/v6/commons/outbox"
-	outboxpg "github.com/LerianStudio/lib-commons/v6/commons/outbox/postgres"
-	libPostgres "github.com/LerianStudio/lib-commons/v6/commons/postgres"
-	"github.com/LerianStudio/lib-observability/v2/log"
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v3/internal/dlqheader"
+	"github.com/LerianStudio/lib-commons/v7/commons"
+	"github.com/LerianStudio/lib-commons/v7/commons/circuitbreaker"
+	"github.com/LerianStudio/lib-commons/v7/commons/outbox"
+	outboxpg "github.com/LerianStudio/lib-commons/v7/commons/outbox/postgres"
+	libPostgres "github.com/LerianStudio/lib-commons/v7/commons/postgres"
+	"github.com/LerianStudio/lib-observability/v4/log"
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/dlqheader"
 )
 
 // redpandaImage pins the Redpanda container image. Pinning the tag (not
@@ -54,7 +54,7 @@ const redpandaImage = "docker.redpanda.com/redpandadata/redpanda:v24.2.18"
 
 // postgresImage pins the Postgres container image used by the outbox fallback
 // test. Matches the version family already in use by other integration tests
-// in github.com/LerianStudio/lib-commons/v6/commons/outbox/postgres.
+// in github.com/LerianStudio/lib-commons/v7/commons/outbox/postgres.
 const postgresImage = "postgres:16-alpine"
 
 // integrationSource is the CloudEvents ce-source used across the integration
@@ -822,7 +822,7 @@ func TestIntegration_OutboxFallbackUnderPartition(t *testing.T) {
 	require.NoError(t, err, "postgres connection string")
 
 	// Stand up the outbox_events schema. Mirrors the migration in
-	// github.com/LerianStudio/lib-commons/v6/commons/outbox/postgres/migrations/
+	// github.com/LerianStudio/lib-commons/v7/commons/outbox/postgres/migrations/
 	// without pulling in the golang-migrate dependency for a single integration test.
 	pgClient, err := libPostgres.New(libPostgres.Config{
 		PrimaryDSN: dsn,
@@ -836,7 +836,7 @@ func TestIntegration_OutboxFallbackUnderPartition(t *testing.T) {
 	require.NoError(t, err, "pgClient.Primary")
 
 	// Apply the outbox table + enum. Keep the schema identical to the
-	// github.com/LerianStudio/lib-commons/v6/commons/outbox/postgres migration
+	// github.com/LerianStudio/lib-commons/v7/commons/outbox/postgres migration
 	// so future changes only need to update one place.
 	_, err = primaryDB.ExecContext(ctx, `
 DO $$

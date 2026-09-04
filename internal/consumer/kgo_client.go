@@ -6,9 +6,8 @@ import (
 
 	"github.com/twmb/franz-go/pkg/kgo"
 
-	"github.com/LerianStudio/lib-streaming/v3/internal/contract"
-	"github.com/LerianStudio/lib-streaming/v3/internal/kafkasec"
-	"github.com/LerianStudio/lib-streaming/v3/internal/transport"
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/kafkasec"
 )
 
 // kgoGroupClient is the production GroupClient backed by a franz-go group
@@ -61,18 +60,12 @@ func buildConsumerKgoOpts(cfg ConsumerConfig) ([]kgo.Opt, error) {
 // consumer's group, holding an assignment it never polls. It is also the shared
 // security/transport base buildConsumerKgoOpts layers the group options on top of.
 func buildDLQKgoOpts(cfg ConsumerConfig) ([]kgo.Opt, error) {
-	if err := kafkasec.ValidateTLSConfig(cfg.tlsConfig); err != nil {
-		return nil, err
-	}
-
-	tlsConfig := kafkasec.CloneTLSConfigWithDefaults(cfg.tlsConfig)
-
-	saslMechanism := cfg.saslMechanism
-	if transport.IsNilInterface(saslMechanism) {
-		saslMechanism = nil
-	}
-
-	if err := kafkasec.SASLRequiresTLS(saslMechanism != nil, tlsConfig != nil, cfg.allowPlaintextSASL); err != nil {
+	// Transport security comes from the ONE shared assembly in internal/kafkasec
+	// — the SAME validation, TLS 1.2 floor, typed-nil normalization, and
+	// fail-closed SASL-requires-TLS gate the producer and the admin client run,
+	// so the clients never drift on a hardening change.
+	securityOpts, err := kafkasec.SecurityKgoOpts(cfg.tlsConfig, cfg.saslMechanism, cfg.allowPlaintextSASL)
+	if err != nil {
 		return nil, err
 	}
 
@@ -84,15 +77,7 @@ func buildDLQKgoOpts(cfg ConsumerConfig) ([]kgo.Opt, error) {
 		opts = append(opts, kgo.ClientID(cfg.ClientID))
 	}
 
-	if tlsConfig != nil {
-		opts = append(opts, kgo.DialTLSConfig(tlsConfig))
-	}
-
-	if saslMechanism != nil {
-		opts = append(opts, kgo.SASL(saslMechanism))
-	}
-
-	return opts, nil
+	return append(opts, securityOpts...), nil
 }
 
 // newKgoGroupClient builds the franz-go group client from ConsumerConfig and
