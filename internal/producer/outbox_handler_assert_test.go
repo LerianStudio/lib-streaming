@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/LerianStudio/lib-commons/v6/commons/outbox"
+	"github.com/LerianStudio/lib-commons/v7/commons/outbox"
 )
 
 // TestHandleOutboxRow_NilRow_FiresAssertion pins T-007: the lib-commons

@@ -11,7 +11,7 @@
 // streaming is the entry point for past-tense domain facts intended for
 // external consumers (e.g. "transaction.created"). It is NOT for internal
 // command dispatch or work queues — for those, use
-// github.com/LerianStudio/lib-commons/v6/commons/rabbitmq.
+// github.com/LerianStudio/lib-commons/v7/commons/rabbitmq.
 //
 // As of the consumer wave, streaming is no longer producer-only. The hardened
 // at-least-once group consumer (streaming.NewConsumer / streaming.Consumer /
@@ -26,7 +26,7 @@
 // responsibilities" below for why the tenant check is still the single biggest
 // operational invariant — the consumer makes it first-class, not optional.
 //
-// lib-streaming and github.com/LerianStudio/lib-commons/v6/commons/rabbitmq
+// lib-streaming and github.com/LerianStudio/lib-commons/v7/commons/rabbitmq
 // are orthogonal. Neither deprecates the other.
 //
 // # Quick start
@@ -196,7 +196,7 @@
 //
 // RabbitMQ events-only: the RabbitMQ adapter publishes business events for
 // third-party / SaaS subscribers. Internal command queues remain on
-// github.com/LerianStudio/lib-commons/v6/commons/rabbitmq.
+// github.com/LerianStudio/lib-commons/v7/commons/rabbitmq.
 //
 // For SDK shapes lib-streaming does not cover (Kinesis, Pub/Sub, NATS, ...),
 // declare TransportCustom on the route Destination and register the adapter
@@ -634,20 +634,20 @@
 // consuming services. Go does not provide a separate dev-dependency section,
 // so those packages can still appear in module-graph or SCA reports.
 //
-// # Relation to github.com/LerianStudio/lib-commons/v6/commons/dlq
+// # Relation to github.com/LerianStudio/lib-commons/v7/commons/dlq
 //
-// github.com/LerianStudio/lib-commons/v6/commons/dlq is a Redis-backed
+// github.com/LerianStudio/lib-commons/v7/commons/dlq is a Redis-backed
 // retriable work-item queue with consumer-driven dequeue semantics. This
 // package's per-topic Kafka DLQ (lerian.streaming.<source>.dlq) is an immutable,
 // consumer-pull, append-only quarantine log for failed event publications.
 // They are orthogonal and not substitutes:
 //
-//   - github.com/LerianStudio/lib-commons/v6/commons/dlq: work items that
+//   - github.com/LerianStudio/lib-commons/v7/commons/dlq: work items that
 //     need retry with exponential backoff.
 //   - streaming Kafka DLQ: events that failed to publish and need forensic
 //     analysis or manual replay.
 //
-// Choose github.com/LerianStudio/lib-commons/v6/commons/dlq for operational
+// Choose github.com/LerianStudio/lib-commons/v7/commons/dlq for operational
 // work queues; streaming's DLQ is automatic and scoped to publish failures.
 //
 // Note: x-lerian-dlq-retry-count is currently 0 on the PRODUCER path because

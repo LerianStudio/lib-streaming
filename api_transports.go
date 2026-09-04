@@ -121,7 +121,7 @@ func (b *Builder) SQSTarget(name string, client SQSPublisherClient, defaultQueue
 //
 // The lib-streaming RabbitMQ transport is for *business events* aimed at
 // third-party / SaaS subscribers. Internal command queues remain on
-// `github.com/LerianStudio/lib-commons/v6/commons/rabbitmq`.
+// `github.com/LerianStudio/lib-commons/v7/commons/rabbitmq`.
 type RabbitMQPublisher = rabbitmq.RabbitMQPublisher
 
 // RabbitMQPingClient is the optional health capability production RabbitMQ
