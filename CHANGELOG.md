@@ -10,6 +10,15 @@ Improvements:
 
 [Compare changes](https://github.com/LerianStudio/lib-streaming/compare/v3.1.0...HEAD)
 
+## [3.1.1](https://github.com/LerianStudio/lib-streaming/releases/tag/v3.1.1)
+
+Fixes:
+
+- Updated `golang.org/x/crypto` to `v0.56.0` to address three security advisories. (@fredcamaral)
+- Upgraded `google.golang.org/grpc` to `v1.83.1` to mitigate CVE-2026-84304. (@rodrigodh)
+
+[Compare changes](https://github.com/LerianStudio/lib-streaming/compare/v3.1.0...v3.1.1)
+
 ---
 
 ## [3.1.0](https://github.com/LerianStudio/lib-streaming/releases/tag/v3.1.0)
