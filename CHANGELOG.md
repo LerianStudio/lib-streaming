@@ -1,5 +1,27 @@
 # Lib-streaming Changelog
 
+## [4.0.0](https://github.com/LerianStudio/lib-streaming/releases/tag/v4.0.0)
+
+Features:
+- Introduced `NewAdminClient` for Kafka admin round-trips. (@fredcamaral)
+
+Fixes:
+- Updated `google.golang.org/grpc` to version `v1.83.1` to address CVE-2026-84304. (@rodrigodh)
+- Bumped `golang.org/x/crypto` to version `v0.56.0` to mitigate two DoS advisories. (@rodrigodh)
+
+Improvements:
+- Renamed the module path to `/v4`. (@rodrigodh)
+- Updated documentation to accurately reflect the release history and migration guide following the module path rename. (@rodrigodh)
+- Enhanced the public API to accept universal observability contracts. (@rodrigodh)
+- Documented the `v4` observability boundary migration. (@rodrigodh)
+- Guarded the lib-observability boundary using `go/ast`. (@rodrigodh)
+- Updated dependencies to use `lib-observability` `v4` and `lib-commons` `v7`. (@rodrigodh)
+- Moved to `lib-commons` `v7` and pinned stable releases. (@rodrigodh)
+
+[Compare changes](https://github.com/LerianStudio/lib-streaming/compare/v3.1.1...v4.0.0)
+
+---
+
 ## [Unreleased]
 
 Features:
