@@ -6,8 +6,8 @@ import (
 
 	"github.com/LerianStudio/lib-streaming/v4/obs"
 
-	"github.com/LerianStudio/lib-commons/v6/commons/circuitbreaker"
-	"github.com/LerianStudio/lib-commons/v6/commons/outbox"
+	"github.com/LerianStudio/lib-commons/v7/commons/circuitbreaker"
+	"github.com/LerianStudio/lib-commons/v7/commons/outbox"
 	"github.com/twmb/franz-go/pkg/sasl"
 	"go.opentelemetry.io/otel/trace"
 

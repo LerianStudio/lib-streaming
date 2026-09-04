@@ -14,8 +14,8 @@ import (
 
 	"github.com/LerianStudio/lib-streaming/v4/obs"
 
-	"github.com/LerianStudio/lib-commons/v6/commons/backoff"
-	"github.com/LerianStudio/lib-commons/v6/commons/security/ssrf"
+	"github.com/LerianStudio/lib-commons/v7/commons/backoff"
+	"github.com/LerianStudio/lib-commons/v7/commons/security/ssrf"
 	"github.com/LerianStudio/lib-observability/v4/assert"
 	"github.com/LerianStudio/lib-observability/v4/log"
 )

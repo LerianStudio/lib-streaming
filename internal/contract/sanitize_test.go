@@ -12,7 +12,7 @@ import (
 // TestSanitizeBrokerURL verifies that credentials embedded in broker URLs,
 // connection strings, and raw "password=" / "pass=" key/value pairs are
 // stripped before any log output or error surfacing. Pattern mirrors the
-// behavior of github.com/LerianStudio/lib-commons/v6/commons/rabbitmq/rabbitmq.go:129 and :470.
+// behavior of github.com/LerianStudio/lib-commons/v7/commons/rabbitmq/rabbitmq.go:129 and :470.
 func TestSanitizeBrokerURL(t *testing.T) {
 	t.Parallel()
 

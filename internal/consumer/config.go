@@ -9,7 +9,7 @@ import (
 
 	"github.com/twmb/franz-go/pkg/sasl"
 
-	"github.com/LerianStudio/lib-commons/v6/commons"
+	"github.com/LerianStudio/lib-commons/v7/commons"
 
 	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
 	"github.com/LerianStudio/lib-streaming/v4/internal/kafkasec"

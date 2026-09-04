@@ -3,8 +3,8 @@ package streaming
 import (
 	"context"
 
-	"github.com/LerianStudio/lib-commons/v6/commons"
-	"github.com/LerianStudio/lib-commons/v6/commons/outbox"
+	"github.com/LerianStudio/lib-commons/v7/commons"
+	"github.com/LerianStudio/lib-commons/v7/commons/outbox"
 
 	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
 	"github.com/LerianStudio/lib-streaming/v4/internal/emitter"

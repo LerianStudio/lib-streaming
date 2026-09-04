@@ -16,7 +16,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
-	"github.com/LerianStudio/lib-commons/v6/commons/circuitbreaker"
+	"github.com/LerianStudio/lib-commons/v7/commons/circuitbreaker"
 	"github.com/LerianStudio/lib-observability/v4/log"
 	libMetrics "github.com/LerianStudio/lib-observability/v4/metrics"
 )

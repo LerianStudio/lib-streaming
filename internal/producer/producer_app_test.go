@@ -14,9 +14,9 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"go.uber.org/goleak"
 
-	libCommons "github.com/LerianStudio/lib-commons/v6/commons"
-	commonsHttp "github.com/LerianStudio/lib-commons/v6/commons/net/http"
-	"github.com/LerianStudio/lib-commons/v6/commons/outbox"
+	libCommons "github.com/LerianStudio/lib-commons/v7/commons"
+	commonsHttp "github.com/LerianStudio/lib-commons/v7/commons/net/http"
+	"github.com/LerianStudio/lib-commons/v7/commons/outbox"
 	"github.com/LerianStudio/lib-observability/v4/log"
 )
 

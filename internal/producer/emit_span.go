@@ -8,7 +8,7 @@ import (
 
 // tracerName is the instrumentation-library name used when the caller did
 // not supply a tracer via WithTracer. Matches the per-package convention
-// (see github.com/LerianStudio/lib-commons/v6/commons/rabbitmq/rabbitmq.go: otel.Tracer("rabbitmq")) so operators
+// (see github.com/LerianStudio/lib-commons/v7/commons/rabbitmq/rabbitmq.go: otel.Tracer("rabbitmq")) so operators
 // can filter on this library in tracing backends.
 const tracerName = "streaming"
 

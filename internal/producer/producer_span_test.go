@@ -341,7 +341,7 @@ func spanEventNames(s tracetest.SpanStub) []string {
 // must fall back to the global tracer provider (otel.Tracer("streaming")).
 // If no global provider is set, otel returns a no-op tracer and spans
 // are silently dropped — this is the correct behaviour for library code
-// and matches the conventions in github.com/LerianStudio/lib-commons/v6/commons/rabbitmq / github.com/LerianStudio/lib-commons/v6/commons/postgres.
+// and matches the conventions in github.com/LerianStudio/lib-commons/v7/commons/rabbitmq / github.com/LerianStudio/lib-commons/v7/commons/postgres.
 //
 // This test is NOT asserting a span is visible (no global provider set);
 // it's asserting the Producer does not panic and the Emit succeeds.

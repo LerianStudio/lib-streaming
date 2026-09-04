@@ -6,8 +6,8 @@ import (
 	"encoding/hex"
 	"fmt"
 
-	"github.com/LerianStudio/lib-commons/v6/commons/circuitbreaker"
-	tmcore "github.com/LerianStudio/lib-commons/v6/commons/tenant-manager/core"
+	"github.com/LerianStudio/lib-commons/v7/commons/circuitbreaker"
+	tmcore "github.com/LerianStudio/lib-commons/v7/commons/tenant-manager/core"
 
 	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
 )

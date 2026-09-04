@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/LerianStudio/lib-commons/v6/commons/circuitbreaker"
+	"github.com/LerianStudio/lib-commons/v7/commons/circuitbreaker"
 	"github.com/LerianStudio/lib-observability/v4/runtime"
 )
 

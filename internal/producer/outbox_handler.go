@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"github.com/LerianStudio/lib-streaming/v4/obs"
 
-	"github.com/LerianStudio/lib-commons/v6/commons/outbox"
+	"github.com/LerianStudio/lib-commons/v7/commons/outbox"
 	"github.com/LerianStudio/lib-observability/v4/tracing"
 
 	"github.com/LerianStudio/lib-streaming/v4/internal/contract"

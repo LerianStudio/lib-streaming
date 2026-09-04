@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/LerianStudio/lib-commons/v6/commons/outbox"
+	"github.com/LerianStudio/lib-commons/v7/commons/outbox"
 	"github.com/LerianStudio/lib-observability/v4/log"
 	"github.com/google/uuid"
 

@@ -19,10 +19,10 @@ import (
 	mongooptions "go.mongodb.org/mongo-driver/v2/mongo/options"
 	"go.opentelemetry.io/otel/trace/noop"
 
-	"github.com/LerianStudio/lib-commons/v6/commons"
-	libMongo "github.com/LerianStudio/lib-commons/v6/commons/mongo"
-	"github.com/LerianStudio/lib-commons/v6/commons/outbox"
-	outboxmongo "github.com/LerianStudio/lib-commons/v6/commons/outbox/mongo"
+	"github.com/LerianStudio/lib-commons/v7/commons"
+	libMongo "github.com/LerianStudio/lib-commons/v7/commons/mongo"
+	"github.com/LerianStudio/lib-commons/v7/commons/outbox"
+	outboxmongo "github.com/LerianStudio/lib-commons/v7/commons/outbox/mongo"
 	"github.com/LerianStudio/lib-observability/v4/log"
 )
 

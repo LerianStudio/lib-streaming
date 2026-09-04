@@ -4,7 +4,7 @@ import (
 	"context"
 	"github.com/LerianStudio/lib-streaming/v4/obs"
 
-	libCommons "github.com/LerianStudio/lib-commons/v6/commons"
+	libCommons "github.com/LerianStudio/lib-commons/v7/commons"
 )
 
 // Compile-time assertion: *Producer must satisfy commons.App. A missing
