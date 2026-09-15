@@ -3,6 +3,7 @@
 package streaming_test
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -318,5 +319,86 @@ func TestParseDiscardRecord_ReboundingSurvivesAHostileMarker(t *testing.T) {
 				t.Error("ErrorMessage kept a NUL")
 			}
 		})
+	}
+}
+
+// THIS LIBRARY'S OWN WRITER puts a NUL on the wire. The hazard is not
+// foreign-input-only, which is what makes the read-side bound mandatory rather
+// than defensive.
+//
+// TruncateErrorMessage returns a message below the bound VERBATIM, and the DLQ
+// publish path does not run it through contract.HasControlChar — that check
+// guards event definitions, emit requests and routes, not this header. So an
+// error wrapping a byte slice, a driver message quoting a value, or any
+// fmt.Errorf over data is written exactly as it came.
+func TestParseDiscardRecord_TheWritersOwnNULIsBoundedByTheReader(t *testing.T) {
+	t.Parallel()
+
+	// An error a real handler produces: a driver message quoting the offending
+	// value. Padded so the writer's verbatim output sits exactly on the bound.
+	handlerError := "insert failed: value \x00 rejected: " +
+		strings.Repeat("d", streaming.DLQMaxErrorMessageBytes-len("insert failed: value \x00 rejected: "))
+
+	onTheWire := dlqheader.TruncateErrorMessage(handlerError)
+	if onTheWire != handlerError {
+		t.Fatal("this test's premise is wrong: the writer no longer emits a below-bound message verbatim")
+	}
+
+	if strings.IndexByte(onTheWire, 0) < 0 {
+		t.Fatal("this test's premise is wrong: the writer no longer puts the NUL on the wire")
+	}
+
+	got := streaming.ParseDiscardRecord([]kgo.RecordHeader{
+		{Key: streaming.DLQHeaderErrorMessage, Value: []byte(onTheWire)},
+	}, nil)
+
+	if len(got.ErrorMessage) > streaming.DLQMaxErrorMessageBytes {
+		t.Errorf("ErrorMessage is %d bytes, over the documented bound of %d",
+			len(got.ErrorMessage), streaming.DLQMaxErrorMessageBytes)
+	}
+
+	if strings.IndexByte(got.ErrorMessage, 0) >= 0 {
+		t.Error("ErrorMessage kept the writer's NUL")
+	}
+
+	if !strings.HasPrefix(got.ErrorMessage, "insert failed: value "+replacement+" rejected: ") {
+		t.Errorf("ErrorMessage = %.64q...; the readable head of the writer's error must survive", got.ErrorMessage)
+	}
+}
+
+// The worst case: every byte is a NUL, so sanitising TRIPLES the value.
+//
+// A bound re-applied by subtracting a fixed slack, rather than by measuring the
+// sanitised result, would hold for the one-NUL case and fail here.
+func TestParseDiscardRecord_AnAllNULMessageIsStillBounded(t *testing.T) {
+	t.Parallel()
+
+	raw := bytes.Repeat([]byte{0}, streaming.DLQMaxErrorMessageBytes)
+
+	grown := len(raw) * len(replacement)
+	if grown != 3*streaming.DLQMaxErrorMessageBytes {
+		t.Fatalf("this test's premise is wrong: the growth factor is not 3, it is %d", grown/len(raw))
+	}
+
+	got := streaming.ParseDiscardRecord([]kgo.RecordHeader{
+		{Key: streaming.DLQHeaderErrorMessage, Value: raw},
+	}, nil)
+
+	if len(got.ErrorMessage) > streaming.DLQMaxErrorMessageBytes {
+		t.Errorf("ErrorMessage is %d bytes; sanitising grew %d bytes to %d and the bound must still hold",
+			len(got.ErrorMessage), len(raw), grown)
+	}
+
+	if !utf8.ValidString(got.ErrorMessage) {
+		t.Error("the cut landed inside a replacement rune")
+	}
+
+	original, truncated := streaming.TruncatedErrorMessageBytes(got.ErrorMessage)
+	if !truncated {
+		t.Fatal("a message this heavily cut must say it was cut")
+	}
+
+	if original != len(raw) {
+		t.Errorf("TruncatedErrorMessageBytes = %d; want the length as it ARRIVED, %d", original, len(raw))
 	}
 }
