@@ -11,8 +11,13 @@
 // Tenant identity is carried exclusively in the CloudEvents ce-tenantid
 // header. There is deliberately no SourceTenantID key — duplicating tenant
 // data across header namespaces would widen the wire contract beyond the
-// documented six DLQ headers and force every consumer to reconcile two
+// documented x-lerian-dlq-* set and force every consumer to reconcile two
 // sources of truth.
+//
+// That set is nine hop-scoped keys, on every DLQ message and replaced rather
+// than appended when an entry is quarantined again, plus two payload markers
+// carried across hops and present only when the payload had to be dropped.
+// Counted anywhere else, the number drifts; hopHeaders below is the set.
 //
 // The package also owns the two size rules every DLQ writer obeys —
 // MaxErrorMessageBytes / TruncateErrorMessage for the one unbounded header
@@ -64,8 +69,8 @@ func IsHopHeader(key string) bool {
 	return ok
 }
 
-// The six DLQ forensic header keys (TRD §C8). Every DLQ message carries all
-// six; none are optional.
+// The DLQ forensic header keys every writer stamps, producer or consumer
+// (TRD §C8). None of them are optional.
 const (
 	SourceTopic    = "x-lerian-dlq-source-topic"
 	ErrorClass     = "x-lerian-dlq-error-class"
@@ -77,7 +82,7 @@ const (
 
 // The two consumer-specific DLQ forensic header keys. A consumed record carries
 // a source partition and offset the producer never has (the producer quarantines
-// before any broker assigns them), so they are NOT part of the frozen six. They
+// before any broker assigns them), so they are NOT in the block above. They
 // are equally a wire contract — replay/forensic tooling reads them to locate the
 // poison record in the source topic — so their string values are frozen too.
 const (
