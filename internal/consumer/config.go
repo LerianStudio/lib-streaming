@@ -55,6 +55,14 @@ var (
 	ErrHandlerAndDispatchBothSet = errors.New(
 		"streaming consumer: Handler(...) and On(...) are mutually exclusive — use On for per-event dispatch, Handler for the raw stream")
 
+	// ErrDiscardHandlerMisrouted is returned when a DiscardHandler reaches the
+	// plain Handler path. Unreachable by construction — the runtime resolves
+	// the discard seam once at New and routes every record to HandleDiscard —
+	// so it exists to make a future refactor that drops that resolution fail
+	// as one named quarantine instead of a nil dispatch.
+	ErrDiscardHandlerMisrouted = errors.New(
+		"streaming consumer: a DiscardHandler reached the plain Handler path — the discard seam was not resolved")
+
 	// ErrBareOnWithMultipleApps is returned when a consumer subscribed to more
 	// than one producing application registers a handler with a bare
 	// On(eventKey, ...). With two producers in scope the key alone does not say

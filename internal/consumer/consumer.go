@@ -18,38 +18,20 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/dlqheader"
 	"github.com/LerianStudio/lib-streaming/v4/internal/transport"
 	"github.com/LerianStudio/lib-streaming/v4/internal/transport/kafka"
 )
 
-// DLQ cause kinds, stamped on x-lerian-dlq-cause-kind. Low-cardinality by
-// design: an operator filters and alerts on this, then reads the sanitized
-// underlying error from x-lerian-dlq-error-message.
-//
-// They exist because every DLQ entry used to carry the SAME message. A
-// consumer's DLQ filling up told an operator that something was terminal, and
-// nothing else — a codec fault (the producer's wire format drifted), a source
-// mismatch (a foreign write, or a misconfigured allowlist), an unhandled key
-// (this consumer's registrations drifted behind the producer's catalog) and a
-// genuine business rejection were indistinguishable, and they have four
-// different owners and four different fixes.
+// DLQ cause kinds, stamped on x-lerian-dlq-cause-kind. The values — and the
+// reasoning behind having four of them — live in internal/dlqheader beside the
+// header key whose values they are, because they are a wire contract a DLQ
+// reader compares against. These are the runtime's local names for them.
 const (
-	// dlqCauseCodec: the CloudEvents headers would not decode. The record is
-	// poison and can never parse; the producer's wire format is the suspect.
-	dlqCauseCodec = "codec"
-	// dlqCauseHandler: the service handler returned a terminal error. The
-	// business rejection is the suspect.
-	dlqCauseHandler = "handler"
-	// dlqCauseSourceMismatch: the event's ce-source was not an expected
-	// producer. Either a foreign write to the topic, or an ExpectSources
-	// allowlist that drifted from what actually publishes there.
-	dlqCauseSourceMismatch = "source_mismatch"
-	// dlqCauseUnhandledKey: no handler registered for the event key. Fires on
-	// EVERY unmatched key from a COMMANDS queue (always strict — a command is
-	// work addressed to this consumer), and on a fact stream only under the
-	// opt-in UnmatchedError policy. Either way this consumer's On(...)
-	// registrations have drifted behind the producer's catalog.
-	dlqCauseUnhandledKey = "unhandled_key"
+	dlqCauseCodec          = dlqheader.CauseCodec
+	dlqCauseHandler        = dlqheader.CauseHandler
+	dlqCauseSourceMismatch = dlqheader.CauseSourceMismatch
+	dlqCauseUnhandledKey   = dlqheader.CauseUnhandledKey
 )
 
 // ErrUnexpectedSource is returned when a record's ce-source is not one of the
@@ -247,6 +229,13 @@ type consumerRuntime struct {
 	// then meters nothing. Build one Dispatcher per consumer.
 	dispatcher *Dispatcher
 
+	// discard is the handler when it reads a ".dlq" topic, resolved once at
+	// construction like dispatcher. Non-nil switches the per-record guard chain
+	// onto the discard path: the codec fault stops being a verdict and
+	// ce-source verification is skipped, because on a DLQ reader both would
+	// quarantine the very topic being drained. See DiscardHandler.
+	discard DiscardHandler
+
 	// commandTopics is the set of subscribed topics carrying STRICT unmatched
 	// semantics, resolved once from cfg.Commands. Read per record on the guard
 	// chain, which is why it is a set rather than a slice scan.
@@ -310,6 +299,12 @@ func New(cfg ConsumerConfig, client GroupClient, handler Handler, opts ...Option
 		c.dispatcher = d
 
 		d.ObserveUnmatched(c.recordUnmatched)
+	}
+
+	// Resolve the discard seam once, for the same reason: the guard chain reads
+	// it per record and a type assertion per record per guard would be three.
+	if dh, ok := handler.(DiscardHandler); ok {
+		c.discard = dh
 	}
 
 	return c, nil
@@ -761,6 +756,16 @@ func (c *consumerRuntime) processFetches(ctx context.Context, fetches kgo.Fetche
 func (c *consumerRuntime) handleRecord(ctx context.Context, rec *kgo.Record) (disposition, int, quarantineCause) {
 	ev, err := c.codec(rec.Headers)
 	if err != nil {
+		if c.discard != nil {
+			// A DLQ reader: an unparseable envelope is this topic's NORMAL
+			// content, not poison. A quarantine copy is header-verbatim, so
+			// every CauseCodec entry lands here — and quarantining it would
+			// republish it onto the very topic being drained, forever. Deliver
+			// it with a zero envelope; ParseRecord reports the parse failure in
+			// DiscardRecord.EnvelopeError and the handler decides.
+			return c.handleWithRetry(ctx, rec, contract.Event{})
+		}
+
 		// Codec decode fault: malformed CloudEvent, can never parse, not
 		// reclassifiable -> always terminal -> DLQ.
 		return c.classify(err, sourceCodec), 0, quarantineCause{kind: dlqCauseCodec, err: err}
@@ -774,7 +779,12 @@ func (c *consumerRuntime) handleRecord(ctx context.Context, rec *kgo.Record) (di
 	// It runs here rather than inside the Dispatcher so a whole-stream
 	// Handler(...) gets the same guarantee. That mode needs it MOST: it
 	// receives every record on a topic whose write ACL it does not control.
-	if !c.sourceAccepted(ev.Source) {
+	//
+	// A DLQ reader is exempt: a quarantine copy carries the ORIGINAL producer's
+	// ce-source verbatim, never the reader's own application, so the gate would
+	// quarantine 100% of a healthy DLQ back onto the topic it is draining. The
+	// origin is forensic material here, not an authorization claim.
+	if c.discard == nil && !c.sourceAccepted(ev.Source) {
 		err := fmt.Errorf("%w: got %q, want one of %v", ErrUnexpectedSource, ev.Source, c.cfg.ExpectSources)
 
 		return dispositionDLQ, 0, quarantineCause{kind: dlqCauseSourceMismatch, err: err}
@@ -916,6 +926,10 @@ func (c *consumerRuntime) dispatch(ctx context.Context, rec *kgo.Record, ev cont
 		if span := trace.SpanFromContext(hctx); span.IsRecording() {
 			span.SetAttributes(attribute.String("tenant.id", ev.TenantID))
 		}
+	}
+
+	if c.discard != nil {
+		return c.discard.HandleDiscard(hctx, dlqheader.ParseRecord(rec.Headers, rec.Value))
 	}
 
 	return c.handler.Handle(hctx, ev, rec.Value)

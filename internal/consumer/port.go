@@ -42,6 +42,59 @@ type Handler interface {
 	Handle(ctx context.Context, event contract.Event, payload []byte) error
 }
 
+// DiscardHandler is the Handler variant for reading your OWN ".dlq" topic. It
+// receives the fully decoded quarantine entry — cause, origin topic/partition/
+// offset, tenant, event type, and the payload — instead of the flattened
+// CloudEvents envelope a normal Handler gets, because the nine forensic
+// x-lerian-dlq-* headers do not survive the codec.
+//
+// Wire it with streaming.NewConsumer().Topics("lerian.streaming.<app>.dlq").
+// DiscardHandler(h). It is mutually exclusive with Handler and On, exactly as
+// those two are with each other.
+//
+// Two guards come with it, and both exist because a DLQ reader drains the SAME
+// topic it would quarantine into — its ce-source is the application whose ".dlq"
+// it reads — so any library-side terminal verdict on this path is a self-feeding
+// loop rather than an alert:
+//
+//   - A codec fault is NOT terminal here. A ".dlq" topic legitimately holds
+//     records whose own CloudEvents envelope does not parse — that is precisely
+//     what a CauseCodec entry IS — so the envelope is parsed best-effort into
+//     DiscardRecord.Event, the failure is reported in
+//     DiscardRecord.EnvelopeError, and the record is delivered anyway.
+//   - ce-source verification is skipped. A quarantine copy carries the ORIGINAL
+//     producer's ce-source, never the reader's own application, so the source
+//     gate would quarantine 100% of a healthy DLQ back onto itself.
+//
+// What is NOT guarded: the error this handler RETURNS is classified like any
+// other handler error — fail-closed terminal by default, reclassifiable to
+// retry by a Classifier. On a reader whose own DLQ topic IS the topic it
+// subscribes to, a terminal return republishes the entry onto the topic it is
+// draining. Return nil for anything you cannot use, and record it on your own
+// exception desk rather than in the queue you are emptying.
+type DiscardHandler interface {
+	HandleDiscard(ctx context.Context, record dlqheader.DiscardRecord) error
+}
+
+// discardOnly adapts a DiscardHandler to the Handler seam the builder and the
+// runtime already carry, so a discard reader inherits every existing
+// mutual-exclusion and typed-nil gate without a parallel wiring path.
+//
+// Handle is unreachable: the runtime resolves the DiscardHandler once in New
+// and routes to HandleDiscard. It returns a verdict rather than panicking so
+// that a future refactor which drops that resolution surfaces as one
+// quarantined record with a named cause, not as a nil dispatch.
+type discardOnly struct{ DiscardHandler }
+
+// Handle satisfies Handler for discardOnly. See the type doc.
+func (discardOnly) Handle(context.Context, contract.Event, []byte) error {
+	return ErrDiscardHandlerMisrouted
+}
+
+// AsHandler wraps a DiscardHandler so it can travel the Handler seam. The
+// builder calls it; nothing else should need to.
+func AsHandler(h DiscardHandler) Handler { return discardOnly{h} }
+
 // Classifier is an OPTIONAL service-supplied hook that RECLASSIFIES a known
 // HANDLER-return error as transient (retryable), flipping it off the fail-closed
 // terminal default. It runs ONLY for handler-return errors (NOT transport errors,

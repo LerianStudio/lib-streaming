@@ -562,6 +562,45 @@ func (b *ConsumerBuilder) Handler(h Handler) *ConsumerBuilder {
 	return b
 }
 
+// DiscardHandler wires a reader for this application's OWN ".dlq" topic. It
+// receives each quarantine entry fully decoded — cause, origin topic/partition/
+// offset, tenant, event type, payload — which a plain Handler cannot see,
+// because the codec drops every non-ce-* header before Handle runs and the
+// eleven forensic x-lerian-dlq-* keys are all of them.
+//
+// Mutually exclusive with Handler and On, exactly as those two are with each
+// other: it is a third answer to "who selects events".
+//
+//	streaming.NewConsumer().
+//	    Brokers(brokers...).
+//	    Group("lender-dlq-desk").
+//	    Topics(dlqTopic).      // "lerian.streaming.lender.dlq"
+//	    DiscardHandler(desk{}).
+//	    Build(ctx)
+//
+// Two library-side terminal verdicts are lifted on this path, because a reader
+// drains the SAME topic it would quarantine into: a codec fault delivers the
+// record with a zero envelope instead of quarantining it (an unparseable
+// envelope is what a DLQCauseCodec entry IS), and ce-source verification is
+// skipped (a quarantine copy carries the ORIGINAL producer's ce-source). The
+// error the handler RETURNS is not lifted — see the DiscardHandler type.
+func (b *ConsumerBuilder) DiscardHandler(h DiscardHandler) *ConsumerBuilder {
+	if b == nil {
+		return b
+	}
+
+	if transport.IsNilInterface(h) {
+		// Leave b.handler untouched so Build reports the ordinary
+		// ErrNilHandler, rather than wrapping a nil in an adapter that would
+		// pass the typed-nil guard and dispatch into nothing.
+		return b
+	}
+
+	b.handler = consumer.AsHandler(h)
+
+	return b
+}
+
 // RetryBudget sets the IN-LOOP transient-failure retry count within a single
 // poll cycle (the connection-blip absorber; typically resolves in 0-1 attempts).
 // It is NOT "retries before DLQ": transients NEVER reach the DLQ. When the
