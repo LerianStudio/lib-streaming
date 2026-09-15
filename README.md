@@ -431,6 +431,94 @@ DLQ publish is retried once with the payload omitted and marked
 the payload stays recoverable from the source topic via the origin coordinates —
 but headroom is the actual fix.
 
+### Reading a DLQ
+
+A quarantined record is durable but invisible until something drains it. The
+nine forensic `x-lerian-dlq-*` headers every entry carries (eleven keys exist;
+the two payload markers appear only when the payload was dropped) do not survive
+the CloudEvents codec, so a plain `Handler` cannot see any of them —
+`DiscardHandler` is the seam that can:
+
+```go
+type desk struct{}
+
+func (desk) HandleDiscard(ctx context.Context, r streaming.DiscardRecord) error {
+    // r.Event.TenantID — the tenant that owned the poison record
+    // r.CauseKind      — why it died: codec / handler / source_mismatch / unhandled_key
+    // r.SourceTopic, r.SourcePartition, r.SourceOffset — the route back to it
+    // r.PayloadOmitted — whether r.Payload is genuinely absent or the real bytes
+    return nil
+}
+
+dlqTopic, err := streaming.AppDLQTopic("lender") // the queue it drains
+if err != nil {
+    return err
+}
+
+c, err := streaming.NewConsumer().
+    Brokers(cfg.Brokers...).
+    Group("lender-dlq-desk").
+    Source("lender-dlq-desk"). // NOT "lender" — see below
+    Topics(dlqTopic).
+    DiscardHandler(desk{}).
+    Build(ctx)
+if err != nil {
+    return err
+}
+defer func() { _ = c.Close() }()
+
+return c.Run(ctx)
+```
+
+That snippet is compiled, not transcribed: it is `Example_readingADLQ` in
+`example_test.go`, so it fails the build if the wiring ever drifts.
+
+**Give the reader its own `ce-source`.** `Source(...)` names where a consumer
+quarantines — `lerian.streaming.<source>.dlq` — so a reader built with
+`Source("lender")` draining `lerian.streaming.lender.dlq` would quarantine into
+the topic it is emptying: republish, redeliver, quarantine, forever, while
+reporting healthy and growing the topic without bound. Both strings are known at
+construction, so **`Build` refuses a `DiscardHandler` consumer subscribed to its
+own quarantine topic** (`ErrSubscribedToOwnQuarantineTopic`). A distinct source
+gives the reader its own quarantine topic, which the consumer provisions and
+owns; draining another application's `.dlq` was never the constraint. Budget one
+new Kafka topic and one new app identity in the ACL model per DLQ reader.
+
+That refusal is what makes the remaining rule safe: the error your handler
+returns is classified like any other handler error, and it now lands somewhere
+you do not read.
+
+A **plain `Handler`** subscribed to its own quarantine topic is *warned* about
+and still built. That shape is one earlier versions accept and that drains clean
+in practice — valid envelopes, an allowlisted `ce-source`, the handler returns
+nil — so the loop there is latent rather than active, and refusing it would turn
+a library upgrade into a startup outage. The log line names the topic; the fix is
+the same distinct `ce-source`.
+
+`DiscardHandler` is mutually exclusive with `Handler`, `On`/`OnFrom` and
+`Commands`, enforced at `Build` in either order.
+
+The origin triple is the stable natural key for deduping a redelivered or
+replayed quarantine; `ce-id` is not, because the replay path can quarantine the
+same event twice. It **fails closed as a unit**: if any of its three headers is
+present but unreadable, all three are discarded and `HeaderError` says so,
+because `topic/0/42` is a plausible-looking coordinate pointing at the wrong
+record. An *absent* coordinate is not a failure — a producer-side quarantine
+legitimately has an origin topic and no partition or offset.
+
+Two library-side terminal verdicts are lifted on this path, because a `.dlq`
+topic's normal content would otherwise be treated as poison. A codec fault
+delivers the record with a zero envelope and the reason in
+`DiscardRecord.EnvelopeError` — an unparseable envelope is what a `codec` entry
+IS — and `ce-source` verification is skipped, since a quarantine copy carries the
+original producer's `ce-source`, never the reader's.
+
+For tooling that holds the headers itself, `streaming.ParseDiscardRecord(headers,
+payload)` does the same decode standalone and never fails; the header keys and
+cause-kind values are exported as `streaming.DLQHeader*` / `streaming.DLQCause*`,
+and `streaming.TruncatedErrorMessageBytes` tells a cut error message from a whole
+one.
+
 ## Multi-Transport Routing
 
 A single Emit can dispatch to N routes. Route attempts run in deterministic route-table order inside the Emit call. Per-target circuit breakers isolate target failures; when the configured manager supports lib-commons `TenantAwareManager`, non-system events use tenant-scoped breakers for each target so tenant A's outage does not reject tenant B. Required routes drive the aggregate Emit outcome; optional routes are best-effort.

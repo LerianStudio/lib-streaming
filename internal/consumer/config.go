@@ -55,6 +55,44 @@ var (
 	ErrHandlerAndDispatchBothSet = errors.New(
 		"streaming consumer: Handler(...) and On(...) are mutually exclusive — use On for per-event dispatch, Handler for the raw stream")
 
+	// ErrDiscardHandlerAndHandlerBothSet is returned when DiscardHandler is
+	// combined with Handler, On/OnFrom, Commands, or UnmatchedPolicy. A DLQ
+	// reader is a third answer to "who selects events" — it selects nothing and
+	// receives every quarantine entry on the topics it drains — so silently
+	// preferring one would drop the other's handlers without a word, and
+	// UnmatchedPolicy, which decides what the DISPATCHER does with an
+	// unregistered key, has nothing to act on.
+	//
+	// The dangerous order is DiscardHandler(h).Handler(x): the reader is demoted
+	// to a plain handler while still subscribed to a ".dlq" topic, which re-arms
+	// the codec-fault quarantine on it.
+	//
+	// It names all four rather than reusing the Handler-specific errors, so a
+	// caller who wrote DiscardHandler + UnmatchedPolicy is not sent hunting a
+	// Handler(...) call they never made.
+	ErrDiscardHandlerAndHandlerBothSet = errors.New(
+		"streaming consumer: DiscardHandler(...) is mutually exclusive with Handler(...), On(...), Commands(...) and UnmatchedPolicy(...) — a DLQ reader selects nothing, it receives every quarantine entry on the topics it drains")
+
+	// ErrSubscribedToOwnQuarantineTopic is returned when a DISCARD READER
+	// subscribes to lerian.streaming.<Source>.dlq — the topic it quarantines
+	// INTO.
+	//
+	// A terminal record then republishes onto the topic it was read from and is
+	// redelivered, quarantined, redelivered, forever, while the consumer reports
+	// healthy and the topic grows without bound. Both the destination and the
+	// subscription are known at construction, so it costs nothing to refuse. A
+	// DLQ reader drains ANOTHER application's ".dlq" under its own ce-source;
+	// that was never the constraint.
+	//
+	// A PLAIN HANDLER on the same shape is warned about and still built. That
+	// configuration is one the released library accepts — draining
+	// handler-cause entries from an allowlisted producer works and never loops
+	// — so refusing it would turn a minor upgrade into a startup outage on a
+	// running service. The discard seam is new API nobody runs yet, which is
+	// why refusing there breaks no one.
+	ErrSubscribedToOwnQuarantineTopic = errors.New(
+		"streaming consumer: a DLQ reader may not subscribe to its own quarantine topic")
+
 	// ErrBareOnWithMultipleApps is returned when a consumer subscribed to more
 	// than one producing application registers a handler with a bare
 	// On(eventKey, ...). With two producers in scope the key alone does not say

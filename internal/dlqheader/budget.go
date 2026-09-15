@@ -51,9 +51,42 @@ func TruncateErrorMessage(msg string) string {
 		return msg
 	}
 
-	marker := fmt.Sprintf("...[truncated, %d bytes total]", len(msg))
+	marker := fmt.Sprintf(truncationMarkerFormat, len(msg))
 
 	return strings.ToValidUTF8(msg[:MaxErrorMessageBytes-len(marker)], "") + marker
+}
+
+// truncationMarkerFormat builds the suffix TruncateErrorMessage appends. Its
+// literal shape is a wire contract in the same way the header keys are: a
+// reader detects truncation by it.
+const truncationMarkerFormat = "...[truncated, %d bytes total]"
+
+// truncationMarkerPrefix is the fixed head of that suffix, the part a reader
+// can search for.
+const truncationMarkerPrefix = "...[truncated, "
+
+// TruncatedErrorMessageBytes reports whether msg is a CUT error message and, if
+// so, how many bytes the original had.
+//
+// It is the half of the truncation contract a READER needs, and the reason it is
+// exported rather than left to the caller: detecting a cut otherwise means
+// hardcoding the marker text, which is exactly the restate-and-drift failure the
+// exported keys exist to stop. The length bound alone does not answer it — the
+// cut output is SHORTER than MaxErrorMessageBytes whenever a split multi-byte
+// rune is dropped, so "len(msg) == MaxErrorMessageBytes" is not a test.
+func TruncatedErrorMessageBytes(msg string) (int, bool) {
+	start := strings.LastIndex(msg, truncationMarkerPrefix)
+	if start < 0 {
+		return 0, false
+	}
+
+	var original int
+
+	if _, err := fmt.Sscanf(msg[start:], truncationMarkerFormat, &original); err != nil {
+		return 0, false
+	}
+
+	return original, true
 }
 
 // IsSizeError reports whether err is a transport's "this record is too large"
