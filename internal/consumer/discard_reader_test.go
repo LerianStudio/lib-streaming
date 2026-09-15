@@ -804,3 +804,61 @@ func TestPublishDLQ_FirstHopHeaderShapeIsUnchanged(t *testing.T) {
 		t.Errorf("payload = %q; want it verbatim", adapter.Messages()[0].Payload)
 	}
 }
+
+// TestPublishDLQ_SlimRetryStatesItsOwnMeasurement pins the writer against the
+// markers it finds on the record.
+//
+// A DLQ topic is a topic: the entry a reader hands back can carry payload
+// markers from an earlier hop AND a payload, and the two disagree. The number
+// that matters is the one measured against the payload THIS hop is dropping,
+// because that is the payload the entry no longer carries. Carrying the stale
+// pair forward alongside a fresh one leaves the record self-contradictory, and
+// the stale value sits first, so a reader taking the first match reports a size
+// that was never measured here.
+func TestPublishDLQ_SlimRetryStatesItsOwnMeasurement(t *testing.T) {
+	t.Parallel()
+
+	const (
+		staleBytes = "9999"
+		thisHop    = 4000
+	)
+
+	headers := append(ceHeaders("tenant-abc", false),
+		kgo.RecordHeader{Key: dlqheader.PayloadOmitted, Value: []byte("true")},
+		kgo.RecordHeader{Key: dlqheader.PayloadBytes, Value: []byte(staleBytes)},
+	)
+
+	poison := rec(contract.AppDLQTopic("lender"), 1, 99, headers)
+	poison.Value = []byte(strings.Repeat("x", thisHop))
+
+	capped := &cappedAdapter{maxBytes: 2000}
+	if err := newTestDLQPublisher(capped, "lender-dlq-desk").
+		PublishDLQ(context.Background(), poison, errors.New("exception desk is down"), dlqheader.CauseHandler, 0); err != nil {
+		t.Fatalf("PublishDLQ: %v", err)
+	}
+
+	capped.mu.Lock()
+	emitted := capped.msgs[len(capped.msgs)-1]
+	capped.mu.Unlock()
+
+	if len(emitted.Payload) != 0 {
+		t.Fatalf("emitted %d payload bytes; the fixture must force the SLIM retry", len(emitted.Payload))
+	}
+
+	counts := map[string]int{}
+	for _, h := range emitted.Headers {
+		counts[h.Key]++
+	}
+
+	for _, key := range []string{dlqheader.PayloadOmitted, dlqheader.PayloadBytes} {
+		if counts[key] != 1 {
+			t.Errorf("%s appears %d times; want exactly 1 — a record cannot hold two answers", key, counts[key])
+		}
+	}
+
+	if got, _ := headerValue(emitted, dlqheader.PayloadBytes); got != strconv.Itoa(thisHop) {
+		t.Errorf("%s = %q; want %d, the size of the payload THIS hop dropped (stale carried value: %s)",
+			dlqheader.PayloadBytes, got, thisHop, staleBytes)
+	}
+}
+

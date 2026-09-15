@@ -64,7 +64,7 @@ func IsHopHeader(key string) bool {
 	return ok
 }
 
-// The six DLQ forensic header keys (TRD §C8).// The six DLQ forensic header keys (TRD §C8). Every DLQ message carries all
+// The six DLQ forensic header keys (TRD §C8). Every DLQ message carries all
 // six; none are optional.
 const (
 	SourceTopic    = "x-lerian-dlq-source-topic"
