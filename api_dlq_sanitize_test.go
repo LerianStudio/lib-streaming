@@ -155,3 +155,168 @@ func TestParseDiscardRecord_SanitizingKeepsTheTruncationMarkerReadable(t *testin
 		t.Errorf("TruncatedErrorMessageBytes = %d; want the original length %d", original, len(raw))
 	}
 }
+
+// ═══ The byte budget survives a sanitizer that can only GROW the value ═══
+//
+// DLQHeaderErrorMessage and DiscardRecord.ErrorMessage are both documented as
+// bounded at DLQMaxErrorMessageBytes. That bound used to hold transitively: the
+// writer cut the message and the parser passed it through untouched. Sanitizing
+// broke it — one NUL replaced by U+FFFD costs two more bytes — so a message the
+// writer cut to EXACTLY the bound came back over it, and a reader sizing a
+// column or a log field by the documented number would have it refused.
+//
+// Found by review on the first version of the sanitizing fix. The truncation
+// test written alongside that fix asserted the message came back clean and
+// still read as truncated, and never asserted its LENGTH, which is the one
+// thing that had changed.
+
+// errorMessageAt builds a header value of exactly n bytes that contains one NUL,
+// so sanitizing it grows it by exactly two.
+func errorMessageAt(n int) []byte {
+	value := append([]byte("boom\x00"), []byte(strings.Repeat("d", n-5))...)
+	if len(value) != n {
+		panic("fixture is not the length it claims")
+	}
+
+	return value
+}
+
+func TestParseDiscardRecord_ErrorMessageStaysWithinItsBudgetAfterSanitizing(t *testing.T) {
+	t.Parallel()
+
+	for name, size := range map[string]int{
+		"exactly at the limit": streaming.DLQMaxErrorMessageBytes,
+		"one byte over":        streaming.DLQMaxErrorMessageBytes + 1,
+		"one byte under":       streaming.DLQMaxErrorMessageBytes - 1,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			raw := errorMessageAt(size)
+
+			got := streaming.ParseDiscardRecord([]kgo.RecordHeader{
+				{Key: streaming.DLQHeaderErrorMessage, Value: raw},
+			}, nil)
+
+			if len(got.ErrorMessage) > streaming.DLQMaxErrorMessageBytes {
+				t.Errorf("ErrorMessage is %d bytes, over the documented bound of %d",
+					len(got.ErrorMessage), streaming.DLQMaxErrorMessageBytes)
+			}
+
+			if strings.IndexByte(got.ErrorMessage, 0) >= 0 {
+				t.Error("ErrorMessage kept a NUL")
+			}
+
+			if !utf8.ValidString(got.ErrorMessage) {
+				t.Error("the cut landed inside a rune")
+			}
+
+			// Whatever else happens, the readable head of the error survives: an
+			// operator reads the start of the message, not its tail.
+			if !strings.HasPrefix(got.ErrorMessage, "boom"+replacement) {
+				t.Errorf("ErrorMessage = %.32q...; want it to start with the sanitized original", got.ErrorMessage)
+			}
+		})
+	}
+}
+
+// A message that had to be cut says so, and says how long the ORIGINAL was.
+//
+// "one byte under" is the non-vacuity half: it does not need cutting, so it must
+// NOT come back wearing a truncation marker. Without it, a re-bound that cut
+// unconditionally would satisfy every assertion above.
+func TestParseDiscardRecord_ReboundingStampsTheOriginalLength(t *testing.T) {
+	t.Parallel()
+
+	atLimit := errorMessageAt(streaming.DLQMaxErrorMessageBytes)
+
+	got := streaming.ParseDiscardRecord([]kgo.RecordHeader{
+		{Key: streaming.DLQHeaderErrorMessage, Value: atLimit},
+	}, nil)
+
+	original, truncated := streaming.TruncatedErrorMessageBytes(got.ErrorMessage)
+	if !truncated {
+		t.Fatalf("a message that had to be cut must say so; got %.64q", got.ErrorMessage)
+	}
+
+	if original != len(atLimit) {
+		t.Errorf("TruncatedErrorMessageBytes = %d; want the length as it ARRIVED, %d", original, len(atLimit))
+	}
+
+	under := streaming.ParseDiscardRecord([]kgo.RecordHeader{
+		{Key: streaming.DLQHeaderErrorMessage, Value: errorMessageAt(streaming.DLQMaxErrorMessageBytes - 8)},
+	}, nil)
+
+	if _, cut := streaming.TruncatedErrorMessageBytes(under.ErrorMessage); cut {
+		t.Error("a message that fits after sanitizing must not be marked as truncated")
+	}
+}
+
+// A marker the WRITER stamped is preserved, never recomputed.
+//
+// It carries how long the error was before the writer cut it. Restamping it with
+// the length of the arriving header would replace the one number that says how
+// much was lost with a number that says nothing — the header's own size, which
+// the reader can already measure.
+func TestParseDiscardRecord_ReboundingKeepsTheWritersOriginalLength(t *testing.T) {
+	t.Parallel()
+
+	// What the writer actually produces: a huge error cut to the bound, carrying
+	// a NUL in the surviving head, so the reader's sanitising pushes it over.
+	huge := "boom\x00 " + strings.Repeat("detail ", 20000)
+
+	cut := dlqheader.TruncateErrorMessage(huge)
+	if len(cut) > streaming.DLQMaxErrorMessageBytes {
+		t.Fatalf("the writer's own cut is %d bytes, over its bound", len(cut))
+	}
+
+	got := streaming.ParseDiscardRecord([]kgo.RecordHeader{
+		{Key: streaming.DLQHeaderErrorMessage, Value: []byte(cut)},
+	}, nil)
+
+	if len(got.ErrorMessage) > streaming.DLQMaxErrorMessageBytes {
+		t.Errorf("ErrorMessage is %d bytes, over the documented bound", len(got.ErrorMessage))
+	}
+
+	original, truncated := streaming.TruncatedErrorMessageBytes(got.ErrorMessage)
+	if !truncated {
+		t.Fatal("the writer's truncation marker did not survive the re-bound")
+	}
+
+	if original != len(huge) {
+		t.Errorf("TruncatedErrorMessageBytes = %d; want the WRITER's original length %d, not the header's %d",
+			original, len(huge), len(cut))
+	}
+}
+
+// A foreign writer's malformed marker must not be able to reach a slice bound.
+//
+// The marker is rebuilt from the parsed number rather than sliced out of the
+// input, so a value that merely LOOKS like a marker — at the very start, or
+// followed by kilobytes of text — cannot produce one longer than the budget.
+func TestParseDiscardRecord_ReboundingSurvivesAHostileMarker(t *testing.T) {
+	t.Parallel()
+
+	for name, value := range map[string]string{
+		"marker at the very start": "...[truncated, 5 bytes total]" + strings.Repeat("x", 5000) + "\x00",
+		"marker followed by text":  "boom\x00" + strings.Repeat("x", 5000) + "...[truncated, 7 bytes total]tail",
+		"marker text with no number": "boom\x00" + strings.Repeat("x", 5000) +
+			"...[truncated, lots of bytes total]",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			got := streaming.ParseDiscardRecord([]kgo.RecordHeader{
+				{Key: streaming.DLQHeaderErrorMessage, Value: []byte(value)},
+			}, nil)
+
+			if len(got.ErrorMessage) > streaming.DLQMaxErrorMessageBytes {
+				t.Errorf("ErrorMessage is %d bytes, over the documented bound", len(got.ErrorMessage))
+			}
+
+			if strings.IndexByte(got.ErrorMessage, 0) >= 0 {
+				t.Error("ErrorMessage kept a NUL")
+			}
+		})
+	}
+}

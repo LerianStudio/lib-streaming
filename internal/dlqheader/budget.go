@@ -106,3 +106,46 @@ func IsSizeError(err error) bool {
 
 	return errors.Is(err, kerr.MessageTooLarge) || errors.Is(err, contract.ErrPayloadTooLarge)
 }
+
+// ReboundSanitizedErrorMessage re-applies the byte budget to an error message a
+// READER grew while sanitizing it.
+//
+// The bound is a promise the reader inherits, not one the writer alone keeps:
+// both DLQHeaderErrorMessage and DiscardRecord.ErrorMessage are documented as
+// bounded at MaxErrorMessageBytes. That held transitively while the parser was
+// a pass-through of a value TruncateErrorMessage had already cut. Sanitizing
+// broke it — replacing a byte with U+FFFD costs two more — so a message the
+// writer cut to exactly the bound arrives over it, and the documented limit
+// stops being a limit for every reader sizing a column or a log field by it.
+//
+// originalBytes is the length of the value AS IT ARRIVED, before sanitizing. It
+// is used only when a fresh marker has to be stamped.
+//
+// A marker the WRITER stamped is KEPT, never recomputed from what arrived. It
+// carries how long the error was before the writer cut it — 14 KiB, say — and
+// restamping it with the length of the 4 KiB header would replace the one
+// number that says how much was lost with a number that says nothing. It is
+// rebuilt from the parsed value rather than sliced out of the input, so a
+// foreign writer cannot hand us a "marker" longer than the budget itself.
+func ReboundSanitizedErrorMessage(sanitized string, originalBytes int) string {
+	if len(sanitized) <= MaxErrorMessageBytes {
+		return sanitized
+	}
+
+	body := sanitized
+	marker := fmt.Sprintf(truncationMarkerFormat, originalBytes)
+
+	if original, truncated := TruncatedErrorMessageBytes(sanitized); truncated {
+		body = sanitized[:strings.LastIndex(sanitized, truncationMarkerPrefix)]
+		marker = fmt.Sprintf(truncationMarkerFormat, original)
+	}
+
+	// The same cut TruncateErrorMessage makes: a split multi-byte rune is
+	// DROPPED rather than emitted as a replacement, so the writer's cut and this
+	// one cannot disagree about what a cut message looks like.
+	if cut := MaxErrorMessageBytes - len(marker); len(body) > cut {
+		body = strings.ToValidUTF8(body[:cut], "")
+	}
+
+	return body + marker
+}

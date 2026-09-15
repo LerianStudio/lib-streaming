@@ -291,8 +291,18 @@ func TruncatedErrorMessageBytes(message string) (int, bool) {
 // this library's own frozen constants, so a hostile one simply matches nothing.
 func ParseDiscardRecord(headers []kgo.RecordHeader, payload []byte) DiscardRecord {
 	index := make(map[string]string, len(headers))
+
+	// The error message's ORIGINAL byte length, kept because sanitizing can only
+	// grow a value and the budget has to be re-applied afterwards. Last
+	// occurrence wins, the same rule the index itself follows.
+	errorMessageBytes := 0
+
 	for _, h := range headers {
 		index[h.Key] = transport.SanitizeHeaderValue(h.Value)
+
+		if h.Key == DLQHeaderErrorMessage {
+			errorMessageBytes = len(h.Value)
+		}
 	}
 
 	event, envelopeErr := ParseCloudEventsHeaders(headers)
@@ -300,7 +310,7 @@ func ParseDiscardRecord(headers []kgo.RecordHeader, payload []byte) DiscardRecor
 	record := DiscardRecord{
 		CauseKind:      index[DLQHeaderCauseKind],
 		ErrorClass:     index[DLQHeaderErrorClass],
-		ErrorMessage:   index[DLQHeaderErrorMessage],
+		ErrorMessage:   dlqheader.ReboundSanitizedErrorMessage(index[DLQHeaderErrorMessage], errorMessageBytes),
 		ProducerID:     index[DLQHeaderProducerID],
 		PayloadOmitted: index[DLQHeaderPayloadOmitted] == "true",
 		Event:          event,
