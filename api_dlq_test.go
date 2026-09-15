@@ -12,7 +12,6 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 
 	streaming "github.com/LerianStudio/lib-streaming/v4"
-	"github.com/LerianStudio/lib-streaming/v4/internal/consumer"
 	"github.com/LerianStudio/lib-streaming/v4/internal/dlqheader"
 )
 
@@ -534,22 +533,24 @@ func TestNewConsumer_DiscardHandlerIsMutuallyExclusive(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			if _, err := tt.build().Build(context.Background()); !errors.Is(err, consumer.ErrDiscardHandlerAndHandlerBothSet) {
+			if _, err := tt.build().Build(context.Background()); !errors.Is(err, streaming.ErrDiscardHandlerAndHandlerBothSet) {
 				t.Errorf("Build err = %v; want ErrDiscardHandlerAndHandlerBothSet", err)
 			}
 		})
 	}
 }
 
-// TestNewConsumer_RefusesToSubscribeToItsOwnQuarantineTopic closes the
-// self-feeding loop at construction, in both handler modes.
+// TestNewConsumer_SelfQuarantineTopic pins the asymmetry at the public surface.
 //
-// Source(...) names where this consumer quarantines. A consumer that also
-// SUBSCRIBES there republishes onto the topic it just read from and is
-// redelivered, quarantined, redelivered — forever, while reporting healthy and
-// growing the topic without bound. Both strings are known at Build, so it is
-// refused rather than documented.
-func TestNewConsumer_RefusesToSubscribeToItsOwnQuarantineTopic(t *testing.T) {
+// Source(...) names where a consumer quarantines. Subscribing there republishes
+// onto the topic it just read from and is redelivered, quarantined, redelivered
+// — forever, while reporting healthy and growing the topic without bound.
+//
+// A DLQ reader is refused: the seam is new API, so no deployment can be broken
+// by refusing it. A plain Handler is only warned: that shape is one the released
+// library accepts and that drains clean today, so refusing it would turn a minor
+// upgrade into a startup outage on a running service.
+func TestNewConsumer_SelfQuarantineTopic(t *testing.T) {
 	t.Parallel()
 
 	ownDLQ, err := streaming.AppDLQTopic("lender")
@@ -557,37 +558,31 @@ func TestNewConsumer_RefusesToSubscribeToItsOwnQuarantineTopic(t *testing.T) {
 		t.Fatalf("AppDLQTopic: %v", err)
 	}
 
-	tests := []struct {
-		name  string
-		build func() *streaming.ConsumerBuilder
-	}{
-		{
-			"a plain handler on its own DLQ",
-			func() *streaming.ConsumerBuilder {
-				return streaming.NewConsumer().Brokers("localhost:9092").Group("g").
-					Source("lender").Topics(ownDLQ).Handler(noopHandler{})
-			},
-		},
-		{
-			"a DLQ reader whose ce-source is the app it drains",
-			func() *streaming.ConsumerBuilder {
-				return streaming.NewConsumer().Brokers("localhost:9092").Group("g").
-					Source("lender").Topics(ownDLQ).DiscardHandler(noopDiscardHandler{})
-			},
-		},
+	base := func() *streaming.ConsumerBuilder {
+		return streaming.NewConsumer().Brokers("localhost:9092").Group("g").Source("lender").Topics(ownDLQ)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
+	t.Run("a DLQ reader on its own quarantine topic is refused", func(t *testing.T) {
+		t.Parallel()
 
-			if _, err := tt.build().Build(context.Background()); !errors.Is(err, consumer.ErrSubscribedToOwnQuarantineTopic) {
-				t.Errorf("Build err = %v; want ErrSubscribedToOwnQuarantineTopic", err)
-			}
-		})
-	}
+		_, err := base().DiscardHandler(noopDiscardHandler{}).Build(context.Background())
+		if !errors.Is(err, streaming.ErrSubscribedToOwnQuarantineTopic) {
+			t.Errorf("Build err = %v; want ErrSubscribedToOwnQuarantineTopic", err)
+		}
+	})
 
-	t.Run("the documented fix builds", func(t *testing.T) {
+	t.Run("a plain handler on the same shape still builds", func(t *testing.T) {
+		t.Parallel()
+
+		c, err := base().Handler(noopHandler{}).Build(context.Background())
+		if err != nil {
+			t.Fatalf("Build refused a shape the released library accepts: %v", err)
+		}
+
+		_ = c.Close()
+	})
+
+	t.Run("the reader's documented fix builds", func(t *testing.T) {
 		t.Parallel()
 
 		c, err := streaming.NewConsumer().Brokers("localhost:9092").Group("lender-dlq-desk").
@@ -616,7 +611,7 @@ func TestNewConsumer_NilDiscardHandlerIsRefused(t *testing.T) {
 		DiscardHandler(nilHandler).
 		Build(context.Background())
 
-	if !errors.Is(err, consumer.ErrNilHandler) {
+	if !errors.Is(err, streaming.ErrNilHandler) {
 		t.Fatalf("Build err = %v; want ErrNilHandler", err)
 	}
 }

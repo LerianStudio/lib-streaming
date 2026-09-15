@@ -67,17 +67,25 @@ var (
 	ErrDiscardHandlerAndHandlerBothSet = errors.New(
 		"streaming consumer: DiscardHandler(...) is mutually exclusive with Handler(...), On(...) and Commands(...) — a DLQ reader selects nothing, it receives every quarantine entry on the topics it drains")
 
-	// ErrSubscribedToOwnQuarantineTopic is returned when a consumer subscribes
-	// to lerian.streaming.<Source>.dlq — the topic it quarantines INTO.
+	// ErrSubscribedToOwnQuarantineTopic is returned when a DISCARD READER
+	// subscribes to lerian.streaming.<Source>.dlq — the topic it quarantines
+	// INTO.
 	//
 	// A terminal record then republishes onto the topic it was read from and is
 	// redelivered, quarantined, redelivered, forever, while the consumer reports
-	// healthy and the topic grows without bound. It costs nothing to refuse: the
-	// quarantine destination and the subscription are both known at
-	// construction. A DLQ reader drains ANOTHER application's ".dlq" under its
-	// own ce-source; that was never the constraint.
+	// healthy and the topic grows without bound. Both the destination and the
+	// subscription are known at construction, so it costs nothing to refuse. A
+	// DLQ reader drains ANOTHER application's ".dlq" under its own ce-source;
+	// that was never the constraint.
+	//
+	// A PLAIN HANDLER on the same shape is warned about and still built. That
+	// configuration is one the released library accepts — draining
+	// handler-cause entries from an allowlisted producer works and never loops
+	// — so refusing it would turn a minor upgrade into a startup outage on a
+	// running service. The discard seam is new API nobody runs yet, which is
+	// why refusing there breaks no one.
 	ErrSubscribedToOwnQuarantineTopic = errors.New(
-		"streaming consumer: a consumer may not subscribe to its own quarantine topic")
+		"streaming consumer: a DLQ reader may not subscribe to its own quarantine topic")
 
 	// ErrBareOnWithMultipleApps is returned when a consumer subscribed to more
 	// than one producing application registers a handler with a bare

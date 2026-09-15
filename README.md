@@ -464,15 +464,22 @@ quarantines — `lerian.streaming.<source>.dlq` — so a reader built with
 `Source("lender")` draining `lerian.streaming.lender.dlq` would quarantine into
 the topic it is emptying: republish, redeliver, quarantine, forever, while
 reporting healthy and growing the topic without bound. Both strings are known at
-construction, so **`Build` refuses any consumer subscribed to its own quarantine
-topic** (`ErrSubscribedToOwnQuarantineTopic`) rather than documenting the hazard.
-A distinct source gives the reader its own quarantine topic, which the consumer
-provisions and owns; draining another application's `.dlq` was never the
-constraint.
+construction, so **`Build` refuses a `DiscardHandler` consumer subscribed to its
+own quarantine topic** (`ErrSubscribedToOwnQuarantineTopic`). A distinct source
+gives the reader its own quarantine topic, which the consumer provisions and
+owns; draining another application's `.dlq` was never the constraint. Budget one
+new Kafka topic and one new app identity in the ACL model per DLQ reader.
 
 That refusal is what makes the remaining rule safe: the error your handler
 returns is classified like any other handler error, and it now lands somewhere
 you do not read.
+
+A **plain `Handler`** subscribed to its own quarantine topic is *warned* about
+and still built. That shape is one earlier versions accept and that drains clean
+in practice — valid envelopes, an allowlisted `ce-source`, the handler returns
+nil — so the loop there is latent rather than active, and refusing it would turn
+a library upgrade into a startup outage. The log line names the topic; the fix is
+the same distinct `ce-source`.
 
 `DiscardHandler` is mutually exclusive with `Handler`, `On`/`OnFrom` and
 `Commands`, enforced at `Build` in either order.

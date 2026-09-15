@@ -97,6 +97,13 @@ const unmatchedEventKeyOverflow = "other"
 // string rather than a substring that drifts.
 const (
 	// unmatchedNoHandlerMessage fires once per distinct unmatched key.
+	// selfQuarantineMessage fires once per construction for a plain Handler
+	// subscribed to its own quarantine topic. The loop is latent rather than
+	// active — it needs one codec-cause or foreign-source record to start — so
+	// the library names the hazard and keeps building instead of refusing a
+	// shape it has always accepted.
+	selfQuarantineMessage = "streaming consumer: subscribed to its own quarantine topic — a terminal record will republish onto the topic it was read from and redeliver forever; give this consumer its own ce-source"
+
 	unmatchedNoHandlerMessage = "streaming consumer: no handler registered for event key — records are being skipped and committed"
 	// unmatchedLabelOverflowMessage fires ONCE, at the boundary where the
 	// event_key label stops naming keys. Without it the "other" bucket
@@ -292,23 +299,21 @@ func New(cfg ConsumerConfig, client GroupClient, handler Handler, opts ...Option
 		return nil, ErrNilDLQPublisher
 	}
 
-	// A consumer may never subscribe to the topic it quarantines INTO. The
-	// quarantine destination is lerian.streaming.<Source>.dlq and the
-	// subscription is known right here, so the self-feeding loop is refused at
-	// construction rather than documented:
+	// Subscribing to lerian.streaming.<Source>.dlq — the topic this consumer
+	// quarantines INTO — is a self-feeding loop: a terminal record republishes
+	// onto the topic it was just read from, is redelivered, quarantined,
+	// redelivered, forever, while the consumer reports healthy and the topic
+	// grows without bound.
 	//
-	//   - With a plain Handler, a terminal record republishes onto the topic it
-	//     was read from and is redelivered, quarantined, redelivered... forever,
-	//     while the consumer reports healthy and the topic grows without bound.
-	//   - With a DLQ reader, the same loop reopens the moment the service's own
-	//     handler returns terminal — the one verdict the library deliberately
-	//     does not override.
-	//
-	// The fix is a distinct ce-source for the reader ("lender-dlq-desk"), whose
-	// own ".dlq" this consumer provisions and owns. Draining another
-	// application's ".dlq" was never the constraint; draining your OWN
-	// quarantine destination is.
-	if err := refuseSelfQuarantine(cfg); err != nil {
+	// It is REFUSED on the discard path and only WARNED about on the plain
+	// Handler path, and the asymmetry is deliberate. The discard seam is new API
+	// that no deployment runs yet, so refusing costs nobody a restart. A plain
+	// Handler on that shape is a configuration the RELEASED library accepts:
+	// draining handler-cause entries from an allowlisted producer works and
+	// never loops today, so refusing it would turn a minor upgrade into a
+	// startup outage on a running service, invisible until deploy. The loop is
+	// latent there, not active — a warning is the proportionate answer.
+	if err := c.checkSelfQuarantine(cfg); err != nil {
 		return nil, err
 	}
 
@@ -329,13 +334,19 @@ func New(cfg ConsumerConfig, client GroupClient, handler Handler, opts ...Option
 	return c, nil
 }
 
-// refuseSelfQuarantine rejects a consumer subscribed to its OWN quarantine
+// checkSelfQuarantine handles a consumer subscribed to its OWN quarantine
 // destination, lerian.streaming.<Source>.dlq.
 //
 // Both sides are known at construction: the destination is derived from
-// cfg.Source (consumer.go pins it on the transportDLQPublisher) and the
-// subscription is cfg.ResolvedTopics(). Comparing them is the whole guard.
-func refuseSelfQuarantine(cfg ConsumerConfig) error {
+// cfg.Source (Build pins it on the transportDLQPublisher) and the subscription
+// is cfg.ResolvedTopics(). Comparing them is the whole guard. Only an explicit
+// Topics(...) entry can ever match — Apps derives lerian.streaming.<app> and
+// Commands derives ".commands", so subscribing to your own FACT topic stays
+// legal and untouched.
+//
+// A DLQ reader is REFUSED; a plain Handler gets one warning and builds. See the
+// call site for why the two differ.
+func (c *consumerRuntime) checkSelfQuarantine(cfg ConsumerConfig) error {
 	if cfg.Source == "" {
 		return nil
 	}
@@ -343,6 +354,15 @@ func refuseSelfQuarantine(cfg ConsumerConfig) error {
 	quarantine := contract.AppDLQTopic(cfg.Source)
 
 	if !slices.Contains(cfg.ResolvedTopics(), quarantine) {
+		return nil
+	}
+
+	if c.discard == nil {
+		c.logger.Log(context.Background(), obs.LevelWarn, selfQuarantineMessage,
+			"topic", quarantine,
+			"source", cfg.Source,
+		)
+
 		return nil
 	}
 

@@ -427,31 +427,22 @@ func TestDiscardSeam_ReturnedErrorStillQuarantines(t *testing.T) {
 	}
 }
 
-// TestRefuseSelfQuarantine_ClosesTheLoopAtConstruction is the F3 witness, and it
-// asserts the republish DESTINATION rather than a recording fake.
+// TestSelfQuarantine_RefusesTheReaderAndWarnsThePlainHandler pins the
+// asymmetry, and asserts the republish DESTINATION rather than a recording fake.
 //
-// The destination is lerian.streaming.<Source>.dlq and the subscription is
-// known at the same moment, so the self-feeding loop — republish onto the topic
-// you just read from, redeliver, quarantine, forever, while reporting healthy —
-// is refused instead of documented. It is refused in BOTH modes: with a plain
-// Handler the loop needs no handler error at all (a codec fault is enough), and
-// with a DLQ reader it reopens the moment the service's own handler returns
-// terminal.
-func TestRefuseSelfQuarantine_ClosesTheLoopAtConstruction(t *testing.T) {
+// Subscribing to lerian.streaming.<Source>.dlq means republishing onto the topic
+// you just read from — redeliver, quarantine, redeliver, forever, while
+// reporting healthy. Both strings are known at construction.
+//
+// The discard seam is NEW API that nobody runs, so it is refused outright. A
+// plain Handler on the same shape is a configuration the RELEASED library
+// accepts and that drains clean today (handler-cause entries, allowlisted
+// producer, handler returns nil); refusing it would turn a minor upgrade into a
+// startup outage on a running service. It gets one warning and keeps working.
+func TestSelfQuarantine_RefusesTheReaderAndWarnsThePlainHandler(t *testing.T) {
 	t.Parallel()
 
-	ownDLQ := contract.AppDLQTopic("lender")
-
-	t.Run("refused for a plain handler", func(t *testing.T) {
-		t.Parallel()
-
-		_, err := New(selfQuarantineConfig(), newFakeGroupClient(), &fakeHandler{}, WithDLQPublisher(&fakeDLQ{}))
-		if !errors.Is(err, ErrSubscribedToOwnQuarantineTopic) {
-			t.Errorf("New err = %v; want ErrSubscribedToOwnQuarantineTopic", err)
-		}
-	})
-
-	t.Run("refused for a DLQ reader too", func(t *testing.T) {
+	t.Run("a DLQ reader on its own quarantine topic is refused", func(t *testing.T) {
 		t.Parallel()
 
 		discard := &recordingDiscard{}
@@ -463,17 +454,63 @@ func TestRefuseSelfQuarantine_ClosesTheLoopAtConstruction(t *testing.T) {
 		}
 	})
 
-	t.Run("the accepted shape republishes somewhere it does not read", func(t *testing.T) {
+	t.Run("a plain handler builds, warns once, and drains", func(t *testing.T) {
 		t.Parallel()
 
-		// The documented fix: the reader carries its own ce-source, so its
-		// quarantine destination is a topic it provisions and owns.
+		cfg := selfQuarantineConfig()
+
+		// The reviewer's counter-example, verbatim: a plain Handler draining
+		// handler-cause entries from an allowlisted producer. It works on the
+		// released library, so it must keep working here.
+		entry := rec(cfg.Topics[0], 0, 4, ceHeaders("tenant-abc", false))
+		logger := newSpyLogger()
+		dlq := &fakeDLQ{}
+		handler := &fakeHandler{}
+		client := newFakeGroupClient(fetchOf(entry.Topic, 0, entry))
+
+		r := newTestRuntimeCfg(t, func(c *ConsumerConfig) { *c = cfg },
+			client, handler, dlq, WithLogger(logger))
+
+		runUntilClosed(t, r)
+
+		warnings := 0
+
+		for _, line := range logger.lines() {
+			if line == selfQuarantineMessage {
+				warnings++
+			}
+		}
+
+		if warnings != 1 {
+			t.Errorf("warned %d times; want exactly 1 — the hazard is named once per construction", warnings)
+		}
+
+		if named := logger.fieldValues(selfQuarantineMessage, "topic"); len(named) != 1 || named[0] != cfg.Topics[0] {
+			t.Errorf("warning named topic %v; want [%s]", named, cfg.Topics[0])
+		}
+
+		if handler.calls != 1 {
+			t.Errorf("handler ran %d times; want 1 — the consumer must still drain", handler.calls)
+		}
+
+		if dlq.count() != 0 {
+			t.Errorf("quarantined %d records; want 0 — this shape drains clean today", dlq.count())
+		}
+
+		if wm := client.committedWatermarks()[topicPartition{entry.Topic, 0}]; wm != 5 {
+			t.Errorf("committed watermark = %d; want 5 — a warned consumer still commits", wm)
+		}
+	})
+
+	t.Run("the reader's documented fix republishes somewhere it does not read", func(t *testing.T) {
+		t.Parallel()
+
 		cfg := selfQuarantineConfig()
 		cfg.Source = "lender-dlq-desk"
 
 		destination := contract.AppDLQTopic(cfg.Source)
 
-		if destination == ownDLQ {
+		if destination == contract.AppDLQTopic("lender") {
 			t.Fatal("the fix produced the same destination; the test proves nothing")
 		}
 
