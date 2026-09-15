@@ -195,9 +195,20 @@ func ParseCloudEventsHeaders(headers []kgo.RecordHeader) (Event, error) {
 	// Flatten headers into a map so we can do O(1) lookups. The last header
 	// with a given key wins — mirrors producer behavior where later keys
 	// overwrite earlier ones.
+	//
+	// Values are SANITIZED on the way in: a Kafka header value is an arbitrary
+	// byte slice, and a producer in any language can put U+0000 or an invalid
+	// UTF-8 sequence into ce-tenantid or ce-type. Every consumer of this library
+	// receives those bytes as an Event field and hands them to a store, a log or
+	// a JSON encoder, each of which refuses them permanently. See
+	// transport.SanitizeHeaderValue for why the refusal being permanent is what
+	// makes this the library's problem rather than the consumer's.
+	//
+	// Keys are left alone: a key is compared against this package's own frozen
+	// constants, so a hostile one matches nothing and falls out on its own.
 	index := make(map[string]string, len(headers))
 	for _, h := range headers {
-		index[h.Key] = string(h.Value)
+		index[h.Key] = transport.SanitizeHeaderValue(h.Value)
 	}
 
 	// Required headers — missing any is a parse failure. ce-specversion
