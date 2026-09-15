@@ -5,6 +5,7 @@ package consumer
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -647,4 +648,159 @@ func TestPublishDLQ_RequarantineCarriesExactlyOneForensicSet(t *testing.T) {
 			t.Errorf("ce-tenantid appears %d times; want 1", counts["ce-tenantid"])
 		}
 	})
+}
+
+// TestPublishDLQ_RequarantineKeepsThePayloadMarkers pins the one part of the
+// forensic set that is NOT hop-scoped.
+//
+// The nine forensic headers describe a quarantine: who, why, when, from which
+// coordinate. The two payload markers describe the RECORD's payload relative to
+// the business record — "what you see is not the original, and the original was
+// N bytes" — and that stays true however many times the entry is quarantined
+// again.
+//
+// Stripping them broke exactly that. A slim entry carries an EMPTY payload, so
+// re-quarantining it never trips the size retry and never re-stamps the
+// markers: the second entry claimed a genuinely empty payload, and the original
+// byte count — the only surviving trace of it, since the payload itself is gone
+// — was lost at the first re-quarantine.
+func TestPublishDLQ_RequarantineKeepsThePayloadMarkers(t *testing.T) {
+	t.Parallel()
+
+	const originalBytes = 4000
+
+	// First hop: a record too large to quarantine whole, so it goes slim.
+	poison := rec("lerian.streaming.gateway", 3, 42, ceHeaders("tenant-abc", false))
+	poison.Value = []byte(strings.Repeat("x", originalBytes))
+
+	capped := &cappedAdapter{maxBytes: 2000}
+	if err := newTestDLQPublisher(capped, "lender").
+		PublishDLQ(context.Background(), poison, errors.New("loan already settled"), dlqheader.CauseHandler, 0); err != nil {
+		t.Fatalf("first PublishDLQ: %v", err)
+	}
+
+	capped.mu.Lock()
+	first := dlqRecord(capped.msgs[len(capped.msgs)-1], contract.AppDLQTopic("lender"))
+	capped.mu.Unlock()
+
+	if len(first.Value) != 0 {
+		t.Fatalf("first entry carries %d payload bytes; the fixture must produce a SLIM entry", len(first.Value))
+	}
+
+	// Second hop: the DLQ reader read that slim entry and its handler failed.
+	first.Topic = contract.AppDLQTopic("lender")
+	first.Partition = 1
+	first.Offset = 99
+
+	adapter := fake.NewAdapter(contract.TransportKafkaLike)
+	if err := newTestDLQPublisher(adapter, "lender-dlq-desk").
+		PublishDLQ(context.Background(), first, errors.New("exception desk is down"), dlqheader.CauseHandler, 0); err != nil {
+		t.Fatalf("second PublishDLQ: %v", err)
+	}
+
+	second := adapter.Messages()[0]
+
+	t.Run("the payload markers survive the hop", func(t *testing.T) {
+		t.Parallel()
+
+		if got, ok := headerValue(second, dlqheader.PayloadOmitted); !ok || got != "true" {
+			t.Errorf("%s = %q (present=%v); want \"true\" — the entry must not claim a genuinely empty payload",
+				dlqheader.PayloadOmitted, got, ok)
+		}
+
+		if got, _ := headerValue(second, dlqheader.PayloadBytes); got != strconv.Itoa(originalBytes) {
+			t.Errorf("%s = %q; want %d — the only surviving trace of the dropped payload",
+				dlqheader.PayloadBytes, got, originalBytes)
+		}
+	})
+
+	t.Run("the hop headers are still replaced, not appended", func(t *testing.T) {
+		t.Parallel()
+
+		counts := map[string]int{}
+		for _, h := range second.Headers {
+			counts[h.Key]++
+		}
+
+		for _, key := range hopForensicKeys() {
+			if counts[key] != 1 {
+				t.Errorf("%s appears %d times; want exactly 1", key, counts[key])
+			}
+		}
+
+		for _, key := range []string{dlqheader.PayloadOmitted, dlqheader.PayloadBytes} {
+			if counts[key] != 1 {
+				t.Errorf("%s appears %d times; want exactly 1 — carried forward, never duplicated", key, counts[key])
+			}
+		}
+	})
+
+	t.Run("the chain back is still walkable", func(t *testing.T) {
+		t.Parallel()
+
+		if got, _ := headerValue(second, dlqheader.SourceTopic); got != contract.AppDLQTopic("lender") {
+			t.Errorf("origin topic = %q; want the topic the failing consumer actually read", got)
+		}
+
+		if got, _ := headerValue(second, dlqheader.SourceOffset); got != "99" {
+			t.Errorf("origin offset = %q; want 99", got)
+		}
+	})
+}
+
+// hopForensicKeys is the nine keys that describe ONE quarantine.
+func hopForensicKeys() []string {
+	return []string{
+		dlqheader.SourceTopic, dlqheader.SourcePartition, dlqheader.SourceOffset,
+		dlqheader.CauseKind, dlqheader.ErrorClass, dlqheader.ErrorMessage,
+		dlqheader.RetryCount, dlqheader.FirstFailureAt, dlqheader.ProducerID,
+	}
+}
+
+// TestPublishDLQ_FirstHopHeaderShapeIsUnchanged is the golden for the common
+// case: a business record has no forensic headers, so the strip must be a no-op
+// there.
+//
+// It exists because the strip was added for the re-quarantine path, and the
+// first hop is every other quarantine the fleet performs. It pins the emitted
+// block exactly — the original headers in order, then the nine forensic keys in
+// order — so a change to the writer that alters first-hop output cannot land
+// quietly.
+func TestPublishDLQ_FirstHopHeaderShapeIsUnchanged(t *testing.T) {
+	t.Parallel()
+
+	poison := rec("lerian.streaming.gateway", 3, 42, ceHeaders("tenant-abc", false))
+
+	adapter := fake.NewAdapter(contract.TransportKafkaLike)
+	if err := newTestDLQPublisher(adapter, "lender").
+		PublishDLQ(context.Background(), poison, errors.New("boom"), dlqheader.CauseHandler, 0); err != nil {
+		t.Fatalf("PublishDLQ: %v", err)
+	}
+
+	got := adapter.Messages()[0].Headers
+
+	want := make([]string, 0, len(poison.Headers)+9)
+	for _, h := range poison.Headers {
+		want = append(want, h.Key)
+	}
+
+	want = append(want,
+		dlqheader.SourceTopic, dlqheader.ErrorClass, dlqheader.ErrorMessage,
+		dlqheader.RetryCount, dlqheader.FirstFailureAt, dlqheader.ProducerID,
+		dlqheader.SourcePartition, dlqheader.SourceOffset, dlqheader.CauseKind,
+	)
+
+	if len(got) != len(want) {
+		t.Fatalf("emitted %d headers; want %d (the original set plus nine, nothing stripped)", len(got), len(want))
+	}
+
+	for i, key := range want {
+		if got[i].Key != key {
+			t.Errorf("header %d = %q; want %q — first-hop output must be unchanged by the re-quarantine strip", i, got[i].Key, key)
+		}
+	}
+
+	if string(adapter.Messages()[0].Payload) != `{"ok":true}` {
+		t.Errorf("payload = %q; want it verbatim", adapter.Messages()[0].Payload)
+	}
 }

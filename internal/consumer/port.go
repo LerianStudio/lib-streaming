@@ -3,9 +3,7 @@ package consumer
 import (
 	"context"
 	"fmt"
-	"slices"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/twmb/franz-go/pkg/kgo"
@@ -232,7 +230,21 @@ func (p *transportDLQPublisher) PublishDLQ(ctx context.Context, rec *kgo.Record,
 	// is fail-closed, and fail-closed on a record that can NEVER be quarantined
 	// is a partition wedged forever — under one topic per app, the producing
 	// application's whole catalog stuck behind one record.
-	slim := append(slices.Clone(headers),
+	// Drop any markers carried forward before stamping this hop's, so the record
+	// still holds exactly one of each. Overwriting is the right semantics: both
+	// values say "the payload is not the original", and this hop's byte count is
+	// the one measured against the payload actually dropped here.
+	slim := make([]transport.Header, 0, len(headers)+2)
+
+	for _, h := range headers {
+		if h.Key == dlqheader.PayloadOmitted || h.Key == dlqheader.PayloadBytes {
+			continue
+		}
+
+		slim = append(slim, h)
+	}
+
+	slim = append(slim,
 		transport.Header{Key: dlqheader.PayloadOmitted, Value: []byte("true")},
 		transport.Header{Key: dlqheader.PayloadBytes, Value: []byte(strconv.Itoa(len(rec.Value)))},
 	)
@@ -264,22 +276,28 @@ func (p *transportDLQPublisher) forensicHeaders(rec *kgo.Record, cause error, ca
 		causeMessage = dlqheader.TruncateErrorMessage(contract.SanitizeBrokerURL(cause.Error()))
 	}
 
-	// Copy the original headers, MINUS any forensic set the record already
-	// carries. A record being quarantined may already be a quarantine copy — a
-	// DLQ reader whose handler returns terminal re-quarantines one — and
-	// appending a second set would leave two values for every key: a reader
-	// cannot tell which quarantine each describes, and the block grows by nine
-	// keys per hop on a record that is already strictly larger than its source.
+	// Copy the original headers, MINUS any HOP-SCOPED forensic set the record
+	// already carries. A record being quarantined may already be a quarantine
+	// copy — a DLQ reader whose handler returns terminal re-quarantines one —
+	// and appending a second set would leave two values for each of the nine
+	// keys: a reader cannot tell which quarantine each describes, and the block
+	// grows by nine keys per hop on a record already strictly larger than its
+	// source.
 	//
-	// Stripping keeps exactly one of each key, always describing THIS
-	// quarantine. The earlier coordinates are not lost: they stay on the entry
-	// this one points at, so the route back is a linked list walked one hop at
-	// a time. The ce-* envelope is never stripped — that is the event's
-	// identity, not this quarantine's forensics.
+	// Stripping keeps exactly one of each, always describing THIS quarantine.
+	// The earlier coordinates are not lost: they stay on the entry this one
+	// points at, so the route back is a linked list walked one hop at a time.
+	//
+	// Two things are deliberately NOT stripped. The ce-* envelope is the EVENT's
+	// identity, not this quarantine's forensics. And the payload markers
+	// describe the PAYLOAD rather than a hop — "what you see is not the
+	// original, and the original was N bytes" — which stays true at every later
+	// hop; dropping them would let a re-quarantined slim entry claim a genuinely
+	// empty payload and lose the only surviving record of the original size.
 	headers := make([]transport.Header, 0, len(rec.Headers)+9)
 
 	for _, h := range rec.Headers {
-		if strings.HasPrefix(h.Key, dlqheader.Prefix) {
+		if dlqheader.IsHopHeader(h.Key) {
 			continue
 		}
 

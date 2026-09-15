@@ -193,12 +193,14 @@ type DiscardRecord struct {
 	// how large the dropped payload was. On a CONSUMER quarantine the payload
 	// is still recoverable from the source topic at the origin triple.
 	//
-	// It describes THIS quarantine only, like every other forensic field. The
-	// two payload markers are stamped only when a payload is actually dropped,
-	// and a writer strips the whole forensic set before stamping its own, so a
-	// RE-quarantined entry that was slim at an earlier hop reads false here with
-	// an empty Payload. That is not a contradiction: the marker for the earlier
-	// hop lives one hop back, on the entry the origin triple points at.
+	// The promise holds at EVERY hop. Unlike the nine forensic headers, which
+	// describe one quarantine and are replaced each time a record is
+	// re-quarantined, the two payload markers describe the RECORD's payload
+	// relative to the business record it came from — "what you see is not the
+	// original, and the original was PayloadBytes bytes" — which stays true
+	// however many times the entry is quarantined again. A DLQ writer carries
+	// them forward, so a re-quarantined slim entry still reports true here
+	// instead of claiming a genuinely empty payload.
 	PayloadOmitted bool
 	// PayloadBytes is the size of the payload that was dropped. Zero unless
 	// PayloadOmitted.
@@ -277,10 +279,10 @@ func TruncatedErrorMessageBytes(message string) (int, bool) {
 // topic/partition/offset — those are the DLQ's, not the poison record's.
 //
 // A duplicate key resolves to its LAST value. Records this library writes never
-// carry one: a DLQ writer strips any forensic set already on a record before
-// stamping its own (see dlqheader.Prefix), so re-quarantining a quarantine copy
-// still yields exactly one value per key, describing the most recent
-// quarantine. The rule is stated for records a foreign writer produced.
+// carry one: a DLQ writer replaces the nine hop-scoped forensic headers rather
+// than appending to them, and carries the two payload markers forward, so
+// re-quarantining a quarantine copy still yields exactly one value per key. The
+// rule is stated for records a foreign writer produced.
 func ParseDiscardRecord(headers []kgo.RecordHeader, payload []byte) DiscardRecord {
 	index := make(map[string]string, len(headers))
 	for _, h := range headers {

@@ -21,25 +21,50 @@
 // record it quarantines and must still fit. See budget.go.
 package dlqheader
 
-// Prefix is the namespace every DLQ forensic header key shares. A DLQ writer
-// strips it from the headers it copies before stamping its own, so a record
-// carries exactly ONE of each key — the set describing the MOST RECENT
-// quarantine.
+// hopHeaders are the nine keys describing ONE quarantine event: who
+// quarantined the record, why, when, and from which coordinate. A DLQ writer
+// strips them from the headers it copies before stamping its own, so a record
+// carries exactly one of each — always describing the MOST RECENT quarantine.
 //
 // It matters because a quarantine copy can itself be quarantined: a DLQ reader
 // whose handler returns terminal re-quarantines an entry that already carries
-// the full forensic set. Appending a second set would leave two values for every
-// key — a reader cannot tell which quarantine each describes, and the header
-// block grows by nine keys per hop on a record that is already strictly larger
-// than the one it quarantines, which is the size wedge MaxErrorMessageBytes
-// exists to prevent.
+// the full set. Appending a second set would leave two values for every key — a
+// reader cannot tell which quarantine each describes — and the block would grow
+// by nine keys per hop on a record already strictly larger than the one it
+// quarantines, which is the size wedge MaxErrorMessageBytes exists to prevent.
 //
 // The chain back survives as a linked list instead: each entry's origin triple
 // names the topic and offset the failing consumer actually read, one hop at a
 // time.
-const Prefix = "x-lerian-dlq-"
+//
+// PayloadOmitted and PayloadBytes are deliberately NOT in this set. They do not
+// describe a quarantine; they describe the PAYLOAD the record carries, relative
+// to the business record it came from — "what you see is not the original, and
+// the original was N bytes". That stays true at every later hop, so they travel
+// forward instead of being stripped. Dropping them would let a re-quarantined
+// slim entry claim a genuinely empty payload, and would lose the only surviving
+// record of the original size.
+var hopHeaders = map[string]struct{}{
+	SourceTopic:     {},
+	ErrorClass:      {},
+	ErrorMessage:    {},
+	RetryCount:      {},
+	FirstFailureAt:  {},
+	ProducerID:      {},
+	SourcePartition: {},
+	SourceOffset:    {},
+	CauseKind:       {},
+}
 
-// The six DLQ forensic header keys (TRD §C8). Every DLQ message carries all
+// IsHopHeader reports whether key describes a single quarantine event rather
+// than the record being quarantined. See hopHeaders.
+func IsHopHeader(key string) bool {
+	_, ok := hopHeaders[key]
+
+	return ok
+}
+
+// The six DLQ forensic header keys (TRD §C8).// The six DLQ forensic header keys (TRD §C8). Every DLQ message carries all
 // six; none are optional.
 const (
 	SourceTopic    = "x-lerian-dlq-source-topic"
