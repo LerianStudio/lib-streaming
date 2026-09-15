@@ -192,6 +192,13 @@ type DiscardRecord struct {
 	// it": when it is true, Payload is empty on purpose and PayloadBytes says
 	// how large the dropped payload was. On a CONSUMER quarantine the payload
 	// is still recoverable from the source topic at the origin triple.
+	//
+	// It describes THIS quarantine only, like every other forensic field. The
+	// two payload markers are stamped only when a payload is actually dropped,
+	// and a writer strips the whole forensic set before stamping its own, so a
+	// RE-quarantined entry that was slim at an earlier hop reads false here with
+	// an empty Payload. That is not a contradiction: the marker for the earlier
+	// hop lives one hop back, on the entry the origin triple points at.
 	PayloadOmitted bool
 	// PayloadBytes is the size of the payload that was dropped. Zero unless
 	// PayloadOmitted.

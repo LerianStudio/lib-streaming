@@ -49,11 +49,13 @@ func (exceptionDesk) HandleDiscard(_ context.Context, r streaming.DiscardRecord)
 //
 // It exists so the documented wiring cannot rot: an example that stops
 // compiling fails the build, whereas a fenced block in a Markdown file can
-// drift for a year. Build is called with an empty broker list so the example
-// terminates without a cluster — the point under test is the WIRING, and the
-// two refusals it would otherwise trip (a DLQ reader may not carry the
-// ce-source of the application it drains, and may not combine DiscardHandler
-// with Handler or On) are what the Source(...) line below avoids.
+// drift for a year.
+//
+// It needs no running cluster because franz-go dials lazily — Build constructs
+// the clients and returns without contacting a broker, and the example never
+// polls. The point under test is the WIRING, in particular the Source(...) line:
+// a DLQ reader may not carry the ce-source of the application whose quarantine
+// topic it drains, or Build refuses it.
 func Example_readingADLQ() {
 	ctx := context.Background()
 
