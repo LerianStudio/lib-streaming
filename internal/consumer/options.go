@@ -40,6 +40,15 @@ func WithDLQPublisher(p dlqPublisher) Option {
 	return func(c *consumerRuntime) { c.dlq = p }
 }
 
+// WithDiscardDispatch installs the DLQ-reader seam. The root builder's
+// DiscardHandler(...) is its only caller: keeping the installer here, on an
+// option a service cannot construct (this package is internal, and the root
+// re-exports only logger/metrics/tracer), is what makes "this consumer is a DLQ
+// reader" a build-time fact rather than a method-set accident.
+func WithDiscardDispatch(fn DiscardDispatch) Option {
+	return func(c *consumerRuntime) { c.discard = fn }
+}
+
 // WithCodec overrides the CloudEvents header decoder (tenant extraction seam).
 // Defaults to cloudevents.ParseCloudEventsHeaders.
 func WithCodec(fn codecFunc) Option {

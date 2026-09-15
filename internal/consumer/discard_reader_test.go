@@ -17,39 +17,53 @@ import (
 	"github.com/LerianStudio/lib-streaming/v4/internal/transport/fake"
 )
 
-// recordingDiscardHandler captures every DiscardRecord handed to it and can be
-// scripted to return an error.
-type recordingDiscardHandler struct {
-	mu      sync.Mutex
-	records []dlqheader.DiscardRecord
-	err     error
+// recordingDiscard captures every delivery through the discard seam. It holds
+// RAW headers because that is what the seam carries: the typed record is a root
+// type, parsed at the facade, and this package never names it.
+type recordingDiscard struct {
+	mu       sync.Mutex
+	headers  [][]kgo.RecordHeader
+	payloads [][]byte
+	tenants  []string
+	err      error
 }
 
-func (h *recordingDiscardHandler) HandleDiscard(_ context.Context, record dlqheader.DiscardRecord) error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+func (d *recordingDiscard) dispatch(ctx context.Context, headers []kgo.RecordHeader, payload []byte) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 
-	h.records = append(h.records, record)
+	d.headers = append(d.headers, headers)
+	d.payloads = append(d.payloads, payload)
 
-	return h.err
+	tid, _ := ctx.Value(tenantContextKey{}).(string)
+	d.tenants = append(d.tenants, tid)
+
+	return d.err
 }
 
-func (h *recordingDiscardHandler) last() (dlqheader.DiscardRecord, bool) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+func (d *recordingDiscard) count() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 
-	if len(h.records) == 0 {
-		return dlqheader.DiscardRecord{}, false
+	return len(d.headers)
+}
+
+// value returns the value of key on the most recent delivery.
+func (d *recordingDiscard) value(key string) (string, bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if len(d.headers) == 0 {
+		return "", false
 	}
 
-	return h.records[len(h.records)-1], true
-}
+	for _, h := range d.headers[len(d.headers)-1] {
+		if h.Key == key {
+			return string(h.Value), true
+		}
+	}
 
-func (h *recordingDiscardHandler) count() int {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	return len(h.records)
+	return "", false
 }
 
 // quarantine runs ONE poison record through a real consumer runtime whose DLQ
@@ -58,9 +72,9 @@ func (h *recordingDiscardHandler) count() int {
 // would hold them.
 //
 // The round trip through the REAL publisher is the point. A test that hand-wrote
-// the nine forensic headers would prove only that the parser reads the strings
-// the test wrote; this one fails if the writer and the reader ever disagree
-// about a key, a value format, or which headers survive.
+// the forensic headers would prove only that the reader sees the strings the
+// test wrote; this one fails if the writer and the reader ever disagree about a
+// key, a value format, or which headers survive.
 func quarantine(t *testing.T, source *kgo.Record, cause error, consumerApp string) *kgo.Record {
 	t.Helper()
 
@@ -99,10 +113,14 @@ func dlqRecord(message transport.TransportMessage, dlqTopic string) *kgo.Record 
 	}
 }
 
-// readDLQ runs one DLQ record through a consumer wired with a DiscardHandler and
-// returns the handler plus the DLQ publisher, so a test can assert both what the
-// reader received and that the reader quarantined nothing of its own.
-func readDLQ(t *testing.T, record *kgo.Record, handler *recordingDiscardHandler, mutate func(*ConsumerConfig)) *fakeDLQ {
+// readDLQ runs one DLQ record through a consumer wired with the discard seam and
+// returns the fake DLQ publisher, so a test can assert both what the reader
+// received and that the reader quarantined nothing of its own.
+//
+// The reader carries its OWN ce-source, which is the shape the library now
+// requires: "test-consumer" quarantines into lerian.streaming.test-consumer.dlq,
+// never into the topic it drains.
+func readDLQ(t *testing.T, record *kgo.Record, discard *recordingDiscard, mutate func(*ConsumerConfig)) *fakeDLQ {
 	t.Helper()
 
 	client := newFakeGroupClient(fetchOf(record.Topic, record.Partition, record))
@@ -114,200 +132,200 @@ func readDLQ(t *testing.T, record *kgo.Record, handler *recordingDiscardHandler,
 		if mutate != nil {
 			mutate(cfg)
 		}
-	}, client, AsHandler(handler), dlq)
+	}, client, nil, dlq, WithDiscardDispatch(discard.dispatch))
 
 	runUntilClosed(t, r)
 
 	return dlq
 }
 
-// TestDiscardHandler_ReceivesWhatDiedWhyAndFromWhere is the whole point of the
-// discard seam: a service can drain its own ".dlq" and learn what the library
-// stamped on the quarantine, which no Handler can see because the codec drops
-// every non-ce-* header before Handle runs.
-func TestDiscardHandler_ReceivesWhatDiedWhyAndFromWhere(t *testing.T) {
+// TestDiscardSeam_CarriesTheForensicHeadersThroughVerbatim is the whole point of
+// the seam: the x-lerian-dlq-* keys a Handler can never see, because the codec
+// drops every non-ce-* header before Handle runs, reach the reader intact.
+//
+// It asserts by KEY against the writer's own constants, which is what the root
+// facade's parser reads; TestDLQHeaderConstants_MatchTheWriter pins the facade's
+// literals to these same constants, so the two halves cannot drift apart.
+func TestDiscardSeam_CarriesTheForensicHeadersThroughVerbatim(t *testing.T) {
 	t.Parallel()
 
 	poison := rec("lerian.streaming.gateway", 3, 42, ceHeaders("tenant-abc", false))
 	entry := quarantine(t, poison, errors.New("loan already settled"), "lender")
 
-	handler := &recordingDiscardHandler{}
+	discard := &recordingDiscard{}
 
-	dlq := readDLQ(t, entry, handler, nil)
+	dlq := readDLQ(t, entry, discard, nil)
 
-	if handler.count() != 1 {
-		t.Fatalf("discard handler ran %d times; want 1", handler.count())
+	if discard.count() != 1 {
+		t.Fatalf("discard seam ran %d times; want 1", discard.count())
 	}
 
 	if dlq.count() != 0 {
 		t.Fatalf("the DLQ reader quarantined %d records of its own; want 0", dlq.count())
 	}
 
-	got, _ := handler.last()
-
-	t.Run("where it came from", func(t *testing.T) {
-		t.Parallel()
-
-		if got.SourceTopic != "lerian.streaming.gateway" {
-			t.Errorf("SourceTopic = %q; want %q", got.SourceTopic, "lerian.streaming.gateway")
-		}
-
-		if got.SourcePartition != 3 {
-			t.Errorf("SourcePartition = %d; want 3", got.SourcePartition)
-		}
-
-		if got.SourceOffset != 42 {
-			t.Errorf("SourceOffset = %d; want 42", got.SourceOffset)
-		}
-	})
-
-	t.Run("why it died", func(t *testing.T) {
-		t.Parallel()
-
-		if got.CauseKind != dlqheader.CauseHandler {
-			t.Errorf("CauseKind = %q; want %q", got.CauseKind, dlqheader.CauseHandler)
-		}
-
-		if !strings.Contains(got.ErrorMessage, "loan already settled") {
-			t.Errorf("ErrorMessage = %q; want it to carry the handler's error", got.ErrorMessage)
-		}
-
-		if got.ErrorClass == "" {
-			t.Error("ErrorClass is empty; want the transport's classification")
-		}
-	})
-
-	t.Run("which tenant and what it was", func(t *testing.T) {
-		t.Parallel()
-
-		if got.EnvelopeError != nil {
-			t.Fatalf("EnvelopeError = %v; want nil (the ce-* headers travel verbatim)", got.EnvelopeError)
-		}
-
-		if got.Event.TenantID != "tenant-abc" {
-			t.Errorf("Event.TenantID = %q; want %q", got.Event.TenantID, "tenant-abc")
-		}
-
-		if key := contract.EventKey(got.Event.ResourceType, got.Event.EventType); key != "loan.created" {
-			t.Errorf("event key = %q; want %q", key, "loan.created")
-		}
-
-		if got.Event.Source != "test-source" {
-			t.Errorf("Event.Source = %q; want the ORIGINAL producer, not the quarantining app", got.Event.Source)
-		}
-	})
-
-	t.Run("when and who quarantined it", func(t *testing.T) {
-		t.Parallel()
-
-		if got.ProducerID == "" {
-			t.Error("ProducerID is empty; want the quarantining consumer group")
-		}
-
-		if got.FirstFailureAt.IsZero() {
-			t.Error("FirstFailureAt is zero; want the quarantine stamp")
-		}
-	})
-
-	t.Run("the payload is the real one", func(t *testing.T) {
-		t.Parallel()
-
-		if got.PayloadOmitted {
-			t.Error("PayloadOmitted = true; want false — this record fit")
-		}
-
-		if string(got.Payload) != `{"ok":true}` {
-			t.Errorf("Payload = %q; want the verbatim poison payload", got.Payload)
-		}
-	})
-}
-
-// TestDiscardHandler_DropOneHeaderLosesExactlyThatField is the mutation proof:
-// every field the reader reports must come from its OWN header, not from the
-// record's coordinates, a sibling header, or a fabricated default.
-//
-// It matters most for the origin triple. A reader that silently fell back to the
-// DLQ record's own topic/partition/offset would look correct in every happy-path
-// assertion above and point an operator at the quarantine queue instead of at
-// the poison record — with no way to tell, because those coordinates are always
-// populated.
-func TestDiscardHandler_DropOneHeaderLosesExactlyThatField(t *testing.T) {
-	t.Parallel()
-
-	poison := rec("lerian.streaming.gateway", 3, 42, ceHeaders("tenant-abc", false))
-	entry := quarantine(t, poison, errors.New("loan already settled"), "lender")
-
 	tests := []struct {
 		name string
 		key  string
-		zero func(dlqheader.DiscardRecord) bool
-		what string
+		want string
 	}{
-		{"origin topic", dlqheader.SourceTopic, func(r dlqheader.DiscardRecord) bool { return r.SourceTopic == "" }, "SourceTopic"},
-		{"origin partition", dlqheader.SourcePartition, func(r dlqheader.DiscardRecord) bool { return r.SourcePartition == 0 }, "SourcePartition"},
-		{"origin offset", dlqheader.SourceOffset, func(r dlqheader.DiscardRecord) bool { return r.SourceOffset == 0 }, "SourceOffset"},
-		{"cause kind", dlqheader.CauseKind, func(r dlqheader.DiscardRecord) bool { return r.CauseKind == "" }, "CauseKind"},
-		{"error class", dlqheader.ErrorClass, func(r dlqheader.DiscardRecord) bool { return r.ErrorClass == "" }, "ErrorClass"},
-		{"error message", dlqheader.ErrorMessage, func(r dlqheader.DiscardRecord) bool { return r.ErrorMessage == "" }, "ErrorMessage"},
-		{"retry count", dlqheader.RetryCount, func(r dlqheader.DiscardRecord) bool { return r.RetryCount == 0 }, "RetryCount"},
-		{"first failure at", dlqheader.FirstFailureAt, func(r dlqheader.DiscardRecord) bool { return r.FirstFailureAt.IsZero() }, "FirstFailureAt"},
-		{"producer id", dlqheader.ProducerID, func(r dlqheader.DiscardRecord) bool { return r.ProducerID == "" }, "ProducerID"},
-	}
-
-	// Sanity: with every header present, none of the nine fields reads as zero.
-	// Without this the table below would pass against a parser that returns the
-	// zero record for everything.
-	whole := dlqheader.ParseRecord(withRetryCount(entry.Headers), entry.Value)
-
-	for _, tt := range tests {
-		if tt.zero(whole) {
-			t.Fatalf("%s is zero with every header present; the mutation table would prove nothing", tt.what)
-		}
+		{"origin topic", dlqheader.SourceTopic, "lerian.streaming.gateway"},
+		{"origin partition", dlqheader.SourcePartition, "3"},
+		{"origin offset", dlqheader.SourceOffset, "42"},
+		{"cause kind", dlqheader.CauseKind, dlqheader.CauseHandler},
+		{"retry count", dlqheader.RetryCount, "0"},
+		{"the original tenant", "ce-tenantid", "tenant-abc"},
+		{"the ORIGINAL producer, not the quarantining app", "ce-source", "test-source"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			mutated := dlqheader.ParseRecord(dropHeader(withRetryCount(entry.Headers), tt.key), entry.Value)
+			got, ok := discard.value(tt.key)
+			if !ok {
+				t.Fatalf("header %s missing from the delivered record", tt.key)
+			}
 
-			if !tt.zero(mutated) {
-				t.Errorf("dropping %s left %s populated; the field is not sourced from its own header", tt.key, tt.what)
+			if got != tt.want {
+				t.Errorf("%s = %q; want %q", tt.key, got, tt.want)
 			}
 		})
 	}
-}
 
-// withRetryCount forces a non-zero retry count so the mutation table can tell
-// "dropped" from "legitimately zero" for that one field. Every other forensic
-// header is non-zero on a real quarantine already.
-func withRetryCount(headers []kgo.RecordHeader) []kgo.RecordHeader {
-	out := make([]kgo.RecordHeader, 0, len(headers))
+	t.Run("the error message and the quarantining identity", func(t *testing.T) {
+		t.Parallel()
 
-	for _, h := range headers {
-		if h.Key == dlqheader.RetryCount {
-			h.Value = []byte("2")
+		msg, _ := discard.value(dlqheader.ErrorMessage)
+		if !strings.Contains(msg, "loan already settled") {
+			t.Errorf("%s = %q; want the handler's error", dlqheader.ErrorMessage, msg)
 		}
 
-		out = append(out, h)
-	}
+		if id, ok := discard.value(dlqheader.ProducerID); !ok || id == "" {
+			t.Error("producer id missing; want the quarantining consumer group")
+		}
+	})
 
-	return out
+	t.Run("the payload is the real one", func(t *testing.T) {
+		t.Parallel()
+
+		discard.mu.Lock()
+		defer discard.mu.Unlock()
+
+		if string(discard.payloads[0]) != `{"ok":true}` {
+			t.Errorf("payload = %q; want the verbatim poison payload", discard.payloads[0])
+		}
+	})
 }
 
-// TestDiscardHandler_MalformedEnvelopeIsDeliveredNotRequarantined pins the guard
-// that keeps a DLQ reader from feeding itself.
+// TestDiscardSeam_IsNotArmedByAHandlersMethodSet is the F1 witness.
+//
+// The seam used to be an interface the runtime type-asserted on the handler. Any
+// business handler that happened to carry a HandleDiscard method — a publicly
+// writable shape, since the record type is exported — then took the discard path
+// while wired with Handler(...) on an ORDINARY topic, which silently lifted both
+// library verdicts there: a codec-fault poison record was handed over with an
+// all-zero forensic record and committed (gone, no DLQ entry, no alert), and
+// ce-source verification stopped.
+//
+// The seam is now a func only WithDiscardDispatch can install, so the arming is
+// a property of what the caller built. This test pins that: the same dual-method
+// handler, wired as a plain Handler with no discard option, still gets both
+// verdicts.
+func TestDiscardSeam_IsNotArmedByAHandlersMethodSet(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a codec fault is still quarantined", func(t *testing.T) {
+		t.Parallel()
+
+		// No ce-specversion: the envelope cannot decode.
+		poison := &kgo.Record{
+			Topic: "lerian.streaming.gateway", Partition: 0, Offset: 4,
+			Value:   []byte(`{}`),
+			Headers: []kgo.RecordHeader{{Key: "ce-id", Value: []byte("evt-1")}},
+		}
+
+		handler := &dualMethodHandler{}
+		dlq := &fakeDLQ{}
+
+		r := newTestRuntimeCfg(t, func(cfg *ConsumerConfig) {
+			cfg.Topics = []string{poison.Topic}
+		}, newFakeGroupClient(fetchOf(poison.Topic, 0, poison)), handler, dlq)
+
+		runUntilClosed(t, r)
+
+		if dlq.count() != 1 {
+			t.Fatalf("a normal consumer quarantined %d codec faults; want 1 — the discard path was armed by a method set", dlq.count())
+		}
+
+		if _, kind := dlq.lastCause(); kind != dlqheader.CauseCodec {
+			t.Errorf("cause kind = %q; want %q", kind, dlqheader.CauseCodec)
+		}
+
+		if handler.discardCalls() != 0 {
+			t.Errorf("HandleDiscard ran %d times on a NORMAL consumer; want 0", handler.discardCalls())
+		}
+	})
+
+	t.Run("a foreign ce-source is still refused", func(t *testing.T) {
+		t.Parallel()
+
+		foreign := rec("t", 0, 4, ceHeaders("tenant-abc", false))
+		handler := &dualMethodHandler{}
+		dlq := &fakeDLQ{}
+
+		r := newTestRuntimeCfg(t, func(cfg *ConsumerConfig) {
+			cfg.ExpectSources = []string{"lender"}
+		}, newFakeGroupClient(fetchOf("t", 0, foreign)), handler, dlq)
+
+		runUntilClosed(t, r)
+
+		if dlq.count() != 1 {
+			t.Fatalf("ce-source verification quarantined %d foreign writes; want 1", dlq.count())
+		}
+
+		if _, kind := dlq.lastCause(); kind != dlqheader.CauseSourceMismatch {
+			t.Errorf("cause kind = %q; want %q", kind, dlqheader.CauseSourceMismatch)
+		}
+	})
+}
+
+// dualMethodHandler is a business Handler that ALSO carries a discard-shaped
+// method — the accident that used to arm the discard path. Wired with
+// Handler(...), it must behave as an ordinary handler and nothing else.
+type dualMethodHandler struct {
+	mu       sync.Mutex
+	discards int
+}
+
+func (*dualMethodHandler) Handle(context.Context, contract.Event, []byte) error { return nil }
+
+func (h *dualMethodHandler) HandleDiscard(_ context.Context, _ []kgo.RecordHeader, _ []byte) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	h.discards++
+
+	return nil
+}
+
+func (h *dualMethodHandler) discardCalls() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	return h.discards
+}
+
+// TestDiscardSeam_MalformedEnvelopeIsDeliveredNotRequarantined pins the guard
+// that keeps a DLQ reader from treating its topic's normal content as poison.
 //
 // A "codec" quarantine is, by definition, a record whose CloudEvents envelope
 // does not parse — and the quarantine copy is header-verbatim, so the entry on
 // the DLQ topic does not parse either. On the normal path that is a terminal
-// codec fault, which would republish the entry onto the very topic the reader is
-// draining. Forever.
-func TestDiscardHandler_MalformedEnvelopeIsDeliveredNotRequarantined(t *testing.T) {
+// codec fault.
+func TestDiscardSeam_MalformedEnvelopeIsDeliveredNotRequarantined(t *testing.T) {
 	t.Parallel()
 
-	// A record whose ce-* headers are missing entirely: the shape that made the
-	// original consumer quarantine it with cause kind "codec".
 	poison := &kgo.Record{
 		Topic:     "lerian.streaming.gateway",
 		Partition: 1,
@@ -324,48 +342,35 @@ func TestDiscardHandler_MalformedEnvelopeIsDeliveredNotRequarantined(t *testing.
 	}
 
 	entry := dlqRecord(adapter.Messages()[0], contract.AppDLQTopic("lender"))
-	handler := &recordingDiscardHandler{}
+	discard := &recordingDiscard{}
 
-	dlq := readDLQ(t, entry, handler, nil)
+	dlq := readDLQ(t, entry, discard, nil)
 
 	if dlq.count() != 0 {
-		t.Fatalf("the reader quarantined %d records back onto the topic it drains; want 0", dlq.count())
+		t.Fatalf("the reader quarantined %d entries whose envelope was dead; want 0", dlq.count())
 	}
 
-	if handler.count() != 1 {
-		t.Fatalf("discard handler ran %d times; want 1 — an unparseable envelope is a DLQ's normal content", handler.count())
+	if discard.count() != 1 {
+		t.Fatalf("discard seam ran %d times; want 1 — an unparseable envelope is a DLQ's normal content", discard.count())
 	}
 
-	got, _ := handler.last()
-
-	if got.EnvelopeError == nil {
-		t.Error("EnvelopeError is nil; a reader must be able to tell a garbage envelope from a single-tenant one")
-	}
-
-	if got.CauseKind != dlqheader.CauseCodec {
-		t.Errorf("CauseKind = %q; want %q — the forensic headers parse even when the envelope does not", got.CauseKind, dlqheader.CauseCodec)
-	}
-
-	if got.SourceTopic != "lerian.streaming.gateway" || got.SourceOffset != 7 {
-		t.Errorf("origin = %s/%d; want lerian.streaming.gateway/7 — the route back must survive a dead envelope",
-			got.SourceTopic, got.SourceOffset)
+	if got, ok := discard.value(dlqheader.SourceOffset); !ok || got != "7" {
+		t.Errorf("origin offset = %q; want 7 — the route back must survive a dead envelope", got)
 	}
 }
 
-// TestDiscardHandler_ForeignSourceIsNotQuarantined pins the second exemption. A
+// TestDiscardSeam_ForeignSourceIsNotQuarantined pins the second exemption. A
 // quarantine copy carries the ORIGINAL producer's ce-source, never the reader's
 // own application, so the source gate would reject a healthy DLQ entirely.
-func TestDiscardHandler_ForeignSourceIsNotQuarantined(t *testing.T) {
+func TestDiscardSeam_ForeignSourceIsNotQuarantined(t *testing.T) {
 	t.Parallel()
 
 	poison := rec("lerian.streaming.gateway", 0, 5, ceHeaders("tenant-abc", false))
 	entry := quarantine(t, poison, errors.New("terminal"), "lender")
 
-	handler := &recordingDiscardHandler{}
+	discard := &recordingDiscard{}
 
-	// An allowlist that does NOT contain the poison record's ce-source
-	// ("test-source"), which is what any real DLQ reader's config looks like.
-	dlq := readDLQ(t, entry, handler, func(cfg *ConsumerConfig) {
+	dlq := readDLQ(t, entry, discard, func(cfg *ConsumerConfig) {
 		cfg.ExpectSources = []string{"lender"}
 	})
 
@@ -373,82 +378,129 @@ func TestDiscardHandler_ForeignSourceIsNotQuarantined(t *testing.T) {
 		t.Fatalf("source verification quarantined %d DLQ entries; want 0", dlq.count())
 	}
 
-	if handler.count() != 1 {
-		t.Fatalf("discard handler ran %d times; want 1", handler.count())
+	if discard.count() != 1 {
+		t.Fatalf("discard seam ran %d times; want 1", discard.count())
 	}
 }
 
-// TestDiscardHandler_TenantTravelsOnTheHandlerContext proves the reader gets the
+// TestDiscardSeam_TenantTravelsOnTheHandlerContext proves the reader gets the
 // POISON record's tenant on ctx, from ce-tenantid, never from the payload.
-func TestDiscardHandler_TenantTravelsOnTheHandlerContext(t *testing.T) {
+func TestDiscardSeam_TenantTravelsOnTheHandlerContext(t *testing.T) {
 	t.Parallel()
 
 	poison := rec("lerian.streaming.gateway", 0, 5, ceHeaders("tenant-xyz", false))
 	entry := quarantine(t, poison, errors.New("terminal"), "lender")
 
-	seen := make(chan string, 1)
-	handler := &tenantSpyDiscardHandler{seen: seen}
+	discard := &recordingDiscard{}
 
-	client := newFakeGroupClient(fetchOf(entry.Topic, entry.Partition, entry))
+	readDLQ(t, entry, discard, nil)
 
-	r := newTestRuntimeCfg(t, func(cfg *ConsumerConfig) {
-		cfg.Topics = []string{entry.Topic}
-	}, client, AsHandler(handler), &fakeDLQ{})
+	discard.mu.Lock()
+	defer discard.mu.Unlock()
 
-	runUntilClosed(t, r)
-
-	select {
-	case got := <-seen:
-		if got != "tenant-xyz" {
-			t.Errorf("tenant on handler ctx = %q; want %q", got, "tenant-xyz")
-		}
-	default:
-		t.Fatal("discard handler never ran")
+	if len(discard.tenants) != 1 || discard.tenants[0] != "tenant-xyz" {
+		t.Errorf("tenant on handler ctx = %v; want [tenant-xyz]", discard.tenants)
 	}
 }
 
-type tenantSpyDiscardHandler struct{ seen chan string }
-
-func (h *tenantSpyDiscardHandler) HandleDiscard(ctx context.Context, _ dlqheader.DiscardRecord) error {
-	tid, _ := ctx.Value(tenantContextKey{}).(string)
-	h.seen <- tid
-
-	return nil
-}
-
-// TestDiscardHandler_ReturnedErrorStillQuarantines pins what is deliberately NOT
+// TestDiscardSeam_ReturnedErrorStillQuarantines pins what is deliberately NOT
 // lifted. The library exempts its own structural verdicts on this path; it does
-// not override the service's. A reader that returns terminal on its own ".dlq"
-// republishes onto the topic it drains — which is why the seam documents
-// "return nil for anything you cannot use" rather than silently swallowing it.
-func TestDiscardHandler_ReturnedErrorStillQuarantines(t *testing.T) {
+// not override the service's. What makes that safe is the construction-time
+// refusal proved below: the reader's quarantine destination is never a topic it
+// drains, so a terminal return lands somewhere else.
+func TestDiscardSeam_ReturnedErrorStillQuarantines(t *testing.T) {
 	t.Parallel()
 
 	poison := rec("lerian.streaming.gateway", 0, 5, ceHeaders("tenant-abc", false))
 	entry := quarantine(t, poison, errors.New("terminal"), "lender")
 
-	handler := &recordingDiscardHandler{err: errors.New("exception desk is down")}
+	discard := &recordingDiscard{err: errors.New("exception desk is down")}
 
-	dlq := readDLQ(t, entry, handler, nil)
+	dlq := readDLQ(t, entry, discard, nil)
 
 	if dlq.count() != 1 {
-		t.Fatalf("DLQ count = %d; want 1 — a discard handler's own error is classified like any other", dlq.count())
+		t.Fatalf("DLQ count = %d; want 1 — a reader's own error is classified like any other", dlq.count())
 	}
 
-	_, kind := dlq.lastCause()
-	if kind != dlqheader.CauseHandler {
+	if _, kind := dlq.lastCause(); kind != dlqheader.CauseHandler {
 		t.Errorf("cause kind = %q; want %q", kind, dlqheader.CauseHandler)
 	}
 }
 
-// TestDiscardOnly_HandleIsRefused proves the unreachable Handler path fails
-// loudly rather than dispatching into nothing, if a future refactor ever drops
-// the runtime's discard resolution.
-func TestDiscardOnly_HandleIsRefused(t *testing.T) {
+// TestRefuseSelfQuarantine_ClosesTheLoopAtConstruction is the F3 witness, and it
+// asserts the republish DESTINATION rather than a recording fake.
+//
+// The destination is lerian.streaming.<Source>.dlq and the subscription is
+// known at the same moment, so the self-feeding loop — republish onto the topic
+// you just read from, redeliver, quarantine, forever, while reporting healthy —
+// is refused instead of documented. It is refused in BOTH modes: with a plain
+// Handler the loop needs no handler error at all (a codec fault is enough), and
+// with a DLQ reader it reopens the moment the service's own handler returns
+// terminal.
+func TestRefuseSelfQuarantine_ClosesTheLoopAtConstruction(t *testing.T) {
 	t.Parallel()
 
-	err := AsHandler(&recordingDiscardHandler{}).Handle(context.Background(), contract.Event{}, nil)
-	if !errors.Is(err, ErrDiscardHandlerMisrouted) {
-		t.Errorf("Handle err = %v; want ErrDiscardHandlerMisrouted", err)
-	}
+	ownDLQ := contract.AppDLQTopic("lender")
+
+	t.Run("refused for a plain handler", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := New(selfQuarantineConfig(), newFakeGroupClient(), &fakeHandler{}, WithDLQPublisher(&fakeDLQ{}))
+		if !errors.Is(err, ErrSubscribedToOwnQuarantineTopic) {
+			t.Errorf("New err = %v; want ErrSubscribedToOwnQuarantineTopic", err)
+		}
+	})
+
+	t.Run("refused for a DLQ reader too", func(t *testing.T) {
+		t.Parallel()
+
+		discard := &recordingDiscard{}
+
+		_, err := New(selfQuarantineConfig(), newFakeGroupClient(), nil,
+			WithDLQPublisher(&fakeDLQ{}), WithDiscardDispatch(discard.dispatch))
+		if !errors.Is(err, ErrSubscribedToOwnQuarantineTopic) {
+			t.Errorf("New err = %v; want ErrSubscribedToOwnQuarantineTopic", err)
+		}
+	})
+
+	t.Run("the accepted shape republishes somewhere it does not read", func(t *testing.T) {
+		t.Parallel()
+
+		// The documented fix: the reader carries its own ce-source, so its
+		// quarantine destination is a topic it provisions and owns.
+		cfg := selfQuarantineConfig()
+		cfg.Source = "lender-dlq-desk"
+
+		destination := contract.AppDLQTopic(cfg.Source)
+
+		if destination == ownDLQ {
+			t.Fatal("the fix produced the same destination; the test proves nothing")
+		}
+
+		for _, subscribed := range cfg.ResolvedTopics() {
+			if destination == subscribed {
+				t.Fatalf("republish destination %q is a subscribed topic; the loop is still open", destination)
+			}
+		}
+
+		discard := &recordingDiscard{}
+
+		if _, err := New(cfg, newFakeGroupClient(), nil,
+			WithDLQPublisher(&fakeDLQ{}), WithDiscardDispatch(discard.dispatch)); err != nil {
+			t.Fatalf("New: %v", err)
+		}
+	})
+}
+
+// selfQuarantineConfig is a valid consumer subscribed to its OWN quarantine
+// destination — Source("lender") reading lerian.streaming.lender.dlq.
+func selfQuarantineConfig() ConsumerConfig {
+	cfg := DefaultBuilderConfig()
+	cfg.Enabled = true
+	cfg.Brokers = []string{"localhost:9092"}
+	cfg.Group = "test-group"
+	cfg.Source = "lender"
+	cfg.Topics = []string{contract.AppDLQTopic("lender")}
+
+	return cfg
 }

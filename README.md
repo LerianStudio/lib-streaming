@@ -431,12 +431,13 @@ DLQ publish is retried once with the payload omitted and marked
 the payload stays recoverable from the source topic via the origin coordinates —
 but headroom is the actual fix.
 
-### Reading your own DLQ
+### Reading a DLQ
 
 A quarantined record is durable but invisible until something drains it. The
-eleven forensic `x-lerian-dlq-*` headers do not survive the CloudEvents codec,
-so a plain `Handler` cannot see any of them — `DiscardHandler` is the seam that
-can:
+nine forensic `x-lerian-dlq-*` headers every entry carries (eleven keys exist;
+the two payload markers appear only when the payload was dropped) do not survive
+the CloudEvents codec, so a plain `Handler` cannot see any of them —
+`DiscardHandler` is the seam that can:
 
 ```go
 type desk struct{}
@@ -449,33 +450,53 @@ func (desk) HandleDiscard(ctx context.Context, r streaming.DiscardRecord) error 
     return nil
 }
 
-dlqTopic, _ := streaming.AppDLQTopic(cfg.CloudEventsSource)
-
 c, err := streaming.NewConsumer().
     Brokers(cfg.Brokers...).
     Group("lender-dlq-desk").
-    Source(cfg.CloudEventsSource).
-    Topics(dlqTopic).
+    Source("lender-dlq-desk").               // NOT "lender" — see below
+    Topics("lerian.streaming.lender.dlq").   // the queue it drains
     DiscardHandler(desk{}).
     Build(ctx)
 ```
 
+**Give the reader its own `ce-source`.** `Source(...)` names where a consumer
+quarantines — `lerian.streaming.<source>.dlq` — so a reader built with
+`Source("lender")` draining `lerian.streaming.lender.dlq` would quarantine into
+the topic it is emptying: republish, redeliver, quarantine, forever, while
+reporting healthy and growing the topic without bound. Both strings are known at
+construction, so **`Build` refuses any consumer subscribed to its own quarantine
+topic** (`ErrSubscribedToOwnQuarantineTopic`) rather than documenting the hazard.
+A distinct source gives the reader its own quarantine topic, which the consumer
+provisions and owns; draining another application's `.dlq` was never the
+constraint.
+
+That refusal is what makes the remaining rule safe: the error your handler
+returns is classified like any other handler error, and it now lands somewhere
+you do not read.
+
+`DiscardHandler` is mutually exclusive with `Handler`, `On`/`OnFrom` and
+`Commands`, enforced at `Build` in either order.
+
 The origin triple is the stable natural key for deduping a redelivered or
 replayed quarantine; `ce-id` is not, because the replay path can quarantine the
-same event twice.
+same event twice. It **fails closed as a unit**: if any of its three headers is
+present but unreadable, all three are discarded and `HeaderError` says so,
+because `topic/0/42` is a plausible-looking coordinate pointing at the wrong
+record. An *absent* coordinate is not a failure — a producer-side quarantine
+legitimately has an origin topic and no partition or offset.
 
-Two library-side terminal verdicts are lifted on this path, because a reader
-drains the SAME topic it would quarantine into. A codec fault delivers the record
-with a zero envelope and the reason in `DiscardRecord.EnvelopeError` instead of
-quarantining it — an unparseable envelope is what a `codec` entry IS — and
-`ce-source` verification is skipped, since a quarantine copy carries the original
-producer's `ce-source`, never the reader's. **The error your handler returns is
-not lifted**: return `nil` for anything you cannot use and record it on your
-exception desk, or it republishes onto the topic you are emptying.
+Two library-side terminal verdicts are lifted on this path, because a `.dlq`
+topic's normal content would otherwise be treated as poison. A codec fault
+delivers the record with a zero envelope and the reason in
+`DiscardRecord.EnvelopeError` — an unparseable envelope is what a `codec` entry
+IS — and `ce-source` verification is skipped, since a quarantine copy carries the
+original producer's `ce-source`, never the reader's.
 
 For tooling that holds the headers itself, `streaming.ParseDiscardRecord(headers,
-payload)` does the same decode standalone, and the header keys and cause-kind
-values are exported as `streaming.DLQHeader*` / `streaming.DLQCause*`.
+payload)` does the same decode standalone and never fails; the header keys and
+cause-kind values are exported as `streaming.DLQHeader*` / `streaming.DLQCause*`,
+and `streaming.TruncatedErrorMessageBytes` tells a cut error message from a whole
+one.
 
 ## Multi-Transport Routing
 

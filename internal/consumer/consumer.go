@@ -229,12 +229,14 @@ type consumerRuntime struct {
 	// then meters nothing. Build one Dispatcher per consumer.
 	dispatcher *Dispatcher
 
-	// discard is the handler when it reads a ".dlq" topic, resolved once at
-	// construction like dispatcher. Non-nil switches the per-record guard chain
-	// onto the discard path: the codec fault stops being a verdict and
-	// ce-source verification is skipped, because on a DLQ reader both would
-	// quarantine the very topic being drained. See DiscardHandler.
-	discard DiscardHandler
+	// discard is the DLQ-reader seam, installed only by WithDiscardDispatch —
+	// which only the root builder's DiscardHandler(...) calls. Non-nil switches
+	// the per-record guard chain onto the discard path: the codec fault stops
+	// being a verdict and ce-source verification is skipped, because on a DLQ
+	// reader both would quarantine the very topic being drained. It is
+	// deliberately NOT derived from the handler's method set; see
+	// DiscardDispatch.
+	discard DiscardDispatch
 
 	// commandTopics is the set of subscribed topics carrying STRICT unmatched
 	// semantics, resolved once from cfg.Commands. Read per record on the guard
@@ -259,10 +261,6 @@ func New(cfg ConsumerConfig, client GroupClient, handler Handler, opts ...Option
 		return nil, ErrNilGroupClient
 	}
 
-	if transport.IsNilInterface(handler) {
-		return nil, ErrNilHandler
-	}
-
 	c := &consumerRuntime{
 		cfg:           cfg,
 		client:        client,
@@ -280,11 +278,38 @@ func New(cfg ConsumerConfig, client GroupClient, handler Handler, opts ...Option
 		}
 	}
 
+	// Exactly one way to receive records is required: a Handler, or the discard
+	// dispatch the root builder installs for a DLQ reader. The check runs AFTER
+	// the options because the discard seam arrives as one.
+	if transport.IsNilInterface(handler) && c.discard == nil {
+		return nil, ErrNilHandler
+	}
+
 	// A DLQ publisher is mandatory: terminal/poison records MUST quarantine
 	// rather than silently drop. Build wires the transport-seam publisher; if a
 	// caller reaches New without one it is a wiring bug, fail closed.
 	if transport.IsNilInterface(c.dlq) {
 		return nil, ErrNilDLQPublisher
+	}
+
+	// A consumer may never subscribe to the topic it quarantines INTO. The
+	// quarantine destination is lerian.streaming.<Source>.dlq and the
+	// subscription is known right here, so the self-feeding loop is refused at
+	// construction rather than documented:
+	//
+	//   - With a plain Handler, a terminal record republishes onto the topic it
+	//     was read from and is redelivered, quarantined, redelivered... forever,
+	//     while the consumer reports healthy and the topic grows without bound.
+	//   - With a DLQ reader, the same loop reopens the moment the service's own
+	//     handler returns terminal — the one verdict the library deliberately
+	//     does not override.
+	//
+	// The fix is a distinct ce-source for the reader ("lender-dlq-desk"), whose
+	// own ".dlq" this consumer provisions and owns. Draining another
+	// application's ".dlq" was never the constraint; draining your OWN
+	// quarantine destination is.
+	if err := refuseSelfQuarantine(cfg); err != nil {
+		return nil, err
 	}
 
 	// Give the dispatcher a voice for the events it drops. UnmatchedIgnore is
@@ -301,13 +326,28 @@ func New(cfg ConsumerConfig, client GroupClient, handler Handler, opts ...Option
 		d.ObserveUnmatched(c.recordUnmatched)
 	}
 
-	// Resolve the discard seam once, for the same reason: the guard chain reads
-	// it per record and a type assertion per record per guard would be three.
-	if dh, ok := handler.(DiscardHandler); ok {
-		c.discard = dh
+	return c, nil
+}
+
+// refuseSelfQuarantine rejects a consumer subscribed to its OWN quarantine
+// destination, lerian.streaming.<Source>.dlq.
+//
+// Both sides are known at construction: the destination is derived from
+// cfg.Source (consumer.go pins it on the transportDLQPublisher) and the
+// subscription is cfg.ResolvedTopics(). Comparing them is the whole guard.
+func refuseSelfQuarantine(cfg ConsumerConfig) error {
+	if cfg.Source == "" {
+		return nil
 	}
 
-	return c, nil
+	quarantine := contract.AppDLQTopic(cfg.Source)
+
+	if !slices.Contains(cfg.ResolvedTopics(), quarantine) {
+		return nil
+	}
+
+	return fmt.Errorf("%w: this consumer subscribes to %q, which is also where it quarantines (derived from Source(%q)) — give the reader its own ce-source, e.g. Source(%q), whose \".dlq\" it owns and provisions",
+		ErrSubscribedToOwnQuarantineTopic, quarantine, cfg.Source, cfg.Source+"-dlq-desk")
 }
 
 // recordUnmatched meters and logs one event the dispatcher had no handler for.
@@ -420,10 +460,6 @@ func Build(ctx context.Context, cfg ConsumerConfig, handler Handler, opts ...Opt
 
 	if err := cfg.Validate(); err != nil {
 		return nil, err
-	}
-
-	if transport.IsNilInterface(handler) {
-		return nil, ErrNilHandler
 	}
 
 	client, err := newKgoGroupClient(ctx, cfg)
@@ -929,7 +965,7 @@ func (c *consumerRuntime) dispatch(ctx context.Context, rec *kgo.Record, ev cont
 	}
 
 	if c.discard != nil {
-		return c.discard.HandleDiscard(hctx, dlqheader.ParseRecord(rec.Headers, rec.Value))
+		return c.discard(hctx, rec.Headers, rec.Value)
 	}
 
 	return c.handler.Handle(hctx, ev, rec.Value)

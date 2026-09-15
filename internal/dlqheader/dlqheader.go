@@ -48,3 +48,38 @@ const (
 	// what broke.
 	CauseKind = "x-lerian-dlq-cause-kind"
 )
+
+// The four cause kinds stamped on the CauseKind header. Low-cardinality by
+// design: an operator filters and alerts on this, then reads the sanitized
+// underlying error from the ErrorMessage header.
+//
+// They live here, beside the header key whose values they are, because the
+// values are as much a wire contract as the keys: a reader that buckets a DLQ
+// by cause compares against these strings, so changing one silently
+// reclassifies every entry an operator has an alert on. The root facade
+// restates them as literals (so they render on the public documentation page)
+// and a test pins the two sets equal.
+//
+// They exist because every DLQ entry used to carry the SAME message. A
+// consumer's DLQ filling up told an operator that something was terminal and
+// nothing else — a codec fault (the producer's wire format drifted), a source
+// mismatch (a foreign write, or a misconfigured allowlist), an unhandled key
+// (this consumer's registrations drifted behind the producer's catalog) and a
+// genuine business rejection were indistinguishable, and they have four
+// different owners and four different fixes.
+const (
+	// CauseCodec: the CloudEvents headers would not decode. The record is
+	// poison and can never parse; the producer's wire format is the suspect.
+	CauseCodec = "codec"
+	// CauseHandler: the service handler returned a terminal error. The
+	// business rejection is the suspect.
+	CauseHandler = "handler"
+	// CauseSourceMismatch: the event's ce-source was not an expected producer.
+	// Either a foreign write to the topic, or an ExpectSources allowlist that
+	// drifted from what actually publishes there.
+	CauseSourceMismatch = "source_mismatch"
+	// CauseUnhandledKey: no handler registered for the event key. This
+	// consumer's On(...) registrations have drifted behind the producer's
+	// catalog.
+	CauseUnhandledKey = "unhandled_key"
+)

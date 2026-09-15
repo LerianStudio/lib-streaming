@@ -55,13 +55,29 @@ var (
 	ErrHandlerAndDispatchBothSet = errors.New(
 		"streaming consumer: Handler(...) and On(...) are mutually exclusive — use On for per-event dispatch, Handler for the raw stream")
 
-	// ErrDiscardHandlerMisrouted is returned when a DiscardHandler reaches the
-	// plain Handler path. Unreachable by construction — the runtime resolves
-	// the discard seam once at New and routes every record to HandleDiscard —
-	// so it exists to make a future refactor that drops that resolution fail
-	// as one named quarantine instead of a nil dispatch.
-	ErrDiscardHandlerMisrouted = errors.New(
-		"streaming consumer: a DiscardHandler reached the plain Handler path — the discard seam was not resolved")
+	// ErrDiscardHandlerAndHandlerBothSet is returned when DiscardHandler is
+	// combined with Handler, On/OnFrom, or Commands. A DLQ reader is a third
+	// answer to "who selects events" — it selects nothing and receives every
+	// quarantine entry on the topics it drains — so silently preferring one
+	// would drop the other's handlers without a word.
+	//
+	// The dangerous order is DiscardHandler(h).Handler(x): the reader is demoted
+	// to a plain handler while still subscribed to a ".dlq" topic, which re-arms
+	// the codec-fault quarantine on it.
+	ErrDiscardHandlerAndHandlerBothSet = errors.New(
+		"streaming consumer: DiscardHandler(...) is mutually exclusive with Handler(...), On(...) and Commands(...) — a DLQ reader selects nothing, it receives every quarantine entry on the topics it drains")
+
+	// ErrSubscribedToOwnQuarantineTopic is returned when a consumer subscribes
+	// to lerian.streaming.<Source>.dlq — the topic it quarantines INTO.
+	//
+	// A terminal record then republishes onto the topic it was read from and is
+	// redelivered, quarantined, redelivered, forever, while the consumer reports
+	// healthy and the topic grows without bound. It costs nothing to refuse: the
+	// quarantine destination and the subscription are both known at
+	// construction. A DLQ reader drains ANOTHER application's ".dlq" under its
+	// own ce-source; that was never the constraint.
+	ErrSubscribedToOwnQuarantineTopic = errors.New(
+		"streaming consumer: a consumer may not subscribe to its own quarantine topic")
 
 	// ErrBareOnWithMultipleApps is returned when a consumer subscribed to more
 	// than one producing application registers a handler with a bare
