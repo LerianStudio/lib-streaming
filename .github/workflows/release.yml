@@ -16,6 +16,7 @@ jobs:
   pre-release-validation:
     name: Pre-release validation
     permissions:
+      actions: read
       contents: read
       packages: read
       pull-requests: write
