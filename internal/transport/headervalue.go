@@ -17,7 +17,16 @@ import (
 const HeaderValueReplacement = "�"
 
 // SanitizeHeaderValue converts raw Kafka header bytes into a Go string that is
-// safe to index, store and log.
+// valid UTF-8 and free of U+0000. That is the whole of the promise, and it is
+// deliberately narrow.
+//
+// It is NOT a general "safe to display" or "safe to log" function. A tab, a
+// newline and an ANSI escape are all valid UTF-8 and all pass through
+// untouched, so a value can still break a log line into two, or move a
+// terminal cursor, after this has run. Escaping for a DISPLAY is the
+// responsibility of whatever does the displaying, which is the only layer that
+// knows what needs escaping for it. What this function removes is the narrower
+// set that no text STORE will accept at all.
 //
 // A Kafka header value is an arbitrary byte slice. Nothing in the protocol, and
 // nothing in this library before this function existed, required it to be text
@@ -48,7 +57,9 @@ const HeaderValueReplacement = "�"
 // which is what strings.ToValidUTF8 does.
 //
 // The result may be LONGER in bytes than the input: each replaced byte becomes
-// three. A caller applying a byte budget must apply it after this, not before.
+// three, so an all-NUL value triples. A caller applying a byte budget MUST
+// apply it after this, not before — see dlqheader.ReboundSanitizedErrorMessage,
+// which exists because that ordering was got wrong once already.
 func SanitizeHeaderValue(value []byte) string {
 	text := string(value)
 
@@ -63,7 +74,11 @@ func SanitizeHeaderValue(value []byte) string {
 
 // isSafeHeaderValue reports whether the value needs no work at all, which is
 // the overwhelmingly common case: this runs on every header of every record,
-// including the hot inbound path, so the clean case allocates nothing.
+// including the hot inbound path, so the clean case does no work beyond the two
+// scans and the one string conversion that returning a string requires anyway.
+// It does not make the clean path allocation-free — converting bytes to a
+// string copies them — it keeps the clean path down to that single unavoidable
+// copy instead of a second pass building a new one.
 func isSafeHeaderValue(value string) bool {
 	return strings.IndexByte(value, 0) < 0 && utf8.ValidString(value)
 }
