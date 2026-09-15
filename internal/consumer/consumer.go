@@ -93,17 +93,20 @@ const maxUnmatchedEventKeyLabels = 64
 // distinct keys have been metered.
 const unmatchedEventKeyOverflow = "other"
 
-// The two unmatched-event log lines, as constants so a test can pin the exact
+// selfQuarantineMessage fires once per construction for a plain Handler
+// subscribed to its own quarantine topic. The loop is latent rather than
+// active — it needs one codec-cause or foreign-source record to start — so the
+// library names the hazard and keeps building instead of refusing a shape it
+// has always accepted.
+//
+// It sits apart from the unmatched-event lines below: it is a wiring warning
+// emitted at construction, not a per-record dispatch signal.
+const selfQuarantineMessage = "streaming consumer: subscribed to its own quarantine topic — a terminal record will republish onto the topic it was read from and redeliver forever; give this consumer its own ce-source"
+
+// The three unmatched-event log lines, as constants so a test can pin the exact
 // string rather than a substring that drifts.
 const (
 	// unmatchedNoHandlerMessage fires once per distinct unmatched key.
-	// selfQuarantineMessage fires once per construction for a plain Handler
-	// subscribed to its own quarantine topic. The loop is latent rather than
-	// active — it needs one codec-cause or foreign-source record to start — so
-	// the library names the hazard and keeps building instead of refusing a
-	// shape it has always accepted.
-	selfQuarantineMessage = "streaming consumer: subscribed to its own quarantine topic — a terminal record will republish onto the topic it was read from and redeliver forever; give this consumer its own ce-source"
-
 	unmatchedNoHandlerMessage = "streaming consumer: no handler registered for event key — records are being skipped and committed"
 	// unmatchedLabelOverflowMessage fires ONCE, at the boundary where the
 	// event_key label stops naming keys. Without it the "other" bucket
@@ -285,9 +288,20 @@ func New(cfg ConsumerConfig, client GroupClient, handler Handler, opts ...Option
 		}
 	}
 
-	// Exactly one way to receive records is required: a Handler, or the discard
-	// dispatch the root builder installs for a DLQ reader. The check runs AFTER
+	// EXACTLY one way to receive records is required: a Handler, or the discard
+	// dispatch the root builder installs for a DLQ reader. Both checks run AFTER
 	// the options because the discard seam arrives as one.
+	//
+	// Neither is a wiring bug with nowhere to deliver. BOTH is worse than it
+	// looks: dispatch prefers c.discard, so the Handler would be silently
+	// ignored AND the two DLQ-reader guards would arm on a consumer that asked
+	// for neither. The builder already refuses this, but New is the boundary the
+	// builder relies on, so it refuses here too rather than trusting its only
+	// caller to stay its only caller.
+	if !transport.IsNilInterface(handler) && c.discard != nil {
+		return nil, ErrDiscardHandlerAndHandlerBothSet
+	}
+
 	if transport.IsNilInterface(handler) && c.discard == nil {
 		return nil, ErrNilHandler
 	}

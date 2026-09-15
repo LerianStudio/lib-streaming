@@ -450,14 +450,28 @@ func (desk) HandleDiscard(ctx context.Context, r streaming.DiscardRecord) error 
     return nil
 }
 
+dlqTopic, err := streaming.AppDLQTopic("lender") // the queue it drains
+if err != nil {
+    return err
+}
+
 c, err := streaming.NewConsumer().
     Brokers(cfg.Brokers...).
     Group("lender-dlq-desk").
-    Source("lender-dlq-desk").               // NOT "lender" — see below
-    Topics("lerian.streaming.lender.dlq").   // the queue it drains
+    Source("lender-dlq-desk"). // NOT "lender" — see below
+    Topics(dlqTopic).
     DiscardHandler(desk{}).
     Build(ctx)
+if err != nil {
+    return err
+}
+defer func() { _ = c.Close() }()
+
+return c.Run(ctx)
 ```
+
+That snippet is compiled, not transcribed: it is `Example_readingADLQ` in
+`example_test.go`, so it fails the build if the wiring ever drifts.
 
 **Give the reader its own `ce-source`.** `Source(...)` names where a consumer
 quarantines — `lerian.streaming.<source>.dlq` — so a reader built with

@@ -541,3 +541,110 @@ func selfQuarantineConfig() ConsumerConfig {
 
 	return cfg
 }
+
+// TestNew_RefusesTwoReceiverModes guards the construction boundary the builder
+// relies on.
+//
+// The builder already refuses Handler + DiscardHandler, but New is exported
+// within this module and takes arbitrary options after it stores the handler.
+// Accepting both is worse than it looks: dispatch prefers c.discard, so the
+// Handler is silently ignored AND the two DLQ-reader guards arm on a consumer
+// that asked for neither — a codec fault on an ordinary topic stops
+// quarantining.
+func TestNew_RefusesTwoReceiverModes(t *testing.T) {
+	t.Parallel()
+
+	cfg := selfQuarantineConfig()
+	cfg.Source = "lender-dlq-desk"
+
+	discard := &recordingDiscard{}
+
+	_, err := New(cfg, newFakeGroupClient(), &fakeHandler{},
+		WithDLQPublisher(&fakeDLQ{}), WithDiscardDispatch(discard.dispatch))
+	if !errors.Is(err, ErrDiscardHandlerAndHandlerBothSet) {
+		t.Errorf("New err = %v; want ErrDiscardHandlerAndHandlerBothSet", err)
+	}
+}
+
+// TestPublishDLQ_RequarantineCarriesExactlyOneForensicSet pins what happens when
+// a quarantine copy is itself quarantined — which the discard seam makes a
+// normal event, since a DLQ reader whose handler returns terminal re-quarantines
+// an entry that already carries the full forensic set.
+//
+// The publisher used to copy every header verbatim and append its own, leaving
+// TWO values for each of the nine keys. Two consequences, both real: a reader
+// cannot tell which quarantine each value describes (the parser takes the last,
+// so it silently reports the newest while the record also carries the oldest),
+// and the block grows by nine keys per hop on a record that is already strictly
+// larger than the one it quarantines — the size wedge MaxErrorMessageBytes
+// exists to prevent, arrived at from the other side.
+//
+// The rule: exactly one of each key, always describing THIS quarantine. The
+// earlier coordinates are not lost — they stay on the entry this one points at,
+// so the route back is a linked list walked one hop at a time.
+func TestPublishDLQ_RequarantineCarriesExactlyOneForensicSet(t *testing.T) {
+	t.Parallel()
+
+	// First quarantine: the gateway's poison record lands on lender's DLQ.
+	poison := rec("lerian.streaming.gateway", 3, 42, ceHeaders("tenant-abc", false))
+	first := quarantine(t, poison, errors.New("loan already settled"), "lender")
+
+	// Second: the DLQ reader read that entry at a NEW coordinate and failed.
+	first.Topic = contract.AppDLQTopic("lender")
+	first.Partition = 1
+	first.Offset = 99
+
+	adapter := fake.NewAdapter(contract.TransportKafkaLike)
+	pub := newTestDLQPublisher(adapter, "lender-dlq-desk")
+
+	if err := pub.PublishDLQ(context.Background(), first, errors.New("exception desk is down"), dlqheader.CauseHandler, 0); err != nil {
+		t.Fatalf("PublishDLQ: %v", err)
+	}
+
+	second := adapter.Messages()[0]
+
+	counts := map[string]int{}
+	for _, h := range second.Headers {
+		counts[h.Key]++
+	}
+
+	forensic := []string{
+		dlqheader.SourceTopic, dlqheader.SourcePartition, dlqheader.SourceOffset,
+		dlqheader.CauseKind, dlqheader.ErrorClass, dlqheader.ErrorMessage,
+		dlqheader.RetryCount, dlqheader.FirstFailureAt, dlqheader.ProducerID,
+	}
+
+	for _, key := range forensic {
+		if counts[key] != 1 {
+			t.Errorf("%s appears %d times; want exactly 1 — a reader cannot tell which quarantine a duplicate describes", key, counts[key])
+		}
+	}
+
+	t.Run("the surviving coordinates name what the failing consumer actually read", func(t *testing.T) {
+		t.Parallel()
+
+		got, _ := headerValue(second, dlqheader.SourceTopic)
+		if got != contract.AppDLQTopic("lender") {
+			t.Errorf("origin topic = %q; want %q — the coordinates must match the producer id and error on the SAME record",
+				got, contract.AppDLQTopic("lender"))
+		}
+
+		if got, _ := headerValue(second, dlqheader.SourceOffset); got != "99" {
+			t.Errorf("origin offset = %q; want 99", got)
+		}
+	})
+
+	t.Run("the CloudEvents envelope is never stripped", func(t *testing.T) {
+		t.Parallel()
+
+		// ce-* is the EVENT's identity, not this quarantine's forensics, so the
+		// tenant that owned the original poison record still travels.
+		if got, _ := headerValue(second, "ce-tenantid"); got != "tenant-abc" {
+			t.Errorf("ce-tenantid = %q; want tenant-abc", got)
+		}
+
+		if counts["ce-tenantid"] != 1 {
+			t.Errorf("ce-tenantid appears %d times; want 1", counts["ce-tenantid"])
+		}
+	})
+}

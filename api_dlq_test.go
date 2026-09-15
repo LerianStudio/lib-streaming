@@ -260,7 +260,9 @@ func TestParseDiscardRecord_MalformedOriginFailsClosedAsAUnit(t *testing.T) {
 	}{
 		{"partition is not a number", corrupt(streaming.DLQHeaderSourcePartition, "three")},
 		{"partition overflows int32", corrupt(streaming.DLQHeaderSourcePartition, "99999999999999")},
+		{"partition is negative", corrupt(streaming.DLQHeaderSourcePartition, "-1")},
 		{"offset is not a number", corrupt(streaming.DLQHeaderSourceOffset, "")},
+		{"offset is negative", corrupt(streaming.DLQHeaderSourceOffset, "-42")},
 	}
 
 	for _, tt := range tests {
@@ -346,6 +348,8 @@ func TestParseDiscardRecord_NeverFails(t *testing.T) {
 		bad  string
 	}{
 		{"retry count is not a number", streaming.DLQHeaderRetryCount, "many"},
+		{"retry count is negative", streaming.DLQHeaderRetryCount, "-1"},
+		{"payload bytes is negative", streaming.DLQHeaderPayloadBytes, "-8"},
 		{"first-failure stamp is not a timestamp", streaming.DLQHeaderFirstFailureAt, "yesterday"},
 	}
 
@@ -525,6 +529,17 @@ func TestNewConsumer_DiscardHandlerIsMutuallyExclusive(t *testing.T) {
 			"DiscardHandler with Commands",
 			func() *streaming.ConsumerBuilder {
 				return base().Commands("gateway").DiscardHandler(noopDiscardHandler{})
+			},
+		},
+		{
+			// UnmatchedPolicy decides what the DISPATCHER does with an
+			// unregistered key. A DLQ reader has no registry to ask, so the knob
+			// would sit inert while an operator believed unknown keys were being
+			// quarantined.
+			"DiscardHandler with UnmatchedPolicy",
+			func() *streaming.ConsumerBuilder {
+				return base().Topics("lerian.streaming.lender.dlq").
+					DiscardHandler(noopDiscardHandler{}).UnmatchedPolicy(streaming.UnmatchedError)
 			},
 		},
 	}

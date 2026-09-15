@@ -147,8 +147,9 @@ type DiscardRecord struct {
 	// and two genuinely distinct quarantines then share one ce-id.
 	//
 	// The triple FAILS CLOSED as a unit. If any of the three headers is present
-	// but unreadable, all three are zeroed and HeaderError says so, because a
-	// half-parsed triple is worse than none: "topic/0/42" is a plausible-looking
+	// but unreadable — malformed, out of range, or NEGATIVE, since no partition
+	// or offset can be below zero — all three are zeroed and HeaderError says
+	// so, because a half-parsed triple is worse than none: "topic/0/42" is a plausible-looking
 	// coordinate pointing at the wrong record, and as a dedup key it silently
 	// merges quarantines that are genuinely distinct. An ABSENT coordinate is
 	// not a failure — a producer-side quarantine legitimately has no partition
@@ -267,6 +268,12 @@ func TruncatedErrorMessageBytes(message string) (int, bool) {
 //
 // The origin coordinates come from the HEADERS, never from the record's own
 // topic/partition/offset — those are the DLQ's, not the poison record's.
+//
+// A duplicate key resolves to its LAST value. Records this library writes never
+// carry one: a DLQ writer strips any forensic set already on a record before
+// stamping its own (see dlqheader.Prefix), so re-quarantining a quarantine copy
+// still yields exactly one value per key, describing the most recent
+// quarantine. The rule is stated for records a foreign writer produced.
 func ParseDiscardRecord(headers []kgo.RecordHeader, payload []byte) DiscardRecord {
 	index := make(map[string]string, len(headers))
 	for _, h := range headers {
@@ -320,7 +327,7 @@ func readOrigin(index map[string]string) (originCoordinates, []string) {
 
 	if raw, ok := index[DLQHeaderSourcePartition]; ok {
 		n, err := strconv.ParseInt(raw, 10, 32)
-		if err != nil || n < math.MinInt32 || n > math.MaxInt32 {
+		if err != nil || n < 0 || n > math.MaxInt32 {
 			malformed = append(malformed, DLQHeaderSourcePartition)
 		} else {
 			origin.partition = int32(n)
@@ -329,7 +336,7 @@ func readOrigin(index map[string]string) (originCoordinates, []string) {
 
 	if raw, ok := index[DLQHeaderSourceOffset]; ok {
 		n, err := strconv.ParseInt(raw, 10, 64)
-		if err != nil {
+		if err != nil || n < 0 {
 			malformed = append(malformed, DLQHeaderSourceOffset)
 		} else {
 			origin.offset = n
@@ -343,8 +350,17 @@ func readOrigin(index map[string]string) (originCoordinates, []string) {
 	return origin, nil
 }
 
-// readInt returns the value at key, 0 when absent, and 0 plus the key recorded
+// readInt returns the count at key, 0 when absent, and 0 plus the key recorded
 // as malformed when present but unreadable.
+//
+// A NEGATIVE value is unreadable. Every numeric header this library writes is a
+// count or a coordinate — a retry tally, a byte size, a partition, an offset —
+// and none can be below zero, so a negative one did not come from a DLQ writer
+// this version understands. Passing it through would put "-1 retries" or "-8
+// bytes" on an exception desk as though it were measured.
+//
+// strconv.Atoi parses at the platform's int width, so a value beyond the native
+// int range is rejected here rather than silently wrapping on a 32-bit build.
 func readInt(index map[string]string, key string, malformed []string) (int, []string) {
 	raw, ok := index[key]
 	if !ok {
@@ -352,7 +368,7 @@ func readInt(index map[string]string, key string, malformed []string) (int, []st
 	}
 
 	n, err := strconv.Atoi(raw)
-	if err != nil {
+	if err != nil || n < 0 {
 		return 0, append(malformed, key)
 	}
 

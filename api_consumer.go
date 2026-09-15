@@ -750,7 +750,10 @@ func (b *ConsumerBuilder) resolveReceiver() (Handler, error) {
 
 	// A DLQ reader is the third answer to "who selects events": it selects
 	// nothing and receives every quarantine entry on the topics it drains.
-	if b.handlerWanted || b.dispatchWanted || len(b.cfg.Commands) > 0 {
+	// unmatchedSet counts too: UnmatchedPolicy decides what the DISPATCHER does
+	// with an unregistered key, and a DLQ reader has no registry to ask, so the
+	// knob would sit inert while an operator believed it was in force.
+	if b.handlerWanted || b.dispatchWanted || len(b.cfg.Commands) > 0 || b.unmatchedSet {
 		return nil, consumer.ErrDiscardHandlerAndHandlerBothSet
 	}
 

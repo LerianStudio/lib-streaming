@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/twmb/franz-go/pkg/kgo"
@@ -263,8 +264,25 @@ func (p *transportDLQPublisher) forensicHeaders(rec *kgo.Record, cause error, ca
 		causeMessage = dlqheader.TruncateErrorMessage(contract.SanitizeBrokerURL(cause.Error()))
 	}
 
+	// Copy the original headers, MINUS any forensic set the record already
+	// carries. A record being quarantined may already be a quarantine copy — a
+	// DLQ reader whose handler returns terminal re-quarantines one — and
+	// appending a second set would leave two values for every key: a reader
+	// cannot tell which quarantine each describes, and the block grows by nine
+	// keys per hop on a record that is already strictly larger than its source.
+	//
+	// Stripping keeps exactly one of each key, always describing THIS
+	// quarantine. The earlier coordinates are not lost: they stay on the entry
+	// this one points at, so the route back is a linked list walked one hop at
+	// a time. The ce-* envelope is never stripped — that is the event's
+	// identity, not this quarantine's forensics.
 	headers := make([]transport.Header, 0, len(rec.Headers)+9)
+
 	for _, h := range rec.Headers {
+		if strings.HasPrefix(h.Key, dlqheader.Prefix) {
+			continue
+		}
+
 		headers = append(headers, transport.Header{Key: h.Key, Value: h.Value})
 	}
 

@@ -21,6 +21,24 @@
 // record it quarantines and must still fit. See budget.go.
 package dlqheader
 
+// Prefix is the namespace every DLQ forensic header key shares. A DLQ writer
+// strips it from the headers it copies before stamping its own, so a record
+// carries exactly ONE of each key — the set describing the MOST RECENT
+// quarantine.
+//
+// It matters because a quarantine copy can itself be quarantined: a DLQ reader
+// whose handler returns terminal re-quarantines an entry that already carries
+// the full forensic set. Appending a second set would leave two values for every
+// key — a reader cannot tell which quarantine each describes, and the header
+// block grows by nine keys per hop on a record that is already strictly larger
+// than the one it quarantines, which is the size wedge MaxErrorMessageBytes
+// exists to prevent.
+//
+// The chain back survives as a linked list instead: each entry's origin triple
+// names the topic and offset the failing consumer actually read, one hop at a
+// time.
+const Prefix = "x-lerian-dlq-"
+
 // The six DLQ forensic header keys (TRD §C8). Every DLQ message carries all
 // six; none are optional.
 const (
