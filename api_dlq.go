@@ -11,6 +11,7 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 
 	"github.com/LerianStudio/lib-streaming/v4/internal/dlqheader"
+	"github.com/LerianStudio/lib-streaming/v4/internal/transport"
 )
 
 // The dead-letter forensic contract, exposed at the root facade so a service
@@ -283,10 +284,25 @@ func TruncatedErrorMessageBytes(message string) (int, bool) {
 // than appending to them, and carries the two payload markers forward, so
 // re-quarantining a quarantine copy still yields exactly one value per key. The
 // rule is stated for records a foreign writer produced.
+// Header VALUES are sanitized on the way into the index: a Kafka header carries
+// arbitrary bytes, and a value holding U+0000 or an invalid UTF-8 sequence is
+// refused permanently by any text store the reader hands it to. See
+// transport.SanitizeHeaderValue. Keys are not touched — a key is matched against
+// this library's own frozen constants, so a hostile one simply matches nothing.
 func ParseDiscardRecord(headers []kgo.RecordHeader, payload []byte) DiscardRecord {
 	index := make(map[string]string, len(headers))
+
+	// The error message's ORIGINAL byte length, kept because sanitizing can only
+	// grow a value and the budget has to be re-applied afterwards. Last
+	// occurrence wins, the same rule the index itself follows.
+	errorMessageBytes := 0
+
 	for _, h := range headers {
-		index[h.Key] = string(h.Value)
+		index[h.Key] = transport.SanitizeHeaderValue(h.Value)
+
+		if h.Key == DLQHeaderErrorMessage {
+			errorMessageBytes = len(h.Value)
+		}
 	}
 
 	event, envelopeErr := ParseCloudEventsHeaders(headers)
@@ -294,7 +310,7 @@ func ParseDiscardRecord(headers []kgo.RecordHeader, payload []byte) DiscardRecor
 	record := DiscardRecord{
 		CauseKind:      index[DLQHeaderCauseKind],
 		ErrorClass:     index[DLQHeaderErrorClass],
-		ErrorMessage:   index[DLQHeaderErrorMessage],
+		ErrorMessage:   dlqheader.ReboundSanitizedErrorMessage(index[DLQHeaderErrorMessage], errorMessageBytes),
 		ProducerID:     index[DLQHeaderProducerID],
 		PayloadOmitted: index[DLQHeaderPayloadOmitted] == "true",
 		Event:          event,

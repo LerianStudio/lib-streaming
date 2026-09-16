@@ -106,3 +106,75 @@ func IsSizeError(err error) bool {
 
 	return errors.Is(err, kerr.MessageTooLarge) || errors.Is(err, contract.ErrPayloadTooLarge)
 }
+
+// ReboundSanitizedErrorMessage re-applies the byte budget to an error message a
+// READER grew while sanitizing it.
+//
+// The bound is a promise the reader inherits, not one the writer alone keeps:
+// both DLQHeaderErrorMessage and DiscardRecord.ErrorMessage are documented as
+// bounded at MaxErrorMessageBytes. That held transitively while the parser was
+// a pass-through of a value TruncateErrorMessage had already cut. Sanitizing
+// broke it — replacing a byte with U+FFFD costs two more — so a message the
+// writer cut to exactly the bound arrives over it, and the documented limit
+// stops being a limit for every reader sizing a column or a log field by it.
+//
+// originalBytes is the length of the value AS IT ARRIVED, before sanitizing. It
+// is used only when a fresh marker has to be stamped.
+//
+// This also bounds a message that never touched the sanitizer. A foreign writer
+// that ignores MaxErrorMessageBytes and puts 10 KiB on the wire used to reach
+// the consumer at 10 KiB, because the parser passed the header through; it now
+// arrives cut to the bound and marked as truncated, like any other cut message.
+// That is the documented contract finally being true for every input rather
+// than only for values this library wrote, but it IS a change for any consumer
+// that had come to rely on the promise being unenforced.
+//
+// A marker the WRITER stamped is KEPT, never recomputed from what arrived. It
+// carries how long the error was before the writer cut it — 14 KiB, say — and
+// restamping it with the length of the 4 KiB header would replace the one
+// number that says how much was lost with a number that says nothing. It is
+// rebuilt from the parsed value rather than sliced out of the input, so a
+// foreign writer cannot hand us a "marker" longer than the budget itself.
+func ReboundSanitizedErrorMessage(sanitized string, originalBytes int) string {
+	if len(sanitized) <= MaxErrorMessageBytes {
+		return sanitized
+	}
+
+	body := sanitized
+	marker := fmt.Sprintf(truncationMarkerFormat, originalBytes)
+
+	if start := strings.LastIndex(sanitized, truncationMarkerPrefix); start >= 0 {
+		var original int
+
+		// A parsed marker is adopted ONLY when the canonical form of it is the
+		// COMPLETE suffix, and only when it claims a positive length.
+		//
+		// fmt.Sscanf stops at the end of its format and ignores whatever follows,
+		// so a marker-shaped run in the MIDDLE of a message parses exactly as
+		// happily as a real trailing one. Treating that as the marker throws away
+		// everything after it — and on the re-quarantine path, where a consumer
+		// wraps the previous hop's ErrorMessage into a new error, what follows the
+		// embedded marker is the CURRENT cause. Measured before this guard: a
+		// 6509-byte message came back 4096 bytes long with its tail gone, claiming
+		// an original length of 7 that belonged to an inner hop.
+		//
+		// A non-positive count is not a length either. Re-stamping one would put
+		// "...[truncated, -5 bytes total]" in front of a consumer as THIS
+		// library's own claim about the message, which is worse than the forged
+		// header it came from.
+		if _, err := fmt.Sscanf(sanitized[start:], truncationMarkerFormat, &original); err == nil && original > 0 {
+			if canonical := fmt.Sprintf(truncationMarkerFormat, original); sanitized[start:] == canonical {
+				body, marker = sanitized[:start], canonical
+			}
+		}
+	}
+
+	// The same cut TruncateErrorMessage makes: a split multi-byte rune is
+	// DROPPED rather than emitted as a replacement, so the writer's cut and this
+	// one cannot disagree about what a cut message looks like.
+	if cut := MaxErrorMessageBytes - len(marker); len(body) > cut {
+		body = strings.ToValidUTF8(body[:cut], "")
+	}
+
+	return body + marker
+}
