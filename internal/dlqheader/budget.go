@@ -121,6 +121,14 @@ func IsSizeError(err error) bool {
 // originalBytes is the length of the value AS IT ARRIVED, before sanitizing. It
 // is used only when a fresh marker has to be stamped.
 //
+// This also bounds a message that never touched the sanitizer. A foreign writer
+// that ignores MaxErrorMessageBytes and puts 10 KiB on the wire used to reach
+// the consumer at 10 KiB, because the parser passed the header through; it now
+// arrives cut to the bound and marked as truncated, like any other cut message.
+// That is the documented contract finally being true for every input rather
+// than only for values this library wrote, but it IS a change for any consumer
+// that had come to rely on the promise being unenforced.
+//
 // A marker the WRITER stamped is KEPT, never recomputed from what arrived. It
 // carries how long the error was before the writer cut it — 14 KiB, say — and
 // restamping it with the length of the 4 KiB header would replace the one
@@ -135,9 +143,30 @@ func ReboundSanitizedErrorMessage(sanitized string, originalBytes int) string {
 	body := sanitized
 	marker := fmt.Sprintf(truncationMarkerFormat, originalBytes)
 
-	if original, truncated := TruncatedErrorMessageBytes(sanitized); truncated {
-		body = sanitized[:strings.LastIndex(sanitized, truncationMarkerPrefix)]
-		marker = fmt.Sprintf(truncationMarkerFormat, original)
+	if start := strings.LastIndex(sanitized, truncationMarkerPrefix); start >= 0 {
+		var original int
+
+		// A parsed marker is adopted ONLY when the canonical form of it is the
+		// COMPLETE suffix, and only when it claims a positive length.
+		//
+		// fmt.Sscanf stops at the end of its format and ignores whatever follows,
+		// so a marker-shaped run in the MIDDLE of a message parses exactly as
+		// happily as a real trailing one. Treating that as the marker throws away
+		// everything after it — and on the re-quarantine path, where a consumer
+		// wraps the previous hop's ErrorMessage into a new error, what follows the
+		// embedded marker is the CURRENT cause. Measured before this guard: a
+		// 6509-byte message came back 4096 bytes long with its tail gone, claiming
+		// an original length of 7 that belonged to an inner hop.
+		//
+		// A non-positive count is not a length either. Re-stamping one would put
+		// "...[truncated, -5 bytes total]" in front of a consumer as THIS
+		// library's own claim about the message, which is worse than the forged
+		// header it came from.
+		if _, err := fmt.Sscanf(sanitized[start:], truncationMarkerFormat, &original); err == nil && original > 0 {
+			if canonical := fmt.Sprintf(truncationMarkerFormat, original); sanitized[start:] == canonical {
+				body, marker = sanitized[:start], canonical
+			}
+		}
 	}
 
 	// The same cut TruncateErrorMessage makes: a split multi-byte rune is
