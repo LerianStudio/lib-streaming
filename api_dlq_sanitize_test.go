@@ -4,6 +4,7 @@ package streaming_test
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -400,5 +401,153 @@ func TestParseDiscardRecord_AnAllNULMessageIsStillBounded(t *testing.T) {
 
 	if original != len(raw) {
 		t.Errorf("TruncatedErrorMessageBytes = %d; want the length as it ARRIVED, %d", original, len(raw))
+	}
+}
+
+// ═══ A marker-shaped run in the MIDDLE is body, not a marker ═══
+//
+// fmt.Sscanf stops at the end of its format and ignores whatever follows, so a
+// marker-shaped run anywhere in the message parses exactly as happily as a real
+// trailing one. Adopting it throws away everything after it and re-stamps the
+// consumer-facing value with a length lifted from somewhere inside the body.
+
+// The re-quarantine path, which is where this library's own writer produces the
+// shape. A consumer that re-quarantines wraps the PREVIOUS hop's ErrorMessage —
+// which ends in a marker — into a new error, so the old marker is now embedded
+// and the CURRENT cause follows it.
+func TestParseDiscardRecord_ReQuarantineKeepsTheCurrentCause(t *testing.T) {
+	t.Parallel()
+
+	previousHop := "connection reset by peer...[truncated, 18027 bytes total]"
+
+	// The wrapper carries a NUL, which is what pushes a message that was within
+	// the bound over it once the reader sanitizes — the whole reason the re-bound
+	// runs at all.
+	currentCause := ": handler refused again\x00 " + strings.Repeat("current stack frame ", 250)
+	onTheWire := "re-quarantined: " + previousHop + currentCause
+
+	got := streaming.ParseDiscardRecord([]kgo.RecordHeader{
+		{Key: streaming.DLQHeaderErrorMessage, Value: []byte(onTheWire)},
+	}, nil)
+
+	if len(got.ErrorMessage) > streaming.DLQMaxErrorMessageBytes {
+		t.Errorf("ErrorMessage is %d bytes, over the documented bound", len(got.ErrorMessage))
+	}
+
+	if !strings.Contains(got.ErrorMessage, "handler refused again") {
+		t.Errorf("the CURRENT cause was discarded as if it came after a real marker; got %d bytes: %.80q",
+			len(got.ErrorMessage), got.ErrorMessage)
+	}
+
+	original, truncated := streaming.TruncatedErrorMessageBytes(got.ErrorMessage)
+	if !truncated {
+		t.Fatal("a cut message must say it was cut")
+	}
+
+	if original == 18027 {
+		t.Error("the length was lifted from a marker embedded two hops ago, not measured on this message")
+	}
+
+	if original != len(onTheWire) {
+		t.Errorf("TruncatedErrorMessageBytes = %d; want the length as it ARRIVED, %d", original, len(onTheWire))
+	}
+}
+
+func TestParseDiscardRecord_AMarkerIsAdoptedOnlyAsTheCompleteSuffix(t *testing.T) {
+	t.Parallel()
+
+	padding := strings.Repeat("d", streaming.DLQMaxErrorMessageBytes)
+
+	for name, testCase := range map[string]struct {
+		value     string
+		mustKeep  string
+		mustClaim func(arrived int) int
+	}{
+		"marker followed by a tail is body": {
+			value:     "boom\x00 " + padding + "...[truncated, 7 bytes total]tail-that-matters",
+			mustKeep:  "boom",
+			mustClaim: func(arrived int) int { return arrived },
+		},
+		"a bracket in the body before a real marker": {
+			value:     "boom\x00 got ] here " + padding + "...[truncated, 900 bytes total]",
+			mustKeep:  "boom",
+			mustClaim: func(int) int { return 900 },
+		},
+		"an inner marker plus a real trailing one": {
+			value:     "boom\x00 ...[truncated, 7 bytes total] then " + padding + "...[truncated, 900 bytes total]",
+			mustKeep:  "boom",
+			mustClaim: func(int) int { return 900 },
+		},
+		"a negative count is not a length": {
+			value:     "boom\x00 " + padding + "...[truncated, -5 bytes total]",
+			mustKeep:  "boom",
+			mustClaim: func(arrived int) int { return arrived },
+		},
+		"a zero count is not a length": {
+			value:     "boom\x00 " + padding + "...[truncated, 0 bytes total]",
+			mustKeep:  "boom",
+			mustClaim: func(arrived int) int { return arrived },
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			got := streaming.ParseDiscardRecord([]kgo.RecordHeader{
+				{Key: streaming.DLQHeaderErrorMessage, Value: []byte(testCase.value)},
+			}, nil)
+
+			if len(got.ErrorMessage) > streaming.DLQMaxErrorMessageBytes {
+				t.Errorf("ErrorMessage is %d bytes, over the documented bound", len(got.ErrorMessage))
+			}
+
+			if !strings.HasPrefix(got.ErrorMessage, testCase.mustKeep) {
+				t.Errorf("the head of the error must survive; got %.60q", got.ErrorMessage)
+			}
+
+			original, truncated := streaming.TruncatedErrorMessageBytes(got.ErrorMessage)
+			if !truncated {
+				t.Fatalf("a cut message must say it was cut; got %.60q", got.ErrorMessage)
+			}
+
+			want := testCase.mustClaim(len(testCase.value))
+			if original != want {
+				t.Errorf("TruncatedErrorMessageBytes = %d; want %d", original, want)
+			}
+
+			// Asserted as an exact SUFFIX, not a substring: a forged count
+			// re-stamped as this library's own claim has to show up here, and a
+			// substring check for "0 bytes total" happily matches "900 bytes
+			// total" and reports nothing.
+			if suffix := fmt.Sprintf("...[truncated, %d bytes total]", want); !strings.HasSuffix(got.ErrorMessage, suffix) {
+				t.Errorf("message must END with %q; got %q", suffix, got.ErrorMessage[len(got.ErrorMessage)-40:])
+			}
+		})
+	}
+}
+
+// A foreign writer that ignores the bound is bounded too, even with nothing to
+// sanitize. This is a behaviour change for any consumer that had come to rely
+// on the documented bound being unenforced on the read side.
+func TestParseDiscardRecord_ACleanOversizeMessageIsBoundedToo(t *testing.T) {
+	t.Parallel()
+
+	clean := strings.Repeat("plain ascii detail ", 600)
+	if strings.IndexByte(clean, 0) >= 0 || !utf8.ValidString(clean) {
+		t.Fatal("this fixture is supposed to need no sanitizing at all")
+	}
+
+	got := streaming.ParseDiscardRecord([]kgo.RecordHeader{
+		{Key: streaming.DLQHeaderErrorMessage, Value: []byte(clean)},
+	}, nil)
+
+	if len(got.ErrorMessage) > streaming.DLQMaxErrorMessageBytes {
+		t.Errorf("ErrorMessage is %d bytes; the bound holds for every input, not only sanitized ones",
+			len(got.ErrorMessage))
+	}
+
+	original, truncated := streaming.TruncatedErrorMessageBytes(got.ErrorMessage)
+	if !truncated || original != len(clean) {
+		t.Errorf("a cut message must say so and name its arriving length; got truncated=%v original=%d want %d",
+			truncated, original, len(clean))
 	}
 }
