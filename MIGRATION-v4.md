@@ -315,7 +315,7 @@ Inventory what will drain, **before** you deploy:
 ```sql
 SELECT
     status,
-    count(*)        AS rows_to_drain,
+    count(*)        AS candidate_rows,
     min(created_at) AS oldest,
     max(created_at) AS newest
 FROM outbox_events
@@ -406,6 +406,44 @@ refused, counted on `streaming_outbox_relay_rejected_total`, and named in an
 ERROR log with its row id, so the alert below is what tells you the requeue did
 not fully land. Requeue in batches and watch that counter rather than assuming
 every updated row drains.
+
+**Check the persisted destination before you requeue.** The filter above does
+not look at it, and it is the one field that decides whether a row is re-derived
+at all. A version-1 Kafka row is rewritten onto the application topic only when
+its stored destination still equals the name v2 derived from the same event
+fields; anything else is read as an explicit route override and is published to
+that exact stored name, unchanged. That is deliberate — a service that aimed a
+route somewhere on purpose keeps it — but it means an override pointing at a
+per-event topic nobody consumes any more will publish **successfully**, be
+acknowledged, and mark the row `PUBLISHED`. It is the only outcome in this
+workflow that is silent: it raises no rejection, so it appears on neither the
+counter nor the alert below. Group the candidates by destination first and
+decide, per distinct name, whether it is a derived route (leave it; the relay
+repairs it) or an override (repair the destination if the row should follow the
+derived route, or leave the row out of the requeue entirely):
+
+```sql
+SELECT
+    payload->'destination'->>'name'   AS persisted_destination,
+    payload->'event'->>'Source'       AS source,
+    payload->'event'->>'ResourceType' AS resource_type,
+    payload->'event'->>'EventType'    AS event_type,
+    count(*)                          AS candidate_rows
+FROM outbox_events
+WHERE event_type = 'lerian.streaming.publish'
+  AND status = 'INVALID'
+  AND payload->>'version' = '1'
+  AND payload->'destination'->>'kind' = 'kafka'
+GROUP BY 1, 2, 3, 4
+ORDER BY candidate_rows DESC;
+```
+
+A `persisted_destination` of `<source>.<resource_type>.<event_type>` — optionally
+suffixed `.v<major>`, and with the source lowercased and its punctuation folded
+to `-` the way v2 wrote it — is a derived route that the relay will rewrite. A
+name in any other shape is an override. Note the case asymmetry in the JSON
+paths above: the envelope's own fields are snake_case, but everything under
+`event` is serialised with Go field names, so it is `'Source'`, not `'source'`.
 
 Then watch the drain, and alert on the rows that still cannot move:
 
