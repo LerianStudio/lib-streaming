@@ -157,6 +157,16 @@ func TestOutboxRelay_LegacyRowLandsOnApplicationTopic(t *testing.T) {
 	if headers["ce-eventtype"] != "created" {
 		t.Errorf("ce-eventtype = %q, want %q", headers["ce-eventtype"], "created")
 	}
+
+	// Tenant identity travels inside the persisted envelope, not in the
+	// relay's ambient context — the relay may be draining a row written by a
+	// different request, on a different pod, for a different tenant. Asserted
+	// here in the CI-resident suite and not only in the container test, so a
+	// regression that strips the tenant cannot reach a release on the strength
+	// of a Docker-less run.
+	if headers["ce-tenantid"] != "t-abc" {
+		t.Errorf("ce-tenantid = %q, want %q from the persisted envelope", headers["ce-tenantid"], "t-abc")
+	}
 }
 
 // TestOutboxRelay_CurrentRowStillWorks pins the no-regression half: a
@@ -392,5 +402,144 @@ func TestOutboxRelay_LegacyRowFailingPreflightStaysRetryable(t *testing.T) {
 
 	if !strings.Contains(err.Error(), "system events not permitted") {
 		t.Errorf("err = %q, want the preflight reason preserved as text for the operator", err)
+	}
+}
+
+// TestOutboxRelay_RejectionMetricTargetLabelIsBounded pins the cardinality
+// guard on streaming_outbox_relay_rejected_total.
+//
+// ValidateShape checks the envelope VERSION first and returns immediately, so
+// a row rejected for its version has had no other field validated — Target is
+// whatever bytes the row happened to hold. Passing it straight to a counter
+// label would make cardinality accident- or attacker-driven on a metric whose
+// godoc promises it is bounded, so an unregistered name is recorded as
+// "unknown" while the raw value still reaches the ERROR log.
+func TestOutboxRelay_RejectionMetricTargetLabelIsBounded(t *testing.T) {
+	cfg, _ := kfakeConfig(t)
+	factory, snapshot := newManualMeterSetup(t)
+
+	emitter, err := New(context.Background(), cfg,
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
+		WithMetricsRecorder(factory),
+	)
+	if err != nil {
+		t.Fatalf("New err = %v", err)
+	}
+	t.Cleanup(func() { _ = emitter.Close() })
+
+	p := asProducer(t, emitter)
+	registry := outbox.NewHandlerRegistry()
+	if err := p.RegisterOutboxRelay(registry); err != nil {
+		t.Fatalf("RegisterOutboxRelay err = %v", err)
+	}
+
+	// An unknown envelope version, so ValidateShape bails before it ever looks
+	// at Target — exactly the path where Target is untrusted.
+	const attackerTarget = "attacker-controlled-target-value-0xdeadbeef"
+
+	aggregateID := newTestUUIDv7(t)
+	payload := legacyEnvelopeJSON(t, "test", "transaction", "created", aggregateID.String())
+	payload = []byte(strings.Replace(string(payload), `"version": 1`, `"version": 77`, 1))
+	payload = []byte(strings.Replace(string(payload), `"target": "primary"`, `"target": "`+attackerTarget+`"`, 1))
+
+	row := &outbox.OutboxEvent{
+		ID:          newTestUUIDv7(t),
+		EventType:   StreamingOutboxEventType,
+		AggregateID: aggregateID,
+		Payload:     payload,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := registry.Handle(ctx, row); err == nil {
+		t.Fatal("registry.Handle err = nil; an unknown envelope version must be rejected")
+	}
+
+	metric, ok := findMetric(snapshot(), metricNameOutboxRelayRejected)
+	if !ok {
+		t.Fatalf("metric %s was never recorded", metricNameOutboxRelayRejected)
+	}
+
+	_, attrSets := sumInt64DataPoints(t, metric)
+	if len(attrSets) != 1 {
+		t.Fatalf("attribute sets = %d, want exactly 1", len(attrSets))
+	}
+
+	got := attrSets[0]
+	if got[labelTarget] == attackerTarget {
+		t.Errorf("target label = %q; an unvalidated row field must never become a metric label", got[labelTarget])
+	}
+
+	if got[labelTarget] != relayTargetUnknownLabel {
+		t.Errorf("target label = %q, want %q", got[labelTarget], relayTargetUnknownLabel)
+	}
+
+	if got["reason"] != relayRejectVersionUnsupported {
+		t.Errorf("reason label = %q, want %q", got["reason"], relayRejectVersionUnsupported)
+	}
+}
+
+// TestOutboxRelay_RejectionMetricKeepsRegisteredTarget is the other half: a
+// target this producer actually registered is operator-controlled and bounded,
+// so it must survive as the label rather than collapsing to "unknown".
+func TestOutboxRelay_RejectionMetricKeepsRegisteredTarget(t *testing.T) {
+	cfg, _ := kfakeConfig(t)
+	factory, snapshot := newManualMeterSetup(t)
+
+	emitter, err := New(context.Background(), cfg,
+		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
+		WithMetricsRecorder(factory),
+	)
+	if err != nil {
+		t.Fatalf("New err = %v", err)
+	}
+	t.Cleanup(func() { _ = emitter.Close() })
+
+	p := asProducer(t, emitter)
+	if _, ok := p.targets["primary"]; !ok {
+		t.Fatal("precondition: the default producer must register a 'primary' target")
+	}
+
+	registry := outbox.NewHandlerRegistry()
+	if err := p.RegisterOutboxRelay(registry); err != nil {
+		t.Fatalf("RegisterOutboxRelay err = %v", err)
+	}
+
+	// Legacy row on the registered target, with a source that cannot be
+	// re-derived -> legacy_unroutable.
+	aggregateID := newTestUUIDv7(t)
+	payload := legacyEnvelopeJSON(t, "//lerian.midaz/transaction-service", "transaction", "created", aggregateID.String())
+
+	row := &outbox.OutboxEvent{
+		ID:          newTestUUIDv7(t),
+		EventType:   StreamingOutboxEventType,
+		AggregateID: aggregateID,
+		Payload:     payload,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := registry.Handle(ctx, row); err == nil {
+		t.Fatal("registry.Handle err = nil; an unroutable legacy row must be reported")
+	}
+
+	metric, ok := findMetric(snapshot(), metricNameOutboxRelayRejected)
+	if !ok {
+		t.Fatalf("metric %s was never recorded", metricNameOutboxRelayRejected)
+	}
+
+	_, attrSets := sumInt64DataPoints(t, metric)
+	if len(attrSets) != 1 {
+		t.Fatalf("attribute sets = %d, want exactly 1", len(attrSets))
+	}
+
+	if got := attrSets[0][labelTarget]; got != "primary" {
+		t.Errorf("target label = %q, want the registered target %q", got, "primary")
+	}
+
+	if got := attrSets[0]["reason"]; got != relayRejectLegacyUnroutable {
+		t.Errorf("reason label = %q, want %q", got, relayRejectLegacyUnroutable)
 	}
 }

@@ -199,6 +199,34 @@ const (
 	relayRejectLegacyUnroutable = "legacy_unroutable"
 )
 
+// relayTargetUnknownLabel is the placeholder used in place of a target name
+// that is not a registered target of this producer.
+const relayTargetUnknownLabel = "unknown"
+
+// boundedTargetLabel keeps the metric's target dimension bounded by the
+// operator-controlled set of REGISTERED target names, substituting "unknown"
+// for anything else.
+//
+// The version_unsupported path needs this and the ordering is the reason:
+// ValidateShape checks the envelope version FIRST and returns immediately, so
+// a row rejected for its version has had no other field validated. Target is
+// then whatever bytes the row happened to hold — a corrupt row, a row from a
+// future major with a different shape, an operator-edited row — and passing it
+// straight to a counter label makes cardinality attacker- or accident-driven
+// on a metric whose godoc promises it is bounded. The row id and the raw
+// target still reach the paired ERROR log, which is not a label space.
+func (p *Producer) boundedTargetLabel(target string) string {
+	if target == "" {
+		return relayTargetUnknownLabel
+	}
+
+	if rt, ok := p.targets[target]; ok && rt != nil {
+		return target
+	}
+
+	return relayTargetUnknownLabel
+}
+
 // recordOutboxRelayRejection emits the ERROR log and the reason-labelled
 // counter for a refused relay row. It is the ONLY observability an operator
 // gets for a row heading to INVALID: lib-commons records no reason, and its
@@ -211,7 +239,7 @@ func (p *Producer) recordOutboxRelayRejection(
 	reason string,
 	cause error,
 ) {
-	p.metrics.recordOutboxRelayRejected(ctx, envelope.Target, reason)
+	p.metrics.recordOutboxRelayRejected(ctx, p.boundedTargetLabel(envelope.Target), reason)
 
 	p.logger.Log(ctx, obs.LevelError, "streaming: outbox relay refused a row",
 		"row_id", row.ID.String(),
