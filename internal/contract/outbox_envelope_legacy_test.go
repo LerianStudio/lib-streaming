@@ -257,21 +257,96 @@ func TestResolveDestinationRewritesOnlyWhatV2Derived(t *testing.T) {
 func TestLegacyDerivedTopicMirrorsV2(t *testing.T) {
 	t.Parallel()
 
+	// Each case is a source v2 could legitimately have run with, paired with
+	// the topic v2's EventDefinition.Topic(source) actually persisted for it.
+	//
+	// The trailing-separator rows are the ones that matter. sourcePattern
+	// (^[a-z0-9][a-z0-9_-]*$) anchors only the FIRST rune, so "midaz-ledger-",
+	// "slc_" and "svc--" are legal v4 sources today; v2's sanitizer trimmed
+	// "-._" off the ends, so what it WROTE has no trailing separator. Deriving
+	// from the raw source misses every one of them.
 	tests := []struct {
 		name          string
+		source        string
 		schemaVersion string
 		want          string
 	}{
-		{name: "empty schema falls through to base", schemaVersion: "", want: "midaz-ledger.transaction.created"},
-		{name: "major 1 falls through to base", schemaVersion: "1.0.0", want: "midaz-ledger.transaction.created"},
-		{name: "major 2 gets the suffix", schemaVersion: "2.0.0", want: "midaz-ledger.transaction.created.v2"},
-		{name: "major 11 gets the suffix", schemaVersion: "11.4.2", want: "midaz-ledger.transaction.created.v11"},
-		{name: "v-prefixed major 3 gets the suffix", schemaVersion: "v3.1.0", want: "midaz-ledger.transaction.created.v3"},
+		{name: "plain source", source: "midaz-ledger", want: "midaz-ledger.transaction.created"},
 		{
-			name: "unparseable falls through to base, as v2's ParseMajorVersion did",
+			name:   "trailing hyphen is trimmed by v2",
+			source: "midaz-ledger-",
+			want:   "midaz-ledger.transaction.created",
+		},
+		{
+			name:   "trailing underscore is trimmed by v2",
+			source: "slc_",
+			want:   "slc.transaction.created",
+		},
+		{
+			name:   "trailing double hyphen is trimmed by v2",
+			source: "svc--",
+			want:   "svc.transaction.created",
+		},
+		{
+			name:   "many trailing separators are all trimmed",
+			source: "ledger_--_",
+			want:   "ledger.transaction.created",
+		},
+		{
+			name:   "interior separators are preserved, not collapsed",
+			source: "a--b__c",
+			want:   "a--b__c.transaction.created",
+		},
+		{
+			name:   "underscores inside are preserved",
+			source: "br_sfn_slc",
+			want:   "br_sfn_slc.transaction.created",
+		},
+		{
+			name:          "major 2 gets the suffix",
+			source:        "midaz-ledger",
+			schemaVersion: "2.0.0",
+			want:          "midaz-ledger.transaction.created.v2",
+		},
+		{
+			name:          "trailing hyphen with a v2 schema suffix",
+			source:        "midaz-ledger-",
+			schemaVersion: "2.3.1",
+			want:          "midaz-ledger.transaction.created.v2",
+		},
+		{
+			name:          "major 11 gets the suffix",
+			source:        "midaz-ledger",
+			schemaVersion: "11.4.2",
+			want:          "midaz-ledger.transaction.created.v11",
+		},
+		{
+			name:          "v-prefixed major 3 gets the suffix",
+			source:        "midaz-ledger",
+			schemaVersion: "v3.1.0",
+			want:          "midaz-ledger.transaction.created.v3",
+		},
+		{
+			name:          "major 1 falls through to base",
+			source:        "midaz-ledger",
+			schemaVersion: "1.0.0",
+			want:          "midaz-ledger.transaction.created",
+		},
+		{
 			// v2 used ParseMajorVersion, which collapses a parse failure to 0.
+			name:          "unparseable schema falls through to base",
+			source:        "midaz-ledger",
 			schemaVersion: "not-a-semver",
 			want:          "midaz-ledger.transaction.created",
+		},
+		{
+			// Only reachable through legacyDerivedTopic directly: a dotted
+			// source is refused by ValidateSource, so ResolveDestination takes
+			// the unroutable path before ever comparing names. Pinned anyway so
+			// the sanitizer copy cannot drift from the v2.1.0 original.
+			name:   "dotted and slashed source folds as v2 folded it",
+			source: "//lerian.midaz/transaction-service",
+			want:   "lerian.midaz-transaction-service.transaction.created",
 		},
 	}
 
@@ -280,12 +355,68 @@ func TestLegacyDerivedTopicMirrorsV2(t *testing.T) {
 			t.Parallel()
 
 			got := legacyDerivedTopic(Event{
-				Source:        "midaz-ledger",
+				Source:        tt.source,
 				ResourceType:  "transaction",
 				EventType:     "created",
 				SchemaVersion: tt.schemaVersion,
 			})
 			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+// TestResolveDestinationRewritesEveryTopicV2CouldHaveWritten is the
+// end-to-end half of the matrix above, and the regression test for the worst
+// failure this change could have shipped.
+//
+// For a source with a trailing separator, deriving from the RAW source made
+// the persisted name look like an operator override, so ResolveDestination
+// returned the stale per-event topic. The broker auto-creates it, the publish
+// SUCCEEDS, and the row is marked PUBLISHED with no consumer anywhere — worse
+// than the INVALID it replaced, because INVALID at least retains the row.
+//
+// Every row here must resolve to the topic a live Emit from the same producer
+// would use today, which is AppTopic of the RAW source: v4 does not sanitize,
+// so "midaz-ledger-" publishes to "lerian.streaming.midaz-ledger-".
+func TestResolveDestinationRewritesEveryTopicV2CouldHaveWritten(t *testing.T) {
+	t.Parallel()
+
+	// source -> the topic v2 ACTUALLY persisted for it. These are literals on
+	// purpose: deriving them with legacyDerivedTopic would move both sides of
+	// the comparison together and the test could never redden.
+	tests := []struct {
+		source        string
+		persistedName string
+	}{
+		{source: "midaz-ledger", persistedName: "midaz-ledger.transaction.created"},
+		{source: "midaz-ledger-", persistedName: "midaz-ledger.transaction.created"},
+		{source: "slc_", persistedName: "slc.transaction.created"},
+		{source: "svc--", persistedName: "svc.transaction.created"},
+		{source: "ledger_--_", persistedName: "ledger.transaction.created"},
+		{source: "a--b__c", persistedName: "a--b__c.transaction.created"},
+		{source: "br_sfn_slc", persistedName: "br_sfn_slc.transaction.created"},
+	}
+
+	for _, tt := range tests {
+		t.Run("source="+tt.source, func(t *testing.T) {
+			t.Parallel()
+
+			require.NoError(t, ValidateSource(tt.source),
+				"precondition: this source must be legal under the current rules, "+
+					"otherwise the case proves nothing about the override gate")
+
+			envelope := loadLegacyEnvelope(t)
+			envelope.Event.Source = tt.source
+			envelope.Event.SchemaVersion = "1.0.0"
+			envelope.Destination.Name = tt.persistedName
+
+			resolved, err := envelope.ResolveDestination()
+			require.NoError(t, err)
+
+			assert.Equal(t, AppTopic(tt.source), resolved.Name,
+				"a v1 row must land where a live Emit from this producer lands today")
+			assert.NotEqual(t, tt.persistedName, resolved.Name,
+				"returning the stale per-event topic publishes to a dead name and marks the row PUBLISHED")
 		})
 	}
 }
