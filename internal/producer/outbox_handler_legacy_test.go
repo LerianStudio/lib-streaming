@@ -325,3 +325,72 @@ func TestOutboxRelay_UnknownVersionStillRejected(t *testing.T) {
 		})
 	}
 }
+
+// TestOutboxRelay_LegacyRowFailingPreflightStaysRetryable covers the second
+// way a version-1 row can be structurally incompatible with the current
+// contract: it survives destination resolution and is then refused by
+// preflight.
+//
+// The row here has a perfectly routable source, so ResolveDestination
+// succeeds; it carries SystemEvent, which this producer was not built to
+// allow. That returns ErrSystemEventsNotAllowed — a caller-error sentinel,
+// exactly the class the dispatcher turns into an immediate INVALID — so this
+// pins that the handler re-casts a PREFLIGHT rejection too, not just a
+// resolution failure.
+//
+// A version-2 row deliberately keeps the original behaviour: it was written by
+// the current contract, so a preflight failure there is a genuine defect and
+// staying non-retryable is correct.
+func TestOutboxRelay_LegacyRowFailingPreflightStaysRetryable(t *testing.T) {
+	cfg, _ := kfakeConfig(t)
+
+	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
+	if err != nil {
+		t.Fatalf("New err = %v", err)
+	}
+	t.Cleanup(func() { _ = emitter.Close() })
+
+	p := asProducer(t, emitter)
+	registry := outbox.NewHandlerRegistry()
+	if err := p.RegisterOutboxRelay(registry); err != nil {
+		t.Fatalf("RegisterOutboxRelay err = %v", err)
+	}
+
+	aggregateID := newTestUUIDv7(t)
+	payload := legacyEnvelopeJSON(t, "test", "transaction", "created", aggregateID.String())
+	payload = []byte(strings.Replace(string(payload),
+		`"Subject": "tx-legacy-1",`,
+		`"Subject": "tx-legacy-1", "SystemEvent": true,`, 1))
+
+	if !strings.Contains(string(payload), `"SystemEvent": true`) {
+		t.Fatal("fixture rewrite failed; the test would assert nothing")
+	}
+
+	row := &outbox.OutboxEvent{
+		ID:          newTestUUIDv7(t),
+		EventType:   StreamingOutboxEventType,
+		AggregateID: aggregateID,
+		Payload:     payload,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	err = registry.Handle(ctx, row)
+	if err == nil {
+		t.Fatal("registry.Handle err = nil; the row must not be reported as published")
+	}
+
+	if !errors.Is(err, contract.ErrLegacyOutboxRowUnroutable) {
+		t.Errorf("err = %v, want it to wrap ErrLegacyOutboxRowUnroutable", err)
+	}
+
+	if contract.IsCallerError(err) {
+		t.Errorf("IsCallerError(%v) = true; the preflight sentinel must not survive into the chain "+
+			"or the dispatcher invalidates the row on attempt one", err)
+	}
+
+	if !strings.Contains(err.Error(), "system events not permitted") {
+		t.Errorf("err = %q, want the preflight reason preserved as text for the operator", err)
+	}
+}
