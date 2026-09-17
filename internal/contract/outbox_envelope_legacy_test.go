@@ -88,8 +88,11 @@ func TestOutboxEnvelopeVersionAcceptance(t *testing.T) {
 	}
 }
 
-// TestResolveDestinationRederivesLegacyKafkaTopic pins the routing answer: a
-// version-1 row does NOT go to its persisted topic.
+// TestResolveDestinationRederivesLegacyKafkaTopic pins the routing answer for
+// a version-1 row whose persisted destination is one v2 DERIVED: it does NOT
+// go to that topic. A destination v2 did not derive is an explicit route
+// override and is left alone — TestResolveDestinationRewritesOnlyWhatV2Derived
+// owns that half.
 func TestResolveDestinationRederivesLegacyKafkaTopic(t *testing.T) {
 	t.Parallel()
 

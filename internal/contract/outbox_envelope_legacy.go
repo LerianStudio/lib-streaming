@@ -14,8 +14,10 @@ import (
 // returned unchanged — this is the hot path and it allocates nothing beyond
 // the existing value copy.
 //
-// For a version-1 row (written by lib-streaming v2) the persisted Kafka
-// destination is STALE. v2 derived one topic per event from
+// For a version-1 row (written by lib-streaming v2) a persisted Kafka
+// destination that v2 DERIVED is stale — an explicit route override is not,
+// and is returned unchanged; see the gate below. v2 derived one topic per
+// event from
 // Event.Topic() — "{sanitize(Source)}.{ResourceType}.{EventType}" plus a
 // ".v{major}" suffix once SchemaVersion reached 2.0.0, e.g.
 // "midaz-ledger.transaction.created". v3 collapsed that to ONE topic per
