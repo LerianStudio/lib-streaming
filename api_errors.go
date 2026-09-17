@@ -67,6 +67,7 @@ var (
 	ErrOutboxNotConfigured                = contract.ErrOutboxNotConfigured
 	ErrOutboxTxUnsupported                = contract.ErrOutboxTxUnsupported
 	ErrNilOutboxRegistry                  = contract.ErrNilOutboxRegistry
+	ErrLegacyOutboxRowUnroutable          = contract.ErrLegacyOutboxRowUnroutable
 	ErrMissingRequiredHeader              = cloudevents.ErrMissingRequiredHeader
 	ErrUnsupportedSpecVersion             = cloudevents.ErrUnsupportedSpecVersion
 )
