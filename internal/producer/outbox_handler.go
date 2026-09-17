@@ -257,8 +257,17 @@ func (p *Producer) recordOutboxRelayRejection(
 // keepLegacyOutboxRow handles a version-1 row that decoded cleanly but cannot
 // be dispatched under the current topology. It is the ONLY path that converts
 // a caller-correctable rejection into a retryable one, and it exists so a
-// durable row written by lib-streaming v2 is never destroyed without an
-// operator seeing it first.
+// durable row written by lib-streaming v2 survives an operator-visible window
+// instead of being invalidated on its first attempt.
+//
+// The guarantee is bounded to the two refusals this function sees: destination
+// RESOLUTION and PREFLIGHT. A caller-class failure raised deeper — inside a
+// transport adapter, e.g. a v1 SQS or EventBridge row between the 256 KiB
+// adapter cap and the 1 MiB preflight cap failing with ErrPayloadTooLarge —
+// never reaches here, so the dispatcher invalidates it on attempt one with no
+// legacy metric and no legacy log. That behaviour is unchanged from v2.1.0 and
+// is not introduced by version-1 read support; it is recorded here so the
+// godoc does not promise coverage the code does not have.
 //
 // What the caller gets back wraps ErrLegacyOutboxRowUnroutable, which is
 // deliberately absent from callerErrorSentinels. With the documented
