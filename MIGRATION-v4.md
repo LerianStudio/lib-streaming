@@ -356,7 +356,8 @@ Anything in the `INVALID` / version `1` cell is a business event this release
 can now deliver. Inspect a sample before acting:
 
 ```sql
-SELECT id, tenant_id, attempts, last_error,
+SELECT id, attempts, last_error,
+       payload->'event'->>'TenantID'     AS tenant_id,
        payload->'event'->>'Source'       AS ce_source,
        payload->'event'->>'ResourceType' AS resource_type,
        payload->'event'->>'EventType'    AS event_type,
@@ -368,6 +369,16 @@ WHERE event_type = 'lerian.streaming.publish'
 ORDER BY created_at
 LIMIT 50;
 ```
+
+Tenant identity is read out of the payload rather than a `tenant_id` column
+on purpose. lib-commons ships two outbox schemas and only the column-per-tenant
+variant has that column; the base schema
+(`commons/outbox/postgres/migrations/000001_outbox_events_schema.up.sql`) is
+id, event_type, aggregate_id, payload, status, attempts, published_at,
+last_error, created_at, updated_at — so a query naming `tenant_id` fails with
+`column "tenant_id" does not exist` on exactly the deployment these
+instructions assume. `Event.TenantID` is inside the envelope on both, which is
+also why the relay can republish a row whichever pool it was read from.
 
 Requeue them once the v4 build is live. Restrict this to rows whose `ce_source`
 matches `^[a-z0-9][a-z0-9_-]*$`; anything else needs its source rewritten first
