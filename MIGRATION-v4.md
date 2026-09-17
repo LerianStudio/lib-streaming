@@ -267,6 +267,13 @@ lands exactly where current consumers subscribe. Payload, CloudEvents
 attributes and partition key are unchanged. Non-Kafka destinations (SQS,
 RabbitMQ, EventBridge) are used as persisted; only Kafka topic naming changed.
 
+Only destinations v2 **derived** are rewritten. v2 synthesized one route per
+catalog definition pointing at `EventDefinition.Topic(source)`, but
+`MergeRouteOverrides` let a service aim a Kafka route anywhere it liked. A row
+whose destination is not the v2-derived name was an explicit operator choice
+that v3 never invalidated, so it is left exactly as persisted — moving it would
+silently redirect a stream you still run a consumer on.
+
 ### The one row that still needs you
 
 v2 folded `ce-source` through a lossy sanitizer. v3 deleted it and rejects a

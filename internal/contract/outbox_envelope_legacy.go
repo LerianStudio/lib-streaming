@@ -1,6 +1,9 @@
 package contract
 
-import "fmt"
+import (
+	"fmt"
+	"strconv"
+)
 
 // ResolveDestination returns the destination the relay must publish this
 // envelope to under the CURRENT topology, which is not always the destination
@@ -45,14 +48,9 @@ func (e OutboxEnvelope) ResolveDestination() (Destination, error) {
 	}
 
 	if err := ValidateSource(e.Event.Source); err != nil {
-		// %v on the cause, NOT %w, and the linter's "always wrap" rule does
-		// not apply here. ValidateSource returns ErrMissingSource /
-		// ErrInvalidSource, both of which are in callerErrorSentinels;
-		// splicing either into this chain would make IsCallerError true and
-		// send the row straight to INVALID — destroying the durable row this
-		// whole path exists to preserve. The cause is kept as text so the
-		// operator still reads the precise reason in the log and in
-		// outbox_events.last_error.
+		// The cause is rendered with %v so the operator still reads the precise
+		// reason in the log and in outbox_events.last_error, without it
+		// entering the error chain.
 		//nolint:errorlint // %v is REQUIRED here, not an oversight. ValidateSource
 		// returns ErrMissingSource / ErrInvalidSource, both in callerErrorSentinels;
 		// %w would make IsCallerError true and the dispatcher would destroy this
@@ -64,8 +62,46 @@ func (e OutboxEnvelope) ResolveDestination() (Destination, error) {
 		)
 	}
 
+	// Only rewrite what v2 DERIVED. v2 synthesized one route per catalog
+	// definition pointing at EventDefinition.Topic(source), but
+	// MergeRouteOverrides let a service point a Kafka route anywhere it
+	// liked, and such a name is an operator's deliberate choice that v3
+	// never invalidated. Rewriting it would silently move a stream the
+	// operator still runs a consumer on.
+	if e.Destination.Name != legacyDerivedTopic(e.Event) {
+		return e.Destination, nil
+	}
+
 	resolved := e.Destination
 	resolved.Name = AppTopic(e.Event.Source)
 
 	return resolved, nil
+}
+
+// legacyDerivedTopic reproduces the topic lib-streaming v2 derived for an
+// event: "{Source}.{ResourceType}.{EventType}", plus ".v{major}" once
+// SchemaVersion reached 2.0.0. It exists to tell a v2 AUTO-DERIVED
+// destination apart from an operator's explicit route override, which must
+// not be rewritten.
+//
+// v2 ran Source through sanitizeSourceSegment (lowercase, punctuation-fold,
+// separator-collapse) first. That function is NOT resurrected here and does
+// not need to be: the only caller re-derives after ValidateSource has passed,
+// and for a source matching ^[a-z0-9][a-z0-9_-]* the v2 sanitizer is the
+// identity — already lower-case, every rune inside its allowed charset, no
+// leading or trailing separator to trim. A source that would have been folded
+// takes the unroutable path above and never reaches here.
+//
+// The major-version rule mirrors v2 exactly: it used ParseMajorVersion, which
+// collapses an unparseable SchemaVersion to 0 and therefore falls through to
+// the base form. parseMajorVersionStrict's ok=false is that same case.
+func legacyDerivedTopic(event Event) string {
+	base := event.Source + "." + event.ResourceType + "." + event.EventType
+
+	major, ok := parseMajorVersionStrict(event.SchemaVersion)
+	if !ok || major < 2 {
+		return base
+	}
+
+	return base + ".v" + strconv.Itoa(major)
 }

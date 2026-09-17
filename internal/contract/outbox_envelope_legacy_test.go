@@ -193,3 +193,99 @@ func TestLegacyUnroutableSentinelIsNotACallerError(t *testing.T) {
 			"ErrLegacyOutboxRowUnroutable must not alias a caller-error sentinel")
 	}
 }
+
+// TestResolveDestinationRewritesOnlyWhatV2Derived pins the narrowing: v2
+// synthesized its routes from EventDefinition.Topic(source), but
+// MergeRouteOverrides let a service point a Kafka route anywhere. An explicit
+// override is an operator's deliberate choice that v3 never invalidated, so
+// rewriting it would silently move a stream they still consume.
+func TestResolveDestinationRewritesOnlyWhatV2Derived(t *testing.T) {
+	t.Parallel()
+
+	t.Run("derived topic is rewritten", func(t *testing.T) {
+		t.Parallel()
+
+		envelope := loadLegacyEnvelope(t)
+		// "midaz-ledger" + "transaction" + "created", schema 1.x -> base form.
+		envelope.Destination.Name = "midaz-ledger.transaction.created"
+
+		resolved, err := envelope.ResolveDestination()
+		require.NoError(t, err)
+		assert.Equal(t, AppTopic("midaz-ledger"), resolved.Name)
+	})
+
+	t.Run("derived topic with a v2 schema suffix is rewritten", func(t *testing.T) {
+		t.Parallel()
+
+		envelope := loadLegacyEnvelope(t)
+		envelope.Event.SchemaVersion = "2.3.1"
+		// v2 appended ".v<major>" once the major reached 2.
+		envelope.Destination.Name = "midaz-ledger.transaction.created.v2"
+
+		resolved, err := envelope.ResolveDestination()
+		require.NoError(t, err)
+		assert.Equal(t, AppTopic("midaz-ledger"), resolved.Name,
+			"the .v<major> form is still a v2-derived name and must be rewritten")
+	})
+
+	t.Run("explicit route override is preserved", func(t *testing.T) {
+		t.Parallel()
+
+		envelope := loadLegacyEnvelope(t)
+		envelope.Destination.Name = "ledger-audit-archive"
+
+		resolved, err := envelope.ResolveDestination()
+		require.NoError(t, err)
+		assert.Equal(t, "ledger-audit-archive", resolved.Name,
+			"a destination v2 did not derive was an operator's choice; moving it loses their consumer")
+	})
+
+	t.Run("schema suffix mismatch is treated as an override", func(t *testing.T) {
+		t.Parallel()
+
+		envelope := loadLegacyEnvelope(t)
+		envelope.Event.SchemaVersion = "1.0.0" // base form, so no ".v2" suffix
+		envelope.Destination.Name = "midaz-ledger.transaction.created.v2"
+
+		resolved, err := envelope.ResolveDestination()
+		require.NoError(t, err)
+		assert.Equal(t, "midaz-ledger.transaction.created.v2", resolved.Name,
+			"v2 would not have derived this name for this event, so it was set deliberately")
+	})
+}
+
+func TestLegacyDerivedTopicMirrorsV2(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		schemaVersion string
+		want          string
+	}{
+		{name: "empty schema falls through to base", schemaVersion: "", want: "midaz-ledger.transaction.created"},
+		{name: "major 1 falls through to base", schemaVersion: "1.0.0", want: "midaz-ledger.transaction.created"},
+		{name: "major 2 gets the suffix", schemaVersion: "2.0.0", want: "midaz-ledger.transaction.created.v2"},
+		{name: "major 11 gets the suffix", schemaVersion: "11.4.2", want: "midaz-ledger.transaction.created.v11"},
+		{name: "v-prefixed major 3 gets the suffix", schemaVersion: "v3.1.0", want: "midaz-ledger.transaction.created.v3"},
+		{
+			name: "unparseable falls through to base, as v2's ParseMajorVersion did",
+			// v2 used ParseMajorVersion, which collapses a parse failure to 0.
+			schemaVersion: "not-a-semver",
+			want:          "midaz-ledger.transaction.created",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := legacyDerivedTopic(Event{
+				Source:        "midaz-ledger",
+				ResourceType:  "transaction",
+				EventType:     "created",
+				SchemaVersion: tt.schemaVersion,
+			})
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
