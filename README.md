@@ -727,7 +727,7 @@ explicit about why, because earlier versions of this document said the
 opposite. `OutboxEnvelopeVersion` is 2 (bumped in v3), but the relay now READS
 version-1 rows — the ones lib-streaming v2 wrote — and re-derives their
 destination onto the current application topic. They drain; they are not
-rejected. See [Upgrading from lib-streaming v2](MIGRATION-v4.md#upgrading-from-lib-streaming-v2-outbox-rows).
+rejected. See [Upgrading from lib-streaming v2](MIGRATION-v4.md#7-upgrading-from-lib-streaming-v2-outbox-rows).
 
 What the classifier still buys you is every OTHER permanently-unpublishable
 row: an unknown envelope version (neither 1 nor 2 — corruption, or a row from

@@ -296,6 +296,41 @@ it is still there to be rewritten and replayed.
 Fix it by rewriting the row's source to a legal one
 (`^[a-z0-9][a-z0-9_-]*$`, no dots) and resetting it to `PENDING`.
 
+### Read this before you deploy: old rows start publishing immediately
+
+**Version-1 rows sitting in `PENDING` or `FAILED` begin draining onto the live
+application topic the moment the new binary rolls.** There is no opt-in, no
+feature flag, and no age ceiling. A row written months ago publishes as soon as
+the relay reaches it, and it arrives *after* newer events for the same tenant,
+because the outbox dispatcher retries per row and does not serialize per
+aggregate.
+
+That is the intended behaviour — those events were accepted from a caller and
+never delivered, so delivering them is the whole point — but it is a change in
+what your consumers see on upgrade day, and consumers that assume rough
+recency need checking first.
+
+Inventory what will drain, **before** you deploy:
+
+```sql
+SELECT
+    status,
+    count(*)        AS rows_to_drain,
+    min(created_at) AS oldest,
+    max(created_at) AS newest
+FROM outbox_events
+WHERE event_type = 'lerian.streaming.publish'
+  AND status IN ('PENDING', 'FAILED')
+  AND (payload->>'version')::int = 1
+GROUP BY status;
+```
+
+If `oldest` is far behind now, confirm the consumers of that application
+tolerate a burst of stale events before rolling. If they do not, hold the
+deploy and drain or discard those rows deliberately — that is a decision to
+take with eyes open, which is exactly what the old silent-INVALID behaviour
+denied you.
+
 ### Operator queries
 
 Run these against each tenant database. Substitute your table name if it is not
