@@ -321,7 +321,7 @@ SELECT
 FROM outbox_events
 WHERE event_type = 'lerian.streaming.publish'
   AND status IN ('PENDING', 'FAILED')
-  AND (payload->>'version')::int = 1
+  AND payload->>'version' = '1'
 GROUP BY status;
 ```
 
@@ -342,7 +342,7 @@ recoverable version-1 rows:
 ```sql
 SELECT
     status,
-    (payload->>'version')::int                  AS envelope_version,
+    payload->>'version'                         AS envelope_version,
     count(*)                                    AS rows,
     min(created_at)                             AS oldest,
     max(created_at)                             AS newest
@@ -364,7 +364,7 @@ SELECT id, tenant_id, attempts, last_error,
 FROM outbox_events
 WHERE event_type = 'lerian.streaming.publish'
   AND status = 'INVALID'
-  AND (payload->>'version')::int = 1
+  AND payload->>'version' = '1'
 ORDER BY created_at
 LIMIT 50;
 ```
@@ -381,12 +381,30 @@ SET status     = 'PENDING'::outbox_event_status,
     updated_at = now()
 WHERE event_type = 'lerian.streaming.publish'
   AND status = 'INVALID'
-  AND (payload->>'version')::int = 1
+  AND payload->>'version' = '1'
   AND payload->'event'->>'Source' ~ '^[a-z0-9][a-z0-9_-]*$';
 ```
+
+**This is a candidate set, not a guarantee.** The filter checks the envelope
+version and the shape of the source, which are the two things that decide
+whether a row can be re-derived. It does not re-run the relay's full envelope
+validation — route key, target, transport, destination kind, aggregate id,
+policy, trace carrier and event fields are all still checked at drain time, and
+a row can fail any of them. Such a row does not publish and is not lost: it is
+refused, counted on `streaming_outbox_relay_rejected_total`, and named in an
+ERROR log with its row id, so the alert below is what tells you the requeue did
+not fully land. Requeue in batches and watch that counter rather than assuming
+every updated row drains.
 
 Then watch the drain, and alert on the rows that still cannot move:
 
 ```promql
-increase(streaming_outbox_relay_rejected_total[15m]) > 0
+# Version-1 rows that cannot be re-derived. Each one needs its source
+# rewritten by hand; they retry meanwhile and are never dropped.
+increase(streaming_outbox_relay_rejected_total{reason="legacy_unroutable"}[15m]) > 0
+
+# A separate condition with a separate cause: an envelope version this build
+# cannot read at all. That is corruption or a row from a newer major, and the
+# row is bound for INVALID.
+increase(streaming_outbox_relay_rejected_total{reason="version_unsupported"}[15m]) > 0
 ```

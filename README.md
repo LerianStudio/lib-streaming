@@ -744,8 +744,12 @@ a caller error, so it keeps its retry budget while
 ERROR log naming the row id call for an operator. Alert on it:
 
 ```promql
-increase(streaming_outbox_relay_rejected_total[15m]) > 0
+increase(streaming_outbox_relay_rejected_total{reason="legacy_unroutable"}[15m]) > 0
 ```
+
+The counter's other reason, `version_unsupported`, is a different condition
+with a different cause — an envelope this build cannot read, bound for INVALID
+— so alert on it separately rather than folding the two together.
 
 ### DLQ alerting
 
