@@ -72,7 +72,7 @@ func (m *streamingMetrics) recordOutboxRouted(ctx context.Context, topic, reason
 func (m *streamingMetrics) recordOutboxReplayTargetUnknown(ctx context.Context, target string) {
 	m.addOne(ctx, metricNameOutboxReplayTargetUnknown,
 		"Total outbox replay rows blocked because their target was not registered.",
-		map[string]string{"target": target})
+		map[string]string{labelTarget: target})
 }
 
 // recordOutboxRelayRejected increments streaming_outbox_relay_rejected_total
@@ -104,7 +104,7 @@ func (m *streamingMetrics) recordOutboxReplayTargetUnknown(ctx context.Context, 
 func (m *streamingMetrics) recordOutboxRelayRejected(ctx context.Context, target, reason string) {
 	m.addOne(ctx, metricNameOutboxRelayRejected,
 		"Total outbox relay rows refused, by reason.",
-		map[string]string{"target": target, "reason": reason})
+		map[string]string{labelTarget: target, "reason": reason})
 }
 
 // recordCircuitState sets the streaming_circuit_state gauge. state is one of

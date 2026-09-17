@@ -48,7 +48,14 @@ const (
 	metricTopicUnresolved               = "__unresolved__"
 )
 
-const labelTopic = "topic"
+const (
+	labelTopic = "topic"
+
+	// labelTarget names the operator-controlled target dimension shared by the
+	// outbox relay counters. A constant rather than a repeated literal so the
+	// label name cannot drift between two instruments that dashboards join on.
+	labelTarget = "target"
+)
 
 // streamingMetrics records the streaming instrument set through the
 // caller-supplied obs.MetricsRecorder.
