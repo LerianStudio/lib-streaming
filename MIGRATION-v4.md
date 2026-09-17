@@ -218,3 +218,133 @@ whole v4 migration: the renamed metrics entry points
 each call site, and a consumer that implements its own logger has to widen the
 `Log` and `Enabled` signatures. See sections 3 and "If you implement a
 logger".
+
+---
+
+## 7. Upgrading from lib-streaming v2: outbox rows
+
+**v4 reads v2-era outbox rows. No drain is required before upgrading.**
+
+This section replaces the instruction in the v3.0.0 changelog entry to "drain
+the streaming outbox to empty on the v2 build before deploying v3". That
+instruction was the only thing standing between a leftover row and permanent
+loss, it was easy to miss, and it was impossible to satisfy on a service whose
+outbox was accumulating precisely because the broker was down.
+
+### Get the majors right first
+
+The envelope version and the library major are not the same number, and the
+mismatch is the usual source of confusion here:
+
+| lib-streaming major | `OutboxEnvelopeVersion` it WRITES |
+| --- | --- |
+| v2.x | 1 |
+| v3.x | 2 |
+| v4.x | 2 |
+
+So:
+
+- **v3 → v4 needs nothing.** A v3 build already writes version-2 rows and a v4
+  relay has always read them. If events went missing across a v3 → v4 deploy,
+  the envelope version is not the cause and the real cause is still open.
+- **v2 → v3 or v2 → v4 is the exposed path.** Those are the version-1 rows.
+
+### What used to happen, and what happens now
+
+A version-1 row was refused at the version gate with
+`ErrInvalidOutboxEnvelope`. That sentinel is caller-correctable, so a service
+wiring the documented `WithRetryClassifier(streaming.IsCallerError)` had the
+row marked `INVALID` on its first attempt; a service wiring no classifier had
+it walk ~10 attempts to `INVALID` anyway. Either way the business event was
+never delivered, and nothing in the storage layer recorded why.
+
+Now the relay reads the row and recomputes its destination. v2 persisted a
+per-event topic (`midaz-ledger.transaction.created`); v3 collapsed delivery to
+one topic per producing application (`lerian.streaming.midaz-ledger`). The
+relay derives the current topic from the row's own `Event.Source` using
+`AppTopic` — the same helper the live Emit path uses — so the drained event
+lands exactly where current consumers subscribe. Payload, CloudEvents
+attributes and partition key are unchanged. Non-Kafka destinations (SQS,
+RabbitMQ, EventBridge) are used as persisted; only Kafka topic naming changed.
+
+### The one row that still needs you
+
+v2 folded `ce-source` through a lossy sanitizer. v3 deleted it and rejects a
+malformed source outright, so a v2-era source like
+`//lerian.midaz/transaction-service` has no derivable topic today.
+
+Such a row is **not** invalidated. It fails with
+`ErrLegacyOutboxRowUnroutable`, which is deliberately not a caller error, so it
+keeps its retry budget while every attempt emits an ERROR log naming the row id
+and increments
+`streaming_outbox_relay_rejected_total{reason="legacy_unroutable"}`.
+
+It is not immortal: lib-commons promotes `FAILED` to `INVALID` once attempts
+reach `MaxDispatchAttempts` (default 10). No handler can refuse that, and
+returning success to dodge it would mark the row `PUBLISHED` and lose it for
+real. What you get is the whole budget with a loud, reason-bearing signal on
+every attempt — and an `INVALID` row is a terminal STATUS on a RETAINED row, so
+it is still there to be rewritten and replayed.
+
+Fix it by rewriting the row's source to a legal one
+(`^[a-z0-9][a-z0-9_-]*$`, no dots) and resetting it to `PENDING`.
+
+### Operator queries
+
+Run these against each tenant database. Substitute your table name if it is not
+`outbox_events`.
+
+Count the rows earlier v3/v4 deploys already invalidated, and how many are
+recoverable version-1 rows:
+
+```sql
+SELECT
+    status,
+    (payload->>'version')::int                  AS envelope_version,
+    count(*)                                    AS rows,
+    min(created_at)                             AS oldest,
+    max(created_at)                             AS newest
+FROM outbox_events
+WHERE event_type = 'lerian.streaming.publish'
+GROUP BY status, envelope_version
+ORDER BY status, envelope_version;
+```
+
+Anything in the `INVALID` / version `1` cell is a business event this release
+can now deliver. Inspect a sample before acting:
+
+```sql
+SELECT id, tenant_id, attempts, last_error,
+       payload->'event'->>'Source'       AS ce_source,
+       payload->'event'->>'ResourceType' AS resource_type,
+       payload->'event'->>'EventType'    AS event_type,
+       payload->'destination'->>'name'   AS persisted_topic
+FROM outbox_events
+WHERE event_type = 'lerian.streaming.publish'
+  AND status = 'INVALID'
+  AND (payload->>'version')::int = 1
+ORDER BY created_at
+LIMIT 50;
+```
+
+Requeue them once the v4 build is live. Restrict this to rows whose `ce_source`
+matches `^[a-z0-9][a-z0-9_-]*$`; anything else needs its source rewritten first
+or it will simply exhaust its budget again:
+
+```sql
+UPDATE outbox_events
+SET status     = 'PENDING'::outbox_event_status,
+    attempts   = 0,
+    last_error = NULL,
+    updated_at = now()
+WHERE event_type = 'lerian.streaming.publish'
+  AND status = 'INVALID'
+  AND (payload->>'version')::int = 1
+  AND payload->'event'->>'Source' ~ '^[a-z0-9][a-z0-9_-]*$';
+```
+
+Then watch the drain, and alert on the rows that still cannot move:
+
+```promql
+increase(streaming_outbox_relay_rejected_total[15m]) > 0
+```

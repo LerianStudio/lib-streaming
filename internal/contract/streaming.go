@@ -332,6 +332,27 @@ var (
 	// returns false.
 	ErrOutboxNotConfigured = errors.New("streaming: outbox writer not configured for fallback")
 
+	// ErrLegacyOutboxRowUnroutable is returned when a version-1 outbox row
+	// (written by lib-streaming v2) decodes cleanly but cannot be dispatched
+	// under v4 topology because v4 requires something v2 permitted — in
+	// practice a ce-source that v2's lossy sanitizer would have rewritten and
+	// v4's ValidateSource rejects outright.
+	//
+	// DELIBERATELY NOT A CALLER ERROR, and this is the whole point of the
+	// sentinel. The lib-commons dispatcher sends non-retryable errors STRAIGHT
+	// to INVALID (Dispatcher.handlePublishError). Every natural error for this
+	// condition — ErrInvalidSource, ErrMissingSource, ErrInvalidOutboxEnvelope
+	// — is in callerErrorSentinels, so returning one would burn a durable row
+	// the previous major wrote on the first attempt, with no operator in the
+	// loop. Keeping this retryable preserves the row through its whole retry
+	// budget while the relay logs at ERROR and increments
+	// streaming_outbox_legacy_unroutable_total on every attempt.
+	//
+	// Anything wrapping this sentinel MUST render its cause with %v, never %w:
+	// a %w would splice a caller-error sentinel back into the chain and
+	// silently restore the immediate-INVALID behaviour this exists to prevent.
+	ErrLegacyOutboxRowUnroutable = errors.New("streaming: legacy outbox row cannot be routed under the current topology")
+
 	// ErrOutboxTxUnsupported is returned when an ambient SQL transaction is
 	// present but the configured OutboxWriter does not implement
 	// TransactionalOutboxWriter.

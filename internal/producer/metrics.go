@@ -42,6 +42,7 @@ const (
 	metricNameDLQFailed                 = "streaming_dlq_publish_failed_total"
 	metricNameOutboxRouted              = "streaming_outbox_routed_total"
 	metricNameOutboxReplayTargetUnknown = "streaming_outbox_replay_target_unknown_total"
+	metricNameOutboxRelayRejected       = "streaming_outbox_relay_rejected_total"
 	metricNameCircuitState              = "streaming_circuit_state"
 	metricNameCBRecoveryLiveness        = "streaming_cb_recovery_liveness"
 	metricTopicUnresolved               = "__unresolved__"
