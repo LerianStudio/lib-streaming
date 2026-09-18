@@ -722,11 +722,34 @@ caller-correctable faults — validation, serialization, auth, and every
 caller-correctable sentinel — so the dispatcher moves those rows straight to
 INVALID and keeps retrying only the ones a retry could fix.
 
-This matters most right after a v3 deploy: `OutboxEnvelopeVersion` is now 2 and
-a leftover version-1 row is rejected with `ErrInvalidOutboxEnvelope`, a caller
-error. Every such row is permanently unpublishable, so a fleet of them should
-land in INVALID immediately (alertable, countable, replayable after a rewrite)
-rather than cycling through retries for hours.
+This no longer applies to leftover version-1 rows, and it is worth being
+explicit about why, because earlier versions of this document said the
+opposite. `OutboxEnvelopeVersion` is 2 (bumped in v3), but the relay now READS
+version-1 rows — the ones lib-streaming v2 wrote — and re-derives their
+destination onto the current application topic. They drain; they are not
+rejected. See [Upgrading from lib-streaming v2](MIGRATION-v4.md#7-upgrading-from-lib-streaming-v2-outbox-rows).
+
+What the classifier still buys you is every OTHER permanently-unpublishable
+row: an unknown envelope version (neither 1 nor 2 — corruption, or a row from
+a future major), a malformed envelope, a payload that is not JSON. Those can
+never succeed, so they should land in INVALID immediately — alertable,
+countable, replayable after a rewrite — rather than cycling through retries for
+hours.
+
+One row shape deliberately does NOT go to INVALID even with the classifier
+wired: a version-1 row whose `ce-source` cannot be re-derived under the current
+rules. It fails with `ErrLegacyOutboxRowUnroutable`, which is intentionally not
+a caller error, so it keeps its retry budget while
+`streaming_outbox_relay_rejected_total{reason="legacy_unroutable"}` and an
+ERROR log naming the row id call for an operator. Alert on it:
+
+```promql
+increase(streaming_outbox_relay_rejected_total{reason="legacy_unroutable"}[15m]) > 0
+```
+
+The counter's other reason, `version_unsupported`, is a different condition
+with a different cause — an envelope this build cannot read, bound for INVALID
+— so alert on it separately rather than folding the two together.
 
 ### DLQ alerting
 

@@ -136,14 +136,12 @@ func TestOutboxEnvelope_Validate_RejectsInvalidShape(t *testing.T) {
 			mutate:  func(e *OutboxEnvelope) { e.Version = 0 },
 			wantSub: ErrInvalidOutboxEnvelope, // T7 wraps ErrInvalidOutboxEnvelope; previously a bare fmt.Errorf.
 		},
-		{
-			// The v2-era envelope. Shape-compatible, but its Destination
-			// holds a per-event topic that no longer exists, so replaying
-			// it would publish into the void. Reject, loudly.
-			name:    "version one (v2-era, dead destination)",
-			mutate:  func(e *OutboxEnvelope) { e.Version = 1 },
-			wantSub: ErrInvalidOutboxEnvelope,
-		},
+		// Version one is NO LONGER a rejection case. The v2-era envelope is
+		// shape-compatible and its rows are durable data the previous major
+		// wrote, so it is read and its stale Destination re-derived rather
+		// than refused — see TestOutboxEnvelopeVersionAcceptance and
+		// TestResolveDestinationRederivesLegacyKafkaTopic in
+		// outbox_envelope_legacy_test.go, which own that behaviour.
 		{
 			name:    "version three (future)",
 			mutate:  func(e *OutboxEnvelope) { e.Version = 3 },

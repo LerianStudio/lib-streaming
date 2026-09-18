@@ -12,22 +12,49 @@ const (
 	// streaming relay rows. The concrete destination lives in OutboxEnvelope.
 	StreamingOutboxEventType = "lerian.streaming.publish"
 
-	// OutboxEnvelopeVersion is the wire-version of the persisted
-	// OutboxEnvelope. Validation uses strict equality (==
-	// OutboxEnvelopeVersion) so unknown versions are rejected as
-	// malformed — INCLUDING version 1, the v2-era envelope.
+	// OutboxEnvelopeVersion is the wire-version this library WRITES. It was
+	// bumped to 2 for v3 and is unchanged in v4.
 	//
-	// Bumped to 2 for v3. The struct SHAPE is identical to version 1, but
-	// the MEANING of the persisted Destination changed: a version-1 row
-	// holds a per-event topic ("midaz-ledger.transaction.created"), a
-	// version-2 row holds the application topic
-	// ("lerian.streaming.midaz-ledger"). A v3 relay draining a version-1
-	// row would publish it verbatim to a topic nothing subscribes to any
-	// more — delivered, acknowledged, and consumed by no one. Rejecting
-	// the row makes that an operator-visible decode failure instead of
-	// silent loss behind a green dashboard.
+	// The struct SHAPE is identical to version 1, but the MEANING of the
+	// persisted Destination changed: a version-1 row holds a per-event topic
+	// ("midaz-ledger.transaction.created"), a version-2 row holds the
+	// application topic ("lerian.streaming.midaz-ledger").
 	OutboxEnvelopeVersion = 2
+
+	// OutboxEnvelopeVersionLegacy is the version-1 envelope written by
+	// lib-streaming v2. It is accepted on READ and never written.
+	//
+	// Until v4 the version gate was strict equality, so a version-1 row was
+	// rejected as malformed with ErrInvalidOutboxEnvelope — a caller error,
+	// which the lib-commons dispatcher sends straight to INVALID. Any service
+	// that upgraded off v2 with rows still PENDING (the normal state during a
+	// broker hiccup, which is exactly when deploys happen) lost those business
+	// events at the deploy boundary. The rows are DURABLE DATA the previous
+	// major wrote; refusing to read them is data loss, not the absence of a
+	// compatibility layer.
+	//
+	// The original rejection existed for a real reason: publishing a
+	// version-1 row VERBATIM would send it to the stale per-event topic,
+	// delivered and acknowledged and subscribed to by no one. The fix is not
+	// to publish it verbatim — it is to RE-DERIVE the destination under the
+	// current topology from the persisted Event, which carries everything
+	// needed. See OutboxEnvelope.ResolveDestination.
+	//
+	// Unknown versions — anything that is neither 1 nor 2 — stay rejected.
+	OutboxEnvelopeVersionLegacy = 1
 )
+
+// IsSupportedOutboxEnvelopeVersion reports whether a decoded envelope version
+// is one this library can dispatch. Version 2 is written and read; version 1
+// is read-only legacy (see OutboxEnvelopeVersionLegacy).
+//
+// Exported so the relay can tell a version rejection apart from every other
+// ErrInvalidOutboxEnvelope cause AFTER Validate has failed, and label its
+// rejection metric accordingly. Both wrap the same sentinel, so the error
+// chain alone cannot distinguish them.
+func IsSupportedOutboxEnvelopeVersion(version int) bool {
+	return version == OutboxEnvelopeVersion || version == OutboxEnvelopeVersionLegacy
+}
 
 // OutboxEnvelope is the persisted streaming outbox payload. One row is
 // written per route whose policy permits outbox capture for the failure
@@ -101,19 +128,22 @@ func (e OutboxEnvelope) Validate() error {
 // Skipped vs Validate:
 //   - Destination.Validate (URL parse, SSRF, DNS resolution).
 func (e OutboxEnvelope) ValidateShape() error {
-	if e.Version != OutboxEnvelopeVersion {
-		// Schema-evolution canary. Version mismatch during a rolling
-		// deploy is the load-bearing operator-actionable signal here.
-		// Fire the trident with violation="version_mismatch" so dashboards
-		// distinguish this from kind/transport mismatches; replace the
-		// bare fmt.Errorf with the canonical ErrInvalidOutboxEnvelope
-		// sentinel so callers can errors.Is consistently with every
-		// other envelope failure.
+	if !IsSupportedOutboxEnvelopeVersion(e.Version) {
+		// Schema-evolution canary. An UNKNOWN version — neither the written
+		// version 2 nor the read-only legacy version 1 — is either corruption
+		// or a row written by a FUTURE major that this binary cannot reason
+		// about. Both are operator-actionable and neither is dispatchable, so
+		// the rejection stands. Fire the trident with
+		// violation="version_mismatch" so dashboards distinguish this from
+		// kind/transport mismatches, and wrap the canonical
+		// ErrInvalidOutboxEnvelope sentinel so callers can errors.Is
+		// consistently with every other envelope failure.
 		a := newContractAsserter("outbox_envelope.validate_shape")
-		_ = a.That(context.Background(), false, "outbox envelope version must match library version",
+		_ = a.That(context.Background(), false, "outbox envelope version must be readable by this library",
 			"violation", "version_mismatch",
 			"got_version", e.Version,
 			"want_version", OutboxEnvelopeVersion,
+			"legacy_version", OutboxEnvelopeVersionLegacy,
 		)
 
 		return fmt.Errorf("%w: unsupported outbox envelope version %d", ErrInvalidOutboxEnvelope, e.Version)
