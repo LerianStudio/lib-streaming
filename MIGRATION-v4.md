@@ -457,3 +457,70 @@ increase(streaming_outbox_relay_rejected_total{reason="legacy_unroutable"}[15m])
 # row is bound for INVALID.
 increase(streaming_outbox_relay_rejected_total{reason="version_unsupported"}[15m]) > 0
 ```
+
+## 8. Opaque (non-JSON) payloads on the outbox route
+
+Nothing here is required to upgrade. Read it if your service emits a payload
+that is not JSON — an SFN XML document, a fixed-width regulatory file, any
+`application/octet-stream` blob — through the outbox route.
+
+### What changed
+
+An `EventDefinition` declaring a non-JSON `DataContentType` has always shipped
+its payload verbatim as the Kafka record value, skipping the `json.Valid` gate.
+That was true on the direct path only. The same event could not be persisted to
+the outbox at all: `json.Marshal` of the envelope failed with
+`invalid character '<' looking for beginning of value`, because
+`Event.Payload` is a `json.RawMessage` and the encoder validates one on the way
+out. Persisting now works, the relay republishes the original bytes, and a
+consumer built with this library hands its handler those bytes and the declared
+content type untouched.
+
+There is no new option, constructor or flag. Declaring the content type is the
+whole API:
+
+```go
+catalog, _ := streaming.NewCatalog(streaming.EventDefinition{
+    Key:             "documento.enviado",
+    ResourceType:    "documento",
+    EventType:       "enviado",
+    DataContentType: "text/xml; charset=ISO-8859-1", // <- this is the switch
+})
+```
+
+### What an operator sees in the outbox table
+
+A JSON payload is persisted exactly as before — inline under `Payload` — so
+every query in section 7 is unaffected. An OPAQUE payload is persisted
+base64-encoded under a sibling key, and `Payload` is `null`:
+
+```json
+{ "event": { "DataContentType": "application/xml",
+             "Payload": null,
+             "PayloadOpaque": "PD94bWwgdmVyc2lvbj0iMS4wIj8+..." } }
+```
+
+base64 is not a preference. The outbox row lands in a JSONB column (lib-commons
+rejects anything else with `ErrOutboxEventPayloadNotJSON`), a JSON string must
+be valid UTF-8, and Go's encoder replaces invalid UTF-8 with U+FFFD **without
+returning an error** — so an ISO-8859-1 document written as a JSON string would
+come back silently corrupted. To read one back at the console:
+
+```sql
+SELECT convert_from(
+         decode(payload->'event'->>'PayloadOpaque', 'base64'),
+         'LATIN1')                       AS document,
+       payload->'event'->>'DataContentType' AS content_type
+FROM outbox_events
+WHERE event_type = 'lerian.streaming.publish'
+  AND payload->'event' ? 'PayloadOpaque';
+```
+
+### One sizing consequence
+
+The envelope's 1 MiB cap applies to the row AFTER base64, so an opaque payload
+runs out of room about 33% earlier than a JSON one — roughly 786 KiB of XML.
+That is the outbox column's limit, not the broker's; the 1 MiB Kafka record cap
+is unchanged and applies to the verbatim bytes. A payload between those two
+figures emits fine directly and is refused by the outbox with
+`ErrPayloadTooLarge`.
