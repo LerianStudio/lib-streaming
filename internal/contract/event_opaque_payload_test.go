@@ -5,6 +5,7 @@ package contract
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -215,5 +216,90 @@ func TestIsJSONContentType(t *testing.T) {
 				t.Fatalf("IsJSONContentType(%q) = %v; want %v", tt.ct, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestEmitRequest_EmptyPayloadRefusedByName is the CodeRabbit finding on #150,
+// resolved by naming the fault instead of encoding it.
+//
+// An event with no body is a caller defect, and before ErrEmptyPayload each
+// content type failed differently and badly: an empty JSON payload came back
+// as ErrNotJSON ("payload must be valid JSON" — a misleading diagnosis for a
+// body the caller forgot to set), while an empty OPAQUE payload passed every
+// gate and then died inside the outbox envelope marshal with
+// "unexpected end of JSON input", naming neither the field nor the caller.
+//
+// The gate is on LENGTH, not on content type, so both spellings of empty (nil
+// and a zero-length slice) are refused for every content type at the same
+// place the upper bound lives.
+func TestEmitRequest_EmptyPayloadRefusedByName(t *testing.T) {
+	t.Parallel()
+
+	payloads := map[string]json.RawMessage{
+		"nil":          nil,
+		"zero-length":  {},
+		"empty-string": json.RawMessage(""),
+	}
+
+	for name, payload := range payloads {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := NewEmitRequest(EmitRequest{DefinitionKey: "documento.enviado", Payload: payload})
+			if !errors.Is(err, ErrEmptyPayload) {
+				t.Fatalf("NewEmitRequest err = %v; want errors.Is(ErrEmptyPayload)", err)
+			}
+
+			if !IsCallerError(err) {
+				t.Fatal("ErrEmptyPayload must be caller-correctable")
+			}
+		})
+	}
+}
+
+// TestEvent_EmptyPayloadNeverReachesMarshal pins WHY the length guard in
+// MarshalJSON is written `len(e.Payload) > 0` rather than being widened to
+// cover the empty case: nothing empty can get that far any more.
+//
+// Both content types are exercised because the finding was content-type
+// specific — the JSON path already failed (for the wrong reason) and the
+// opaque path did not fail at all.
+func TestEvent_EmptyPayloadNeverReachesMarshal(t *testing.T) {
+	t.Parallel()
+
+	for _, contentType := range []string{"application/json", "application/xml", "text/xml; charset=ISO-8859-1", ""} {
+		t.Run("ct="+contentType, func(t *testing.T) {
+			t.Parallel()
+
+			if _, err := NewEmitRequest(EmitRequest{
+				DefinitionKey: "documento.enviado",
+				Payload:       json.RawMessage{},
+			}); !errors.Is(err, ErrEmptyPayload) {
+				t.Fatalf("NewEmitRequest err = %v; want ErrEmptyPayload before any persist", err)
+			}
+		})
+	}
+}
+
+// TestOutboxEnvelope_NilOpaquePayloadWouldHaveRepublishedTheWordNull records
+// the third failure the single named error closes, and the only one that was
+// silent.
+//
+// A NIL payload under a non-JSON content type passed every gate, persisted as
+// the JSON literal null, and decoded back as the four bytes "null" — so the
+// relay would have published the word "null" as the record value of a
+// regulatory document. This test pins the round-trip fact so the guard that
+// prevents it cannot be removed as redundant with the marshal error, which it
+// is not: this path raised no error anywhere.
+func TestOutboxEnvelope_NilOpaquePayloadWouldHaveRepublishedTheWordNull(t *testing.T) {
+	t.Parallel()
+
+	var decoded Event
+	if err := json.Unmarshal([]byte(`{"DataContentType":"application/xml","Payload":null}`), &decoded); err != nil {
+		t.Fatalf("Unmarshal err = %v", err)
+	}
+
+	if !bytes.Equal(decoded.Payload, []byte("null")) {
+		t.Fatalf("decoded payload = %q; want the literal null this guard exists to prevent republishing", decoded.Payload)
 	}
 }
