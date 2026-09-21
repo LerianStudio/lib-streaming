@@ -55,6 +55,7 @@ var (
 	ErrEmitterClosed                      = contract.ErrEmitterClosed
 	ErrEventDisabled                      = contract.ErrEventDisabled
 	ErrPayloadTooLarge                    = contract.ErrPayloadTooLarge
+	ErrEmptyPayload                       = contract.ErrEmptyPayload
 	ErrNotJSON                            = contract.ErrNotJSON
 	ErrInvalidCompression                 = contract.ErrInvalidCompression
 	ErrInvalidAcks                        = contract.ErrInvalidAcks

@@ -379,7 +379,7 @@
 //     ErrMissingResourceType, ErrMissingEventType,
 //     ErrInvalid{TenantID,ResourceType,EventType,Source,Subject,EventID,
 //     SchemaVersion,DataContentType,DataSchema}, ErrPayloadTooLarge,
-//     ErrNotJSON, ErrEventDisabled, ErrInvalidEventDefinition,
+//     ErrEmptyPayload, ErrNotJSON, ErrEventDisabled, ErrInvalidEventDefinition,
 //     ErrInvalidOutboxEnvelope, ErrInvalidTraceCarrier,
 //     ErrDuplicateEventDefinition,
 //     ErrUnknownEventDefinition, ErrInvalidDeliveryPolicy,

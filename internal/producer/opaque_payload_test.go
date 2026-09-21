@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/LerianStudio/lib-observability/v4/log"
+
+	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
 )
 
 // xmlPayload is a minimal ISO-8859-1 XML document that is deliberately NOT
@@ -163,8 +165,8 @@ func TestIsJSONContentType(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			if got := isJSONContentType(tt.ct); got != tt.want {
-				t.Fatalf("isJSONContentType(%q) = %v; want %v", tt.ct, got, tt.want)
+			if got := contract.IsJSONContentType(tt.ct); got != tt.want {
+				t.Fatalf("contract.IsJSONContentType(%q) = %v; want %v", tt.ct, got, tt.want)
 			}
 		})
 	}

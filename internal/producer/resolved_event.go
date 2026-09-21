@@ -50,7 +50,7 @@ func (p *Producer) resolveEventWithPolicy(request EmitRequest, rejectDisabled bo
 	// content type (e.g. application/xml for an ISO-8859-1 SFN message) ships
 	// its payload as an opaque blob and skips the scan. The size cap already
 	// fired in newEmitRequest, content-type-agnostic.
-	if isJSONContentType(definition.DataContentType) && !json.Valid(request.Payload) {
+	if contract.IsJSONContentType(definition.DataContentType) && !json.Valid(request.Payload) {
 		return resolvedEvent{}, ErrNotJSON
 	}
 

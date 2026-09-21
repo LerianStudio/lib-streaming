@@ -247,6 +247,24 @@ var (
 	// limit. Checked synchronously before any I/O.
 	ErrPayloadTooLarge = errors.New("streaming: payload exceeds max size (1 MiB)")
 
+	// ErrEmptyPayload is returned when Event.Payload carries no bytes. It is
+	// the other end of the ErrPayloadTooLarge length check and is refused for
+	// EVERY content type, JSON and opaque alike, before anything is persisted
+	// or published.
+	//
+	// An event with no body is a caller defect on both paths, and until this
+	// sentinel existed each path failed differently and badly. An empty JSON
+	// payload returned ErrNotJSON — "payload must be valid JSON" is a
+	// misleading diagnosis for a body the caller simply forgot to set. An
+	// empty OPAQUE payload passed validation entirely and then died inside
+	// the outbox envelope marshal with "unexpected end of JSON input", a
+	// message naming neither the field nor the caller. Worse, a NIL opaque
+	// payload passed everything, persisted as the JSON literal null, and
+	// decoded back as the four bytes "null" — so the relay would have
+	// republished the word null as the record value. One named error before
+	// persist closes all three.
+	ErrEmptyPayload = errors.New("streaming: payload must not be empty")
+
 	// ErrNotJSON is returned when Event.Payload fails json.Valid. Prevents
 	// malformed messages from reaching consumers and poisoning DLQ replay.
 	ErrNotJSON = errors.New("streaming: payload must be valid JSON")
@@ -441,6 +459,7 @@ var callerErrorSentinels = []error{
 	ErrMissingResourceType,
 	ErrMissingEventType,
 	ErrPayloadTooLarge,
+	ErrEmptyPayload,
 	ErrNotJSON,
 	ErrEventDisabled,
 	ErrMissingBrokers,
