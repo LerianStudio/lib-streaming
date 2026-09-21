@@ -214,13 +214,21 @@ func outboxRowFromEnvelope(envelope contract.OutboxEnvelope) (*outbox.OutboxEven
 		return nil, err
 	}
 
-	// OutboxEnvelope embeds Event, whose wire shape uses Go-default field
-	// names for CloudEvents attributes.
-	payload, err := json.Marshal(envelope) //nolint:musttag // see comment above
+	// OutboxEnvelope carries Event, whose wire shape uses Go-default field
+	// names for CloudEvents attributes and whose own MarshalJSON decides
+	// between an inline and a base64 opaque payload. musttag does not inspect
+	// a type that implements json.Marshaler, so no suppression is needed here.
+	payload, err := json.Marshal(envelope)
 	if err != nil {
 		return nil, fmt.Errorf("streaming: marshal outbox envelope: %w", err)
 	}
 
+	// ponytail: an OPAQUE payload is base64-encoded inside the envelope (see
+	// contract.Event.MarshalJSON), so this row-level cap bites ~33% earlier
+	// for one — roughly 786 KiB of XML rather than 1 MiB. The cap is the
+	// outbox COLUMN's, not the broker's, so it is correct as written; raise it
+	// only by moving the opaque bytes out of the JSON envelope entirely (a
+	// side table or a bytea column), which is a lib-commons schema change.
 	if len(payload) > maxPayloadBytes {
 		return nil, ErrPayloadTooLarge
 	}

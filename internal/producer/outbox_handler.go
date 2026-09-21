@@ -90,9 +90,10 @@ func (p *Producer) handleOutboxRow(ctx context.Context, row *outbox.OutboxEvent)
 	}
 
 	var envelope contract.OutboxEnvelope
-	// OutboxEnvelope embeds Event, whose wire shape intentionally uses
-	// Go-default field names for CloudEvents attributes.
-	if err := json.Unmarshal(row.Payload, &envelope); err != nil { //nolint:musttag // see comment above
+	// OutboxEnvelope carries Event, whose wire shape intentionally uses
+	// Go-default field names for CloudEvents attributes and whose own
+	// UnmarshalJSON restores an opaque payload from its base64 field.
+	if err := json.Unmarshal(row.Payload, &envelope); err != nil {
 		return fmt.Errorf("streaming: unmarshal outbox envelope row %s: %w", row.ID, err)
 	}
 
