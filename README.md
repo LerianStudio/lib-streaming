@@ -731,10 +731,17 @@ rejected. See [Upgrading from lib-streaming v2](MIGRATION-v4.md#7-upgrading-from
 
 What the classifier still buys you is every OTHER permanently-unpublishable
 row: an unknown envelope version (neither 1 nor 2 — corruption, or a row from
-a future major), a malformed envelope, a payload that is not JSON. Those can
-never succeed, so they should land in INVALID immediately — alertable,
-countable, replayable after a rewrite — rather than cycling through retries for
-hours.
+a future major), a malformed envelope, or an event that fails replay preflight
+— an empty or oversized payload, a payload that fails `json.Valid` under a
+JSON content type (a declared non-JSON `DataContentType` ships opaque and is
+not scanned), a missing `ResourceType` or `EventType`, a missing or invalid
+`ce-source` for a version-2 row, a system event this producer does not allow,
+or an unsafe header field (a control character or an over-length CloudEvents
+attribute). That holds for version-1 rows too, except the `ce-source` check:
+v2 enforced every one of the other checks, so a version-1 row failing one of
+them is no more publishable than a version-2 row. Those can never succeed, so
+they should land in INVALID immediately — alertable, countable, replayable
+after a rewrite — rather than cycling through retries for hours.
 
 One row shape deliberately does NOT go to INVALID even with the classifier
 wired: a version-1 row whose `ce-source` cannot be re-derived under the current
