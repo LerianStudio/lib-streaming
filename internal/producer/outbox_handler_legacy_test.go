@@ -394,15 +394,18 @@ func handleLegacyRow(t *testing.T, registry *outbox.HandlerRegistry, payload []b
 // A version-1 KAFKA row with such a source never reaches preflight —
 // ResolveDestination refuses it first. A non-Kafka row keeps its persisted
 // destination, so preflight is where its source is checked, and that refusal
-// must be re-cast exactly like the resolution one.
+// must be re-cast exactly like the resolution one. The fixture uses an
+// EventBridge destination because its shape validates locally; an SQS queue
+// URL is DNS-resolved during envelope validation, which would make the test
+// depend on the network before it ever reached preflight.
 func TestOutboxRelay_LegacyRowWithInvalidSourceFailingPreflightStaysRetryable(t *testing.T) {
 	registry := newLegacyRelayRegistry(t)
 
 	payload := legacyEnvelopeJSON(t, "//lerian.midaz/transaction-service", "transaction", "created", newTestUUIDv7(t).String())
 	payload = rewriteLegacyFixture(t, payload,
 		`"destination": {"kind": "kafka", "name": "//lerian.midaz/transaction-service.transaction.created"}`,
-		`"destination": {"kind": "sqs", "address": "https://sqs.us-east-1.amazonaws.com/123/tx"}`)
-	payload = rewriteLegacyFixture(t, payload, `"transport": "kafka"`, `"transport": "sqs"`)
+		`"destination": {"kind": "eventbridge", "name": "lerian-bus"}`)
+	payload = rewriteLegacyFixture(t, payload, `"transport": "kafka"`, `"transport": "eventbridge"`)
 
 	err := handleLegacyRow(t, registry, payload)
 	if err == nil {
