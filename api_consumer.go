@@ -582,7 +582,8 @@ func (b *ConsumerBuilder) Handler(h Handler) *ConsumerBuilder {
 // every non-ce-* header before Handle runs and the forensic x-lerian-dlq-* keys
 // are all of them.
 //
-// Mutually exclusive with Handler, On/OnFrom and Commands — enforced at Build
+// Mutually exclusive with Handler, On/OnFrom, Commands, UnmatchedPolicy, Apps
+// and ExpectSources — enforced at Build
 // with ErrDiscardHandlerAndHandlerBothSet, in either order.
 //
 //	streaming.NewConsumer().
@@ -753,7 +754,15 @@ func (b *ConsumerBuilder) resolveReceiver() (Handler, error) {
 	// unmatchedSet counts too: UnmatchedPolicy decides what the DISPATCHER does
 	// with an unregistered key, and a DLQ reader has no registry to ask, so the
 	// knob would sit inert while an operator believed it was in force.
-	if b.handlerWanted || b.dispatchWanted || len(b.cfg.Commands) > 0 || b.unmatchedSet {
+	//
+	// Apps and ExpectSources fail the same way. Apps subscribes to an app's
+	// fact topic, never a ".dlq", so a reader there would lift the codec-fault
+	// quarantine and the ce-source check on a business stream. ExpectSources
+	// would be validated and then ignored, because a reader never verifies
+	// ce-source. The env allowlist is NOT rejected: a service shares it across
+	// its consumers, and it is inert here by the same exemption.
+	if b.handlerWanted || b.dispatchWanted || len(b.cfg.Commands) > 0 || b.unmatchedSet ||
+		len(b.cfg.Apps) > 0 || len(b.expectSources) > 0 {
 		return nil, consumer.ErrDiscardHandlerAndHandlerBothSet
 	}
 

@@ -455,6 +455,7 @@ func TestTruncatedErrorMessageBytes_DetectsACutMessage(t *testing.T) {
 				streaming.DLQMaxErrorMessageBytes)
 		}
 	})
+
 }
 
 // TestNewConsumer_DiscardHandlerBuilds proves the seam reaches a real runtime,
@@ -540,6 +541,25 @@ func TestNewConsumer_DiscardHandlerIsMutuallyExclusive(t *testing.T) {
 			func() *streaming.ConsumerBuilder {
 				return base().Topics("lerian.streaming.lender.dlq").
 					DiscardHandler(noopDiscardHandler{}).UnmatchedPolicy(streaming.UnmatchedError)
+			},
+		},
+		{
+			// Apps subscribes to lerian.streaming.<app>, an ordinary fact topic,
+			// never a ".dlq". A reader there delivers codec faults and skips the
+			// ce-source check: both library verdicts lifted on a business stream.
+			"DiscardHandler with Apps",
+			func() *streaming.ConsumerBuilder {
+				return base().Apps("gateway").DiscardHandler(noopDiscardHandler{})
+			},
+		},
+		{
+			// A DLQ reader never verifies ce-source (a quarantine copy carries the
+			// original producer's), so an allowlist would be validated and then
+			// ignored while an operator believed it was enforced.
+			"DiscardHandler with ExpectSources",
+			func() *streaming.ConsumerBuilder {
+				return base().Topics("lerian.streaming.lender.dlq").
+					DiscardHandler(noopDiscardHandler{}).ExpectSources("lender")
 			},
 		},
 	}

@@ -495,8 +495,11 @@ nil — so the loop there is latent rather than active, and refusing it would tu
 a library upgrade into a startup outage. The log line names the topic; the fix is
 the same distinct `ce-source`.
 
-`DiscardHandler` is mutually exclusive with `Handler`, `On`/`OnFrom` and
-`Commands`, enforced at `Build` in either order.
+`DiscardHandler` is mutually exclusive with `Handler`, `On`/`OnFrom`,
+`Commands`, `UnmatchedPolicy`, `Apps` and `ExpectSources`, enforced at `Build` in
+either order. `Apps` subscribes to fact topics, never a `.dlq`, and a reader
+never verifies `ce-source`, so an allowlist would be ignored. Name the queue with
+`Topics(...)`.
 
 The origin triple is the stable natural key for deduping a redelivered or
 replayed quarantine; `ce-id` is not, because the replay path can quarantine the
