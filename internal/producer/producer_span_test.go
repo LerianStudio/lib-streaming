@@ -338,10 +338,10 @@ func spanEventNames(s tracetest.SpanStub) []string {
 }
 
 // TestEmit_Span_NilTracerFallback: when WithTracer is omitted, the Producer
-// must fall back to the global tracer provider (otel.Tracer("streaming")).
-// If no global provider is set, otel returns a no-op tracer and spans
-// are silently dropped — this is the correct behaviour for library code
-// and matches the conventions in github.com/LerianStudio/lib-commons/v7/commons/rabbitmq / github.com/LerianStudio/lib-commons/v7/commons/postgres.
+// must fall back to a tracer from the global provider (scope asserted in
+// emit_span_scope_test.go). If no global provider is set, otel returns a
+// no-op tracer and spans are silently dropped — this is the correct
+// behaviour for library code.
 //
 // This test is NOT asserting a span is visible (no global provider set);
 // it's asserting the Producer does not panic and the Emit succeeds.
@@ -358,7 +358,7 @@ func TestEmit_Span_NilTracerFallback(t *testing.T) {
 
 	p := asProducer(t, emitter)
 	if p.tracer == nil {
-		t.Errorf("p.tracer = nil after NewProducer; want fallback to otel.Tracer(%q)", tracerName)
+		t.Error("p.tracer = nil after NewProducer; want fallback to the global provider's tracer")
 	}
 
 	if err := emitter.Emit(context.Background(), sampleRequest()); err != nil {
