@@ -41,6 +41,7 @@ Features:
 
 Improvements:
 - Collapse the broker-dial security options onto one shared assembly (`internal/kafkasec.SecurityKgoOpts`). The producer, the consumer (and its produce-only DLQ client), and the new admin client each carried their own copy of the validate → TLS-1.2-floor → typed-nil-normalize → SASL-requires-TLS sequence; they now call one. No behavior change — one copy means a hardening change or a CVE response lands on every client at once.
+- **The `streaming.emit` span now says which library, and which version of it, produced it.** When the caller does not inject a tracer, the producer built one named `streaming` with no version attached, so a trace could not be attributed to a lib-streaming release and the short name collided with anything else choosing the same word. The default tracer is now scoped to the module path `github.com/LerianStudio/lib-streaming/v4`, carrying the module version linked into the binary — read from the Go build info, honouring a `replace` directive, and falling back to `(devel)` for an untagged build. A tracer supplied through `Tracer(...)` is untouched, and the span name, kind and attributes are unchanged. **A trace query or dashboard filtering on the instrumentation scope name `streaming` must move to the module path.** (@fredcamaral)
 
 Fixes:
 
