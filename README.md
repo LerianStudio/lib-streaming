@@ -734,7 +734,8 @@ rejected. See [Upgrading from lib-streaming v2](MIGRATION-v4.md#7-upgrading-from
 
 What the classifier still buys you is every OTHER permanently-unpublishable
 row: an unknown envelope version (neither 1 nor 2 — corruption, or a row from
-a future major), a malformed envelope, or an event that fails replay preflight
+a future major), a malformed envelope (one that does not decode, or decodes
+but fails validation), or an event that fails replay preflight
 — an empty or oversized payload, a payload that fails `json.Valid` under a
 JSON content type (a declared non-JSON `DataContentType` ships opaque and is
 not scanned), a missing `ResourceType` or `EventType`, a missing or invalid

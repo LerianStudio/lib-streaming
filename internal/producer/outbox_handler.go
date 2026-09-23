@@ -93,8 +93,12 @@ func (p *Producer) handleOutboxRow(ctx context.Context, row *outbox.OutboxEvent)
 	// OutboxEnvelope carries Event, whose wire shape intentionally uses
 	// Go-default field names for CloudEvents attributes and whose own
 	// UnmarshalJSON restores an opaque payload from its base64 field.
+	//
+	// A row that does not decode into an envelope can never be published, so
+	// the failure wraps ErrInvalidOutboxEnvelope (a caller-error sentinel) and
+	// a wired classifier sends it to INVALID instead of retrying it.
 	if err := json.Unmarshal(row.Payload, &envelope); err != nil {
-		return fmt.Errorf("streaming: unmarshal outbox envelope row %s: %w", row.ID, err)
+		return fmt.Errorf("streaming: unmarshal outbox envelope row %s: %w: %w", row.ID, contract.ErrInvalidOutboxEnvelope, err)
 	}
 
 	if err := envelope.Validate(); err != nil {
