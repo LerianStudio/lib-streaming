@@ -14,8 +14,10 @@
 // documented x-lerian-dlq-* set and force every consumer to reconcile two
 // sources of truth.
 //
-// That set is nine hop-scoped keys, on every DLQ message and replaced rather
-// than appended when an entry is quarantined again, plus two payload markers
+// That set is nine hop-scoped keys, replaced rather than appended when an entry
+// is quarantined again: six on every DLQ message, and three (source partition,
+// source offset, cause kind) only on a consumer quarantine, since the producer
+// quarantines before any broker assigns a coordinate. Plus two payload markers,
 // carried across hops and present only when the payload had to be dropped.
 // Counted anywhere else, the number drifts; hopHeaders below is the set.
 //

@@ -434,8 +434,8 @@ but headroom is the actual fix.
 ### Reading a DLQ
 
 A quarantined record is durable but invisible until something drains it. The
-nine forensic `x-lerian-dlq-*` headers every entry carries (eleven keys exist;
-the two payload markers appear only when the payload was dropped) do not survive
+forensic `x-lerian-dlq-*` headers (six on every entry, three more on a consumer
+quarantine, and two payload markers only when the payload was dropped) do not survive
 the CloudEvents codec, so a plain `Handler` cannot see any of them —
 `DiscardHandler` is the seam that can:
 
