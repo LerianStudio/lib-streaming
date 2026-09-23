@@ -42,12 +42,20 @@ const (
 	metricNameDLQFailed                 = "streaming_dlq_publish_failed_total"
 	metricNameOutboxRouted              = "streaming_outbox_routed_total"
 	metricNameOutboxReplayTargetUnknown = "streaming_outbox_replay_target_unknown_total"
+	metricNameOutboxRelayRejected       = "streaming_outbox_relay_rejected_total"
 	metricNameCircuitState              = "streaming_circuit_state"
 	metricNameCBRecoveryLiveness        = "streaming_cb_recovery_liveness"
 	metricTopicUnresolved               = "__unresolved__"
 )
 
-const labelTopic = "topic"
+const (
+	labelTopic = "topic"
+
+	// labelTarget names the operator-controlled target dimension shared by the
+	// outbox relay counters. A constant rather than a repeated literal so the
+	// label name cannot drift between two instruments that dashboards join on.
+	labelTarget = "target"
+)
 
 // streamingMetrics records the streaming instrument set through the
 // caller-supplied obs.MetricsRecorder.

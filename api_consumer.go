@@ -8,6 +8,7 @@ import (
 
 	"github.com/LerianStudio/lib-streaming/v4/obs"
 
+	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/twmb/franz-go/pkg/sasl"
 
 	"go.opentelemetry.io/otel/trace"
@@ -219,7 +220,19 @@ type ConsumerBuilder struct {
 	// silently skipped).
 	envExpectSources []string
 	classifier       Classifier
-	opts             []ConsumerOption
+	// handlerWanted and discardWanted record which of the two whole-stream
+	// modes the caller asked for. Both write b.handler, so reading intent off
+	// that field cannot tell "Handler then DiscardHandler" from either one
+	// alone — and the silent loser of that race is the dangerous case:
+	// DiscardHandler(h).Handler(x) demotes a DLQ reader to a plain handler
+	// while it is still subscribed to a ".dlq" topic.
+	handlerWanted bool
+	discardWanted bool
+	// discard is the caller's DLQ-reader handler. Build wraps it into the
+	// internal dispatch seam, parsing each record's raw headers into a
+	// DiscardRecord on the way.
+	discard DiscardHandler
+	opts    []ConsumerOption
 }
 
 // NewConsumer returns a ConsumerBuilder defaulted to ENABLED — an explicitly
@@ -558,6 +571,58 @@ func (b *ConsumerBuilder) Handler(h Handler) *ConsumerBuilder {
 	}
 
 	b.handler = h
+	b.handlerWanted = !transport.IsNilInterface(h)
+
+	return b
+}
+
+// DiscardHandler wires a reader for a ".dlq" topic. It receives each quarantine
+// entry fully decoded — cause, origin topic/partition/offset, tenant, event
+// type, payload — which a plain Handler cannot see, because the codec drops
+// every non-ce-* header before Handle runs and the forensic x-lerian-dlq-* keys
+// are all of them.
+//
+// Mutually exclusive with Handler, On/OnFrom, Commands, UnmatchedPolicy, Apps
+// and ExpectSources — enforced at Build
+// with ErrDiscardHandlerAndHandlerBothSet, in either order.
+//
+//	streaming.NewConsumer().
+//	    Brokers(brokers...).
+//	    Group("lender-dlq-desk").
+//	    Source("lender-dlq-desk").               // NOT "lender" — see below
+//	    Topics("lerian.streaming.lender.dlq").   // the queue it drains
+//	    DiscardHandler(desk{}).
+//	    Build(ctx)
+//
+// GIVE THE READER ITS OWN ce-source. Source(...) names where THIS consumer
+// quarantines — lerian.streaming.<source>.dlq — so a reader built with
+// Source("lender") draining "lerian.streaming.lender.dlq" would quarantine into
+// the topic it is emptying, and Build refuses it with
+// ErrSubscribedToOwnQuarantineTopic. A distinct source gives the reader its own
+// quarantine topic, which this consumer provisions and owns; draining another
+// application's ".dlq" was never the constraint.
+//
+// Two library-side terminal verdicts are lifted on this path, because a ".dlq"
+// topic's normal content would otherwise be treated as poison: a codec fault
+// delivers the record with a zero envelope and the reason in
+// DiscardRecord.EnvelopeError (an unparseable envelope is what a DLQCauseCodec
+// entry IS), and ce-source verification is skipped (a quarantine copy carries
+// the ORIGINAL producer's ce-source). The error the handler RETURNS is not
+// lifted: it is classified like any other handler error.
+func (b *ConsumerBuilder) DiscardHandler(h DiscardHandler) *ConsumerBuilder {
+	if b == nil {
+		return b
+	}
+
+	if transport.IsNilInterface(h) {
+		// Leave the wiring untouched so Build reports the ordinary
+		// ErrNilHandler, rather than installing a dispatch closure over a nil
+		// handler that would pass every guard and then panic per record.
+		return b
+	}
+
+	b.discard = h
+	b.discardWanted = true
 
 	return b
 }
@@ -634,7 +699,7 @@ func (b *ConsumerBuilder) Build(ctx context.Context) (Consumer, error) {
 	var handler Handler
 
 	if b.cfg.Enabled {
-		resolved, err := b.resolveHandler()
+		resolved, err := b.resolveReceiver()
 		if err != nil {
 			return nil, err
 		}
@@ -649,12 +714,63 @@ func (b *ConsumerBuilder) Build(ctx context.Context) (Consumer, error) {
 		opts = append(opts, consumer.WithClassifier(b.classifier))
 	}
 
+	// Fold the DLQ reader in as the internal dispatch seam. The parse happens
+	// HERE, at the root, because DiscardRecord is a root type; the runtime hands
+	// over raw headers and never names it. Installing the seam through an option
+	// only this method can construct is what makes "this consumer is a DLQ
+	// reader" a property of what was BUILT rather than of what the caller's type
+	// happens to implement.
+	if b.cfg.Enabled && b.discardWanted {
+		discard := b.discard
+
+		opts = append(opts, consumer.WithDiscardDispatch(
+			func(ctx context.Context, headers []kgo.RecordHeader, payload []byte) error {
+				return discard.HandleDiscard(ctx, ParseDiscardRecord(headers, payload))
+			}))
+	}
+
 	// consumer.Build owns the full production wiring: the Enabled kill switch,
 	// cfg.Validate, the franz-go group client (BlockRebalanceOnPoll +
 	// DisableAutoCommit + TLS/SASL via kafkasec), the internal transport-seam DLQ
 	// publisher over the same config (NOT the public Emitter), and the transport
 	// error-source classifier. The handler typed-nil guard lives there too.
 	return consumer.Build(ctx, b.cfg, handler, opts...)
+}
+
+// resolveReceiver settles WHICH of the three whole-stream modes this consumer
+// uses and returns the Handler the runtime needs — nil for a DLQ reader, which
+// reaches the runtime through WithDiscardDispatch instead.
+//
+// The discard branch is checked FIRST and reports its own error, so a caller who
+// wrote DiscardHandler + On is not sent hunting for a Handler(...) call that is
+// not there.
+func (b *ConsumerBuilder) resolveReceiver() (Handler, error) {
+	if !b.discardWanted {
+		return b.resolveHandler()
+	}
+
+	// A DLQ reader is the third answer to "who selects events": it selects
+	// nothing and receives every quarantine entry on the topics it drains.
+	// unmatchedSet counts too: UnmatchedPolicy decides what the DISPATCHER does
+	// with an unregistered key, and a DLQ reader has no registry to ask, so the
+	// knob would sit inert while an operator believed it was in force.
+	//
+	// Apps and ExpectSources fail the same way. Apps subscribes to an app's
+	// fact topic, never a ".dlq", so a reader there would lift the codec-fault
+	// quarantine and the ce-source check on a business stream. ExpectSources
+	// would be validated and then ignored, because a reader never verifies
+	// ce-source. The env allowlist is NOT rejected: a service shares it across
+	// its consumers, and it is inert here by the same exemption.
+	if b.handlerWanted || b.dispatchWanted || len(b.cfg.Commands) > 0 || b.unmatchedSet ||
+		len(b.cfg.Apps) > 0 || len(b.expectSources) > 0 {
+		return nil, consumer.ErrDiscardHandlerAndHandlerBothSet
+	}
+
+	if err := b.resolveExpectedSources(); err != nil {
+		return nil, err
+	}
+
+	return nil, nil //nolint:nilnil // a DLQ reader has no Handler by design; Build installs it as WithDiscardDispatch and New's own gate rejects a consumer with neither
 }
 
 // resolveHandler picks the handler Build hands to the runtime — the

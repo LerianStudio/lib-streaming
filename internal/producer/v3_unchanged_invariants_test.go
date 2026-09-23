@@ -5,7 +5,6 @@ package producer
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"strings"
 	"testing"
 
@@ -48,14 +47,23 @@ func TestUnchanged_OutboxEventTypeIsStableAndDBOnly(t *testing.T) {
 }
 
 // TestChanged_OutboxEnvelopeVersionIsTwo pins the v3 envelope-version bump and
-// the rejection of version-1 rows.
+// what a version-1 row does now.
 //
 // The SHAPE did not change — no field was added, removed, or retyped — but the
 // MEANING of the persisted Destination did: a v2 row holds a per-event topic
-// ("midaz-ledger.transaction.created"), a v3 row holds the app topic. A v3
-// relay draining a v2 row would publish it verbatim to a topic no consumer
-// subscribes to any more: green dashboards, zero delivery. Strict version
-// equality turns that into a loud decode failure instead.
+// ("midaz-ledger.transaction.created"), a v3 row holds the app topic. A relay
+// draining a v2 row VERBATIM would publish to a topic no consumer subscribes
+// to any more: green dashboards, zero delivery.
+//
+// v3 answered that by rejecting the row. That traded silent non-delivery for
+// silent DESTRUCTION — the rejection is a caller error, so the lib-commons
+// dispatcher invalidates the row, and a service upgrading off v2 with rows
+// still PENDING lost them at the deploy boundary. v4 answers it by RE-DERIVING
+// the destination from the persisted Event instead, which neither publishes
+// into the void nor destroys the row.
+//
+// The invariant this test has always really guarded is the last assertion: a
+// version-1 row must never reach the dead per-event topic.
 func TestChanged_OutboxEnvelopeVersionIsTwo(t *testing.T) {
 	t.Parallel()
 
@@ -65,10 +73,26 @@ func TestChanged_OutboxEnvelopeVersionIsTwo(t *testing.T) {
 	}
 
 	v1 := validOutboxEnvelope(t)
-	v1.Version = 1
+	v1.Version = contract.OutboxEnvelopeVersionLegacy
+	v1.Destination.Name = "midaz-ledger.transaction.created" // the v2-era per-event topic
 
-	if err := v1.ValidateShape(); !errors.Is(err, contract.ErrInvalidOutboxEnvelope) {
-		t.Fatalf("ValidateShape() on a version-1 envelope error = %v; want ErrInvalidOutboxEnvelope", err)
+	if err := v1.ValidateShape(); err != nil {
+		t.Fatalf("ValidateShape() on a version-1 envelope error = %v; want nil "+
+			"(v2-era rows are durable data and must be readable, not invalidated)", err)
+	}
+
+	resolved, err := v1.ResolveDestination()
+	if err != nil {
+		t.Fatalf("ResolveDestination() error = %v; want nil", err)
+	}
+
+	if resolved.Name == v1.Destination.Name {
+		t.Fatalf("ResolveDestination() kept the dead per-event topic %q; "+
+			"publishing there is delivery to nobody", resolved.Name)
+	}
+
+	if want := contract.AppTopic(v1.Event.Source); resolved.Name != want {
+		t.Fatalf("ResolveDestination() = %q; want the application topic %q", resolved.Name, want)
 	}
 }
 

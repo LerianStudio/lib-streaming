@@ -247,6 +247,24 @@ var (
 	// limit. Checked synchronously before any I/O.
 	ErrPayloadTooLarge = errors.New("streaming: payload exceeds max size (1 MiB)")
 
+	// ErrEmptyPayload is returned when Event.Payload carries no bytes. It is
+	// the other end of the ErrPayloadTooLarge length check and is refused for
+	// EVERY content type, JSON and opaque alike, before anything is persisted
+	// or published.
+	//
+	// An event with no body is a caller defect on both paths, and until this
+	// sentinel existed each path failed differently and badly. An empty JSON
+	// payload returned ErrNotJSON — "payload must be valid JSON" is a
+	// misleading diagnosis for a body the caller simply forgot to set. An
+	// empty OPAQUE payload passed validation entirely and then died inside
+	// the outbox envelope marshal with "unexpected end of JSON input", a
+	// message naming neither the field nor the caller. Worse, a NIL opaque
+	// payload passed everything, persisted as the JSON literal null, and
+	// decoded back as the four bytes "null" — so the relay would have
+	// republished the word null as the record value. One named error before
+	// persist closes all three.
+	ErrEmptyPayload = errors.New("streaming: payload must not be empty")
+
 	// ErrNotJSON is returned when Event.Payload fails json.Valid. Prevents
 	// malformed messages from reaching consumers and poisoning DLQ replay.
 	ErrNotJSON = errors.New("streaming: payload must be valid JSON")
@@ -331,6 +349,27 @@ var (
 	// operator forgot WithOutboxRepository/WithOutboxWriter). IsCallerError
 	// returns false.
 	ErrOutboxNotConfigured = errors.New("streaming: outbox writer not configured for fallback")
+
+	// ErrLegacyOutboxRowUnroutable is returned when a version-1 outbox row
+	// (written by lib-streaming v2) decodes cleanly but cannot be dispatched
+	// under v4 topology because v4 requires something v2 permitted — in
+	// practice a ce-source that v2's lossy sanitizer would have rewritten and
+	// v4's ValidateSource rejects outright.
+	//
+	// DELIBERATELY NOT A CALLER ERROR, and this is the whole point of the
+	// sentinel. The lib-commons dispatcher sends non-retryable errors STRAIGHT
+	// to INVALID (Dispatcher.handlePublishError). Every natural error for this
+	// condition — ErrInvalidSource, ErrMissingSource, ErrInvalidOutboxEnvelope
+	// — is in callerErrorSentinels, so returning one would burn a durable row
+	// the previous major wrote on the first attempt, with no operator in the
+	// loop. Keeping this retryable preserves the row through its whole retry
+	// budget while the relay logs at ERROR and increments
+	// streaming_outbox_legacy_unroutable_total on every attempt.
+	//
+	// Anything wrapping this sentinel MUST render its cause with %v, never %w:
+	// a %w would splice a caller-error sentinel back into the chain and
+	// silently restore the immediate-INVALID behaviour this exists to prevent.
+	ErrLegacyOutboxRowUnroutable = errors.New("streaming: legacy outbox row cannot be routed under the current topology")
 
 	// ErrOutboxTxUnsupported is returned when an ambient SQL transaction is
 	// present but the configured OutboxWriter does not implement
@@ -420,6 +459,7 @@ var callerErrorSentinels = []error{
 	ErrMissingResourceType,
 	ErrMissingEventType,
 	ErrPayloadTooLarge,
+	ErrEmptyPayload,
 	ErrNotJSON,
 	ErrEventDisabled,
 	ErrMissingBrokers,

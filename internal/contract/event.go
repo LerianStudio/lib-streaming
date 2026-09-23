@@ -2,6 +2,7 @@ package contract
 
 import (
 	"encoding/json"
+	"mime"
 	"strconv"
 	"strings"
 	"time"
@@ -44,8 +45,17 @@ import (
 //   - SystemEvent: when true, emits ce-systemevent: "true", omits ce-tenantid
 //     entirely, and allows an empty TenantID. The PartitionKey becomes
 //     "system:" + EventType.
+//
 //   - Payload: the raw domain payload bytes, sent unchanged as the Kafka
 //     message value. Consumers read metadata from the ce-* headers.
+//
+//     The bytes need not be JSON. DataContentType decides: a JSON content
+//     type (or the empty default) must pass json.Valid at preflight, while
+//     any other declared type — application/xml, text/xml, octet-stream —
+//     makes the payload OPAQUE and it ships verbatim with no scan. The type
+//     is json.RawMessage for the JSON case's convenience, not as a
+//     constraint; see MarshalJSON for how an opaque payload is persisted
+//     inside the JSON outbox envelope without being coerced.
 type Event struct {
 	// TenantID identifies the tenant that owns this event. It is OPTIONAL: an
 	// empty TenantID denotes a single-tenant deployment and is fully valid for
@@ -274,4 +284,119 @@ func parseMajorVersionStrict(v string) (int, bool) {
 	}
 
 	return n, true
+}
+
+// IsJSONContentType reports whether a CloudEvents DataContentType denotes a
+// JSON payload — one that must pass json.Valid on the Emit path and that can
+// be persisted inline inside the outbox envelope. The recognition is
+// media-type aware: parameters are stripped (application/json; charset=utf-8)
+// and the RFC 6839 structured "+json" suffix is honored
+// (application/cloudevents+json, application/hal+json). An empty value means
+// the CloudEvents default (application/json). A non-JSON media type (e.g.
+// application/xml) is OPAQUE: the payload ships verbatim as the record value
+// and never enters a JSON scan.
+//
+// A parse error with no recoverable media type fails CLOSED: an unrecognizable
+// content type re-enters the json.Valid gate rather than silently skipping it.
+// If mime.ParseMediaType recovers the base media type but rejects malformed
+// parameters, classify from that base type so an opaque payload is not
+// incorrectly forced through json.Valid.
+//
+// It lives in the contract package because TWO independent gates read it and
+// must never disagree: the producer's content-type-aware preflight, and
+// Event.MarshalJSON's choice between an inline and an opaque payload. A
+// producer-local copy would let an event pass preflight as opaque and then be
+// persisted as inline JSON, which is the failure this function's single
+// definition prevents.
+func IsJSONContentType(ct string) bool {
+	if ct == "" {
+		return true
+	}
+
+	mt, _, err := mime.ParseMediaType(ct)
+	if err != nil && mt == "" {
+		return true
+	}
+
+	return mt == "application/json" || strings.HasSuffix(mt, "+json")
+}
+
+// eventWire is Event's JSON shape. It is a defined type over Event so it
+// inherits the field set (and the Go-default field names persisted rows
+// already carry — see MIGRATION-v4.md's `payload->'event'->>'Source'` queries)
+// WITHOUT inheriting MarshalJSON/UnmarshalJSON, which would recurse forever.
+type eventWire Event
+
+// eventEnvelope is the marshaled shape: every Event field, plus the opaque
+// side channel. PayloadOpaque is omitted entirely for a JSON payload, so a
+// JSON event's persisted bytes are byte-identical to what previous versions
+// wrote.
+type eventEnvelope struct {
+	eventWire
+
+	// PayloadOpaque carries a non-JSON payload base64-encoded. encoding/json
+	// renders a []byte as a base64 string, which is the ONLY lossless way to
+	// put arbitrary bytes inside a JSON document: a plain JSON string must be
+	// valid UTF-8, and Go's encoder silently replaces invalid UTF-8 with
+	// U+FFFD — an ISO-8859-1 SFN document would come back corrupted with no
+	// error anywhere. The 33% size cost is the price of the JSONB column the
+	// row lands in (lib-commons rejects a non-JSON outbox payload outright:
+	// ErrOutboxEventPayloadNotJSON, "stored as JSONB"), not a choice.
+	PayloadOpaque []byte `json:"PayloadOpaque,omitempty"`
+}
+
+// MarshalJSON renders the event for persistence, carrying a NON-JSON payload
+// in the explicit PayloadOpaque field instead of inline.
+//
+// Payload is json.RawMessage, whose MarshalJSON hands its bytes to the encoder
+// verbatim and then has them VALIDATED as JSON. That is correct for the wire —
+// the Kafka record value is the payload unchanged — but it means an XML
+// payload could not be persisted at all: json.Marshal of the outbox envelope
+// failed with `invalid character '<' looking for beginning of value`, so a
+// service handing an SFN document to the transactional outbox route got a
+// persist-time error while the SAME document emitted directly succeeded.
+//
+// The discriminator is the DECLARED DataContentType, not a json.Valid probe of
+// the bytes. It is the same gate the producer's preflight uses, so an event
+// that passed preflight as opaque is persisted as opaque; and it keeps the
+// JSON hot path free of a second full scan of the payload.
+//
+// A JSON payload marshals exactly as before: inline under "Payload", no
+// "PayloadOpaque" key. Malformed bytes under a JSON content type still fail
+// here, which preserves the existing fail-loud behavior for a caller that
+// bypassed preflight.
+func (e Event) MarshalJSON() ([]byte, error) {
+	envelope := eventEnvelope{eventWire: eventWire(e)}
+
+	if len(e.Payload) > 0 && !IsJSONContentType(e.DataContentType) {
+		envelope.Payload = nil
+		envelope.PayloadOpaque = e.Payload
+	}
+
+	return json.Marshal(envelope)
+}
+
+// UnmarshalJSON is MarshalJSON's exact inverse: a row carrying PayloadOpaque
+// restores those bytes into Payload, so the relay republishes the ORIGINAL
+// bytes and every downstream gate (preflight, the transport adapter, the DLQ
+// writer) sees what the caller emitted.
+//
+// It reads PayloadOpaque whenever the field is present rather than
+// re-deriving the decision from DataContentType. The writer already made that
+// decision and recorded it structurally; re-deciding on read would turn an
+// operator's content-type edit on a persisted row into silent payload loss.
+func (e *Event) UnmarshalJSON(data []byte) error {
+	var envelope eventEnvelope
+
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return err
+	}
+
+	*e = Event(envelope.eventWire)
+
+	if len(envelope.PayloadOpaque) > 0 {
+		e.Payload = envelope.PayloadOpaque
+	}
+
+	return nil
 }

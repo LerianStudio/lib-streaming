@@ -140,7 +140,8 @@ Architectural constraints and design decisions for the `lib-streaming` codebase.
 - DLQ routing applies to every routable failure class except validation and context-canceled errors, and is also gated by the resolved event policy.
 - DLQ topic naming is `<source>.dlq`.
 - DLQ messages preserve the original CloudEvents context and payload.
-- DLQ headers must include exactly the documented `x-lerian-dlq-*` fields: source topic, error class, error message, retry count, first failure timestamp, and producer ID.
+- DLQ headers must include exactly the documented `x-lerian-dlq-*` fields. Six are on every entry: source topic, error class, error message, retry count, first failure timestamp, and producer ID. Three more are on consumer quarantines only: source partition, source offset, and cause kind; a producer-written entry has none of them, because the producer quarantines before any broker assigns a coordinate. Two more are payload markers, present only when the payload was dropped to fit the broker limit: payload-omitted and payload-bytes.
+- Those nine are hop-scoped: they describe one quarantine, so a writer REPLACES them rather than appending, and the route back is a chain walked one hop at a time. The two payload markers are record-scoped and are carried forward across hops; a hop that drops the payload restates its own measurement of what it dropped.
 - DLQ publish failures are logged and counted through `streaming_dlq_publish_failed_total`; they are not returned to the original caller.
 - Production dashboards must alert on any increase in `streaming_dlq_publish_failed_total`; a failed DLQ publish means the forensic copy was not preserved even if the original required-route failure still returned to the caller.
 - Kafka-like routes can derive `<source>.dlq`; non-Kafka routes require an explicit `RouteDefinition.DLQ` when quarantine is mandatory.

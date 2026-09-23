@@ -3,6 +3,7 @@ package dlqheader
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/twmb/franz-go/pkg/kerr"
@@ -51,9 +52,75 @@ func TruncateErrorMessage(msg string) string {
 		return msg
 	}
 
-	marker := fmt.Sprintf("...[truncated, %d bytes total]", len(msg))
+	marker := fmt.Sprintf(truncationMarkerFormat, len(msg))
 
 	return strings.ToValidUTF8(msg[:MaxErrorMessageBytes-len(marker)], "") + marker
+}
+
+// truncationMarkerFormat builds the suffix TruncateErrorMessage appends. Its
+// literal shape is a wire contract in the same way the header keys are: a
+// reader detects truncation by it.
+const truncationMarkerFormat = "...[truncated, %d bytes total]"
+
+// truncationMarkerPrefix is the fixed head of that suffix, the part a reader
+// can search for.
+const truncationMarkerPrefix = "...[truncated, "
+
+// TruncatedErrorMessageBytes reports whether msg is a CUT error message and, if
+// so, how many bytes the original had.
+//
+// It is the half of the truncation contract a READER needs, and the reason it is
+// exported rather than left to the caller: detecting a cut otherwise means
+// hardcoding the marker text, which is exactly the restate-and-drift failure the
+// exported keys exist to stop. The length bound alone does not answer it — the
+// cut output is SHORTER than MaxErrorMessageBytes whenever a split multi-byte
+// rune is dropped, so "len(msg) == MaxErrorMessageBytes" is not a test.
+//
+// Only a COMPLETE canonical suffix with a positive count is a marker. A
+// re-quarantine wraps the previous hop's message, marker included, and
+// appends the current cause after it; that message is whole, not cut.
+func TruncatedErrorMessageBytes(msg string) (int, bool) {
+	_, original, ok := trailingMarker(msg)
+
+	return original, ok
+}
+
+// trailingMarker finds the truncation marker at the END of msg and returns
+// where it starts and the length it claims.
+//
+// It accepts only the exact bytes TruncateErrorMessage writes: a positive
+// decimal count with no sign, no leading zero and no extra spacing, and nothing
+// after the closing bracket. fmt.Sscanf is not used because it stops at the end
+// of its format, ignores what follows and tolerates spacing and signs, so a
+// marker-shaped run in the middle of a message would parse as a real one.
+func trailingMarker(msg string) (start, original int, ok bool) {
+	const suffix = " bytes total]"
+
+	start = strings.LastIndex(msg, truncationMarkerPrefix)
+
+	// The prefix ends and the suffix begins with a space, so they can overlap
+	// ("...[truncated, bytes total]"): check the lengths before slicing.
+	if start < 0 || !strings.HasSuffix(msg, suffix) || start+len(truncationMarkerPrefix) > len(msg)-len(suffix) {
+		return 0, 0, false
+	}
+
+	digits := msg[start+len(truncationMarkerPrefix) : len(msg)-len(suffix)]
+	if digits == "" || digits[0] == '0' {
+		return 0, 0, false
+	}
+
+	for _, c := range digits {
+		if c < '0' || c > '9' {
+			return 0, 0, false
+		}
+	}
+
+	original, err := strconv.Atoi(digits)
+	if err != nil {
+		return 0, 0, false
+	}
+
+	return start, original, true
 }
 
 // IsSizeError reports whether err is a transport's "this record is too large"
@@ -72,4 +139,66 @@ func IsSizeError(err error) bool {
 	}
 
 	return errors.Is(err, kerr.MessageTooLarge) || errors.Is(err, contract.ErrPayloadTooLarge)
+}
+
+// ReboundSanitizedErrorMessage re-applies the byte budget to an error message a
+// READER grew while sanitizing it.
+//
+// The bound is a promise the reader inherits, not one the writer alone keeps:
+// both DLQHeaderErrorMessage and DiscardRecord.ErrorMessage are documented as
+// bounded at MaxErrorMessageBytes. That held transitively while the parser was
+// a pass-through of a value TruncateErrorMessage had already cut. Sanitizing
+// broke it — replacing a byte with U+FFFD costs two more — so a message the
+// writer cut to exactly the bound arrives over it, and the documented limit
+// stops being a limit for every reader sizing a column or a log field by it.
+//
+// originalBytes is the length of the value AS IT ARRIVED, before sanitizing. It
+// is used only when a fresh marker has to be stamped.
+//
+// This also bounds a message that never touched the sanitizer. A foreign writer
+// that ignores MaxErrorMessageBytes and puts 10 KiB on the wire used to reach
+// the consumer at 10 KiB, because the parser passed the header through; it now
+// arrives cut to the bound and marked as truncated, like any other cut message.
+// That is the documented contract finally being true for every input rather
+// than only for values this library wrote, but it IS a change for any consumer
+// that had come to rely on the promise being unenforced.
+//
+// A marker the WRITER stamped is KEPT, never recomputed from what arrived. It
+// carries how long the error was before the writer cut it — 14 KiB, say — and
+// restamping it with the length of the 4 KiB header would replace the one
+// number that says how much was lost with a number that says nothing. It is
+// rebuilt from the parsed value rather than sliced out of the input, so a
+// foreign writer cannot hand us a "marker" longer than the budget itself.
+func ReboundSanitizedErrorMessage(sanitized string, originalBytes int) string {
+	if len(sanitized) <= MaxErrorMessageBytes {
+		return sanitized
+	}
+
+	body := sanitized
+	marker := fmt.Sprintf(truncationMarkerFormat, originalBytes)
+
+	// A marker is adopted ONLY as the complete canonical suffix with a positive
+	// length (see trailingMarker). A marker-shaped run in the MIDDLE is not one:
+	// on the re-quarantine path, where a consumer wraps the previous hop's
+	// ErrorMessage into a new error, what follows the embedded marker is the
+	// CURRENT cause, and adopting the inner marker would throw it away. Measured
+	// before this guard: a 6509-byte message came back 4096 bytes long with its
+	// tail gone, claiming an original length of 7 that belonged to an inner hop.
+	//
+	// A non-positive count is not a length either. Re-stamping one would put
+	// "...[truncated, -5 bytes total]" in front of a consumer as THIS library's
+	// own claim about the message, which is worse than the forged header it
+	// came from.
+	if start, original, ok := trailingMarker(sanitized); ok {
+		body, marker = sanitized[:start], fmt.Sprintf(truncationMarkerFormat, original)
+	}
+
+	// The same cut TruncateErrorMessage makes: a split multi-byte rune is
+	// DROPPED rather than emitted as a replacement, so the writer's cut and this
+	// one cannot disagree about what a cut message looks like.
+	if cut := MaxErrorMessageBytes - len(marker); len(body) > cut {
+		body = strings.ToValidUTF8(body[:cut], "")
+	}
+
+	return body + marker
 }

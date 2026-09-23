@@ -379,7 +379,7 @@
 //     ErrMissingResourceType, ErrMissingEventType,
 //     ErrInvalid{TenantID,ResourceType,EventType,Source,Subject,EventID,
 //     SchemaVersion,DataContentType,DataSchema}, ErrPayloadTooLarge,
-//     ErrNotJSON, ErrEventDisabled, ErrInvalidEventDefinition,
+//     ErrEmptyPayload, ErrNotJSON, ErrEventDisabled, ErrInvalidEventDefinition,
 //     ErrInvalidOutboxEnvelope, ErrInvalidTraceCarrier,
 //     ErrDuplicateEventDefinition,
 //     ErrUnknownEventDefinition, ErrInvalidDeliveryPolicy,
@@ -400,7 +400,8 @@
 //     ErrHandlerAndDispatchBothSet, ErrHandlerAndUnmatchedPolicyBothSet,
 //     ErrBareOnWithMultipleApps, ErrUnknownDispatchApp,
 //     ErrAmbiguousSourceVerification, ErrExpectSourcesMissingApp,
-//     ErrInvalidExpectSource, ErrHandlerAndCommandsBothSet.
+//     ErrInvalidExpectSource, ErrHandlerAndCommandsBothSet,
+//     ErrDiscardHandlerAndHandlerBothSet, ErrSubscribedToOwnQuarantineTopic.
 //
 //     The producer and the consumer define DIFFERENT error values for the
 //     same class of mistake, so each is named for its own side. A single bare

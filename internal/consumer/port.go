@@ -3,7 +3,6 @@ package consumer
 import (
 	"context"
 	"fmt"
-	"slices"
 	"strconv"
 	"time"
 
@@ -41,6 +40,38 @@ import (
 type Handler interface {
 	Handle(ctx context.Context, event contract.Event, payload []byte) error
 }
+
+// DiscardDispatch is the seam a DLQ reader receives records through, instead of
+// Handler. It is handed the record's RAW headers, because the nine forensic
+// x-lerian-dlq-* keys do not survive the CloudEvents codec and the whole point
+// of a DLQ reader is to read them; the root facade parses them into the public
+// streaming.DiscardRecord before calling the service's handler.
+//
+// It is a func, not an interface, on purpose. An interface would arm the
+// discard path from a handler's METHOD SET — so any business handler that
+// happened to carry a HandleDiscard method, wired with Handler(...) on an
+// ordinary topic, would silently take this path and stop quarantining its
+// poison records. A func can only be installed by WithDiscardDispatch, which
+// only the root builder's DiscardHandler(...) calls, so the arming is a
+// property of what the caller BUILT, never of what their type happens to
+// implement.
+//
+// Two guards come with it, and both exist because a DLQ reader drains a topic
+// that quarantining would write back into:
+//
+//   - A codec fault is NOT terminal here. A ".dlq" topic legitimately holds
+//     records whose own CloudEvents envelope does not parse — that is precisely
+//     what a "codec" cause-kind entry IS, and the quarantine copy is
+//     header-verbatim — so the record is delivered with a zero envelope and the
+//     parse failure reported on the discard record.
+//   - ce-source verification is skipped. A quarantine copy carries the ORIGINAL
+//     producer's ce-source, never the reader's own application, so the gate
+//     would quarantine 100% of a healthy DLQ.
+//
+// What is NOT lifted: the error this seam returns is classified like any other
+// handler error. The loop that would create is closed at construction instead —
+// New refuses any consumer subscribed to its own quarantine destination.
+type DiscardDispatch func(ctx context.Context, headers []kgo.RecordHeader, payload []byte) error
 
 // Classifier is an OPTIONAL service-supplied hook that RECLASSIFIES a known
 // HANDLER-return error as transient (retryable), flipping it off the fail-closed
@@ -199,7 +230,21 @@ func (p *transportDLQPublisher) PublishDLQ(ctx context.Context, rec *kgo.Record,
 	// is fail-closed, and fail-closed on a record that can NEVER be quarantined
 	// is a partition wedged forever — under one topic per app, the producing
 	// application's whole catalog stuck behind one record.
-	slim := append(slices.Clone(headers),
+	// Drop any markers carried forward before stamping this hop's, so the record
+	// still holds exactly one of each. Overwriting is the right semantics: both
+	// values say "the payload is not the original", and this hop's byte count is
+	// the one measured against the payload actually dropped here.
+	slim := make([]transport.Header, 0, len(headers)+2)
+
+	for _, h := range headers {
+		if h.Key == dlqheader.PayloadOmitted || h.Key == dlqheader.PayloadBytes {
+			continue
+		}
+
+		slim = append(slim, h)
+	}
+
+	slim = append(slim,
 		transport.Header{Key: dlqheader.PayloadOmitted, Value: []byte("true")},
 		transport.Header{Key: dlqheader.PayloadBytes, Value: []byte(strconv.Itoa(len(rec.Value)))},
 	)
@@ -231,8 +276,31 @@ func (p *transportDLQPublisher) forensicHeaders(rec *kgo.Record, cause error, ca
 		causeMessage = dlqheader.TruncateErrorMessage(contract.SanitizeBrokerURL(cause.Error()))
 	}
 
+	// Copy the original headers, MINUS any HOP-SCOPED forensic set the record
+	// already carries. A record being quarantined may already be a quarantine
+	// copy — a DLQ reader whose handler returns terminal re-quarantines one —
+	// and appending a second set would leave two values for each of the nine
+	// keys: a reader cannot tell which quarantine each describes, and the block
+	// grows by nine keys per hop on a record already strictly larger than its
+	// source.
+	//
+	// Stripping keeps exactly one of each, always describing THIS quarantine.
+	// The earlier coordinates are not lost: they stay on the entry this one
+	// points at, so the route back is a linked list walked one hop at a time.
+	//
+	// Two things are deliberately NOT stripped. The ce-* envelope is the EVENT's
+	// identity, not this quarantine's forensics. And the payload markers
+	// describe the PAYLOAD rather than a hop — "what you see is not the
+	// original, and the original was N bytes" — which stays true at every later
+	// hop; dropping them would let a re-quarantined slim entry claim a genuinely
+	// empty payload and lose the only surviving record of the original size.
 	headers := make([]transport.Header, 0, len(rec.Headers)+9)
+
 	for _, h := range rec.Headers {
+		if dlqheader.IsHopHeader(h.Key) {
+			continue
+		}
+
 		headers = append(headers, transport.Header{Key: h.Key, Value: h.Value})
 	}
 

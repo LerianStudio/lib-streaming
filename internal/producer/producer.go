@@ -16,12 +16,13 @@ import (
 	"github.com/LerianStudio/lib-commons/v7/commons"
 	"github.com/LerianStudio/lib-commons/v7/commons/circuitbreaker"
 	"github.com/LerianStudio/lib-observability/v4/log"
+	"github.com/LerianStudio/lib-streaming/v4/internal/buildmeta"
 	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
 )
 
-// tracerName + emitSpanName live in emit_span.go (colocated with the
-// attribute-builder setEmitSpanAttributes) so the OTEL-naming contract is
-// a single-file read.
+// emitSpanName lives in emit_span.go (colocated with the attribute-builder
+// setEmitSpanAttributes) so the OTEL-naming contract is a single-file read.
+// The instrumentation scope of the default tracer comes from internal/buildmeta.
 
 // Circuit-breaker-related constants (flagCB*, cbServiceNamePrefix) and the
 // initCircuitBreaker / buildCBConfig helpers live in cb_init.go. Keeping them
@@ -68,8 +69,9 @@ type Producer struct {
 	tenantCBKeys sync.Map // circuitbreaker.TenantBreakerKey -> struct{}
 
 	// tracer is the OTEL tracer used for the streaming.emit span. Never
-	// nil after NewProducer — falls back to otel.Tracer("streaming") when
-	// the caller did not supply WithTracer.
+	// nil after NewProducer — falls back to a tracer from the global provider
+	// scoped to this library's module path and version when the caller did
+	// not supply WithTracer.
 	tracer trace.Tracer
 
 	// logger is the structured logger. Never nil; New substitutes
@@ -321,8 +323,10 @@ func resolveCloseTimeout(optionTimeout, configTimeout time.Duration) time.Durati
 	return 30 * time.Second
 }
 
-// resolveTracer returns the supplied tracer or falls back to the global
-// "streaming" tracer. A nil supplied tracer means the caller did not invoke
+// resolveTracer returns the supplied tracer or falls back to a tracer from the
+// global provider, scoped to lib-streaming's module path and the version of it
+// linked into the binary — so a span says which library, and which version of
+// it, emitted it. A nil supplied tracer means the caller did not invoke
 // WithTracer; otel.Tracer returns a no-op tracer when no provider is set,
 // which is cheap and correct under that backend.
 func resolveTracer(supplied trace.Tracer) trace.Tracer {
@@ -330,7 +334,9 @@ func resolveTracer(supplied trace.Tracer) trace.Tracer {
 		return supplied
 	}
 
-	return otel.Tracer(tracerName)
+	name, version := buildmeta.Scope()
+
+	return otel.Tracer(name, trace.WithInstrumentationVersion(version))
 }
 
 // generateProducerID returns a UUIDv7 string when available, falling back to

@@ -218,3 +218,309 @@ whole v4 migration: the renamed metrics entry points
 each call site, and a consumer that implements its own logger has to widen the
 `Log` and `Enabled` signatures. See sections 3 and "If you implement a
 logger".
+
+---
+
+## 7. Upgrading from lib-streaming v2: outbox rows
+
+**v4 reads v2-era outbox rows. No drain is required before upgrading.**
+
+This section replaces the instruction in the v3.0.0 changelog entry to "drain
+the streaming outbox to empty on the v2 build before deploying v3". That
+instruction was the only thing standing between a leftover row and permanent
+loss, it was easy to miss, and it was impossible to satisfy on a service whose
+outbox was accumulating precisely because the broker was down.
+
+### Get the majors right first
+
+The envelope version and the library major are not the same number, and the
+mismatch is the usual source of confusion here:
+
+| lib-streaming major | `OutboxEnvelopeVersion` it WRITES |
+| --- | --- |
+| v2.x | 1 |
+| v3.x | 2 |
+| v4.x | 2 |
+
+So:
+
+- **v3 → v4 needs nothing.** A v3 build already writes version-2 rows and a v4
+  relay has always read them. If events went missing across a v3 → v4 deploy,
+  the envelope version is not the cause and the real cause is still open.
+- **v2 → v3 or v2 → v4 is the exposed path.** Those are the version-1 rows.
+
+### What used to happen, and what happens now
+
+A version-1 row was refused at the version gate with
+`ErrInvalidOutboxEnvelope`. That sentinel is caller-correctable, so a service
+wiring the documented `WithRetryClassifier(streaming.IsCallerError)` had the
+row marked `INVALID` on its first attempt; a service wiring no classifier had
+it walk ~10 attempts to `INVALID` anyway. Either way the business event was
+never delivered, and nothing in the storage layer recorded why.
+
+Now the relay reads the row and recomputes its destination. v2 persisted a
+per-event topic (`midaz-ledger.transaction.created`); v3 collapsed delivery to
+one topic per producing application (`lerian.streaming.midaz-ledger`). The
+relay derives the current topic from the row's own `Event.Source` using
+`AppTopic` — the same helper the live Emit path uses — so the drained event
+lands exactly where current consumers subscribe. Payload, CloudEvents
+attributes and partition key are unchanged. Non-Kafka destinations (SQS,
+RabbitMQ, EventBridge) are used as persisted; only Kafka topic naming changed.
+
+Only destinations v2 **derived** are rewritten. v2 synthesized one route per
+catalog definition pointing at `EventDefinition.Topic(source)`, but
+`MergeRouteOverrides` let a service aim a Kafka route anywhere it liked. A row
+whose destination is not the v2-derived name was an explicit operator choice
+that v3 never invalidated, so it is left exactly as persisted — moving it would
+silently redirect a stream you still run a consumer on.
+
+### The one row that still needs you
+
+v2 folded `ce-source` through a lossy sanitizer. v3 deleted it and rejects a
+malformed source outright, so a v2-era source like
+`//lerian.midaz/transaction-service` has no derivable topic today.
+
+Such a row is **not** invalidated. It fails with
+`ErrLegacyOutboxRowUnroutable`, which is deliberately not a caller error, so it
+keeps its retry budget while every attempt emits an ERROR log naming the row id
+and increments
+`streaming_outbox_relay_rejected_total{reason="legacy_unroutable"}`.
+
+It is not immortal: lib-commons promotes `FAILED` to `INVALID` once attempts
+reach `MaxDispatchAttempts` (default 10). No handler can refuse that, and
+returning success to dodge it would mark the row `PUBLISHED` and lose it for
+real. What you get is the whole budget with a loud, reason-bearing signal on
+every attempt — and an `INVALID` row is a terminal STATUS on a RETAINED row, so
+it is still there to be rewritten and replayed.
+
+Fix it by rewriting the row's source to a legal one
+(`^[a-z0-9][a-z0-9_-]*$`, no dots) and resetting it to `PENDING`.
+
+### Read this before you deploy: old rows start publishing immediately
+
+**Version-1 rows sitting in `PENDING` or `FAILED` begin draining onto the live
+application topic the moment the new binary rolls.** There is no opt-in, no
+feature flag, and no age ceiling. A row written months ago publishes as soon as
+the relay reaches it, and it arrives *after* newer events for the same tenant,
+because the outbox dispatcher retries per row and does not serialize per
+aggregate.
+
+That is the intended behaviour — those events were accepted from a caller and
+never delivered, so delivering them is the whole point — but it is a change in
+what your consumers see on upgrade day, and consumers that assume rough
+recency need checking first.
+
+Inventory what will drain, **before** you deploy:
+
+```sql
+SELECT
+    status,
+    count(*)        AS candidate_rows,
+    min(created_at) AS oldest,
+    max(created_at) AS newest
+FROM outbox_events
+WHERE event_type = 'lerian.streaming.publish'
+  AND status IN ('PENDING', 'FAILED')
+  AND payload->>'version' = '1'
+GROUP BY status;
+```
+
+If `oldest` is far behind now, confirm the consumers of that application
+tolerate a burst of stale events before rolling. If they do not, hold the
+deploy and drain or discard those rows deliberately — that is a decision to
+take with eyes open, which is exactly what the old silent-INVALID behaviour
+denied you.
+
+### Operator queries
+
+Run these against each tenant database. Substitute your table name if it is not
+`outbox_events`.
+
+Count the rows earlier v3/v4 deploys already invalidated, and how many are
+recoverable version-1 rows:
+
+```sql
+SELECT
+    status,
+    payload->>'version'                         AS envelope_version,
+    count(*)                                    AS rows,
+    min(created_at)                             AS oldest,
+    max(created_at)                             AS newest
+FROM outbox_events
+WHERE event_type = 'lerian.streaming.publish'
+GROUP BY status, envelope_version
+ORDER BY status, envelope_version;
+```
+
+Anything in the `INVALID` / version `1` cell is a business event this release
+can now deliver. Inspect a sample before acting:
+
+```sql
+SELECT id, attempts, last_error,
+       payload->'event'->>'TenantID'     AS tenant_id,
+       payload->'event'->>'Source'       AS ce_source,
+       payload->'event'->>'ResourceType' AS resource_type,
+       payload->'event'->>'EventType'    AS event_type,
+       payload->'destination'->>'name'   AS persisted_topic
+FROM outbox_events
+WHERE event_type = 'lerian.streaming.publish'
+  AND status = 'INVALID'
+  AND payload->>'version' = '1'
+ORDER BY created_at
+LIMIT 50;
+```
+
+Tenant identity is read out of the payload rather than a `tenant_id` column
+on purpose. lib-commons ships two outbox schemas and only the column-per-tenant
+variant has that column; the base schema
+(`commons/outbox/postgres/migrations/000001_outbox_events_schema.up.sql`) is
+id, event_type, aggregate_id, payload, status, attempts, published_at,
+last_error, created_at, updated_at — so a query naming `tenant_id` fails with
+`column "tenant_id" does not exist` on exactly the deployment these
+instructions assume. `Event.TenantID` is inside the envelope on both, which is
+also why the relay can republish a row whichever pool it was read from.
+
+Requeue them once the v4 build is live. Restrict this to rows whose `ce_source`
+matches `^[a-z0-9][a-z0-9_-]*$`; anything else needs its source rewritten first
+or it will simply exhaust its budget again:
+
+```sql
+UPDATE outbox_events
+SET status     = 'PENDING'::outbox_event_status,
+    attempts   = 0,
+    last_error = NULL,
+    updated_at = now()
+WHERE event_type = 'lerian.streaming.publish'
+  AND status = 'INVALID'
+  AND payload->>'version' = '1'
+  AND payload->'event'->>'Source' ~ '^[a-z0-9][a-z0-9_-]*$';
+```
+
+**This is a candidate set, not a guarantee.** The filter checks the envelope
+version and the shape of the source, which are the two things that decide
+whether a row can be re-derived. It does not re-run the relay's full envelope
+validation — route key, target, transport, destination kind, aggregate id,
+policy, trace carrier and event fields are all still checked at drain time, and
+a row can fail any of them. Such a row does not publish and is not lost: it is
+refused, counted on `streaming_outbox_relay_rejected_total`, and named in an
+ERROR log with its row id, so the alert below is what tells you the requeue did
+not fully land. Requeue in batches and watch that counter rather than assuming
+every updated row drains.
+
+**Check the persisted destination before you requeue.** The filter above does
+not look at it, and it is the one field that decides whether a row is re-derived
+at all. A version-1 Kafka row is rewritten onto the application topic only when
+its stored destination still equals the name v2 derived from the same event
+fields; anything else is read as an explicit route override and is published to
+that exact stored name, unchanged. That is deliberate — a service that aimed a
+route somewhere on purpose keeps it — but it means an override pointing at a
+per-event topic nobody consumes any more will publish **successfully**, be
+acknowledged, and mark the row `PUBLISHED`. It is the only outcome in this
+workflow that is silent: it raises no rejection, so it appears on neither the
+counter nor the alert below. Group the candidates by destination first and
+decide, per distinct name, whether it is a derived route (leave it; the relay
+repairs it) or an override (repair the destination if the row should follow the
+derived route, or leave the row out of the requeue entirely):
+
+```sql
+SELECT
+    payload->'destination'->>'name'   AS persisted_destination,
+    payload->'event'->>'Source'       AS source,
+    payload->'event'->>'ResourceType' AS resource_type,
+    payload->'event'->>'EventType'    AS event_type,
+    count(*)                          AS candidate_rows
+FROM outbox_events
+WHERE event_type = 'lerian.streaming.publish'
+  AND status = 'INVALID'
+  AND payload->>'version' = '1'
+  AND payload->'destination'->>'kind' = 'kafka'
+GROUP BY 1, 2, 3, 4
+ORDER BY candidate_rows DESC;
+```
+
+A `persisted_destination` of `<source>.<resource_type>.<event_type>` — optionally
+suffixed `.v<major>`, and with the source lowercased and its punctuation folded
+to `-` the way v2 wrote it — is a derived route that the relay will rewrite. A
+name in any other shape is an override. Note the case asymmetry in the JSON
+paths above: the envelope's own fields are snake_case, but everything under
+`event` is serialised with Go field names, so it is `'Source'`, not `'source'`.
+
+Then watch the drain, and alert on the rows that still cannot move:
+
+```promql
+# Version-1 rows that cannot be re-derived. Each one needs its source
+# rewritten by hand; they retry meanwhile and are never dropped.
+increase(streaming_outbox_relay_rejected_total{reason="legacy_unroutable"}[15m]) > 0
+
+# A separate condition with a separate cause: an envelope version this build
+# cannot read at all. That is corruption or a row from a newer major, and the
+# row is bound for INVALID.
+increase(streaming_outbox_relay_rejected_total{reason="version_unsupported"}[15m]) > 0
+```
+
+## 8. Opaque (non-JSON) payloads on the outbox route
+
+Nothing here is required to upgrade. Read it if your service emits a payload
+that is not JSON — an SFN XML document, a fixed-width regulatory file, any
+`application/octet-stream` blob — through the outbox route.
+
+### What changed
+
+An `EventDefinition` declaring a non-JSON `DataContentType` has always shipped
+its payload verbatim as the Kafka record value, skipping the `json.Valid` gate.
+That was true on the direct path only. The same event could not be persisted to
+the outbox at all: `json.Marshal` of the envelope failed with
+`invalid character '<' looking for beginning of value`, because
+`Event.Payload` is a `json.RawMessage` and the encoder validates one on the way
+out. Persisting now works, the relay republishes the original bytes, and a
+consumer built with this library hands its handler those bytes and the declared
+content type untouched.
+
+There is no new option, constructor or flag. Declaring the content type is the
+whole API:
+
+```go
+catalog, _ := streaming.NewCatalog(streaming.EventDefinition{
+    Key:             "documento.enviado",
+    ResourceType:    "documento",
+    EventType:       "enviado",
+    DataContentType: "text/xml; charset=ISO-8859-1", // <- this is the switch
+})
+```
+
+### What an operator sees in the outbox table
+
+A JSON payload is persisted exactly as before — inline under `Payload` — so
+every query in section 7 is unaffected. An OPAQUE payload is persisted
+base64-encoded under a sibling key, and `Payload` is `null`:
+
+```json
+{ "event": { "DataContentType": "application/xml",
+             "Payload": null,
+             "PayloadOpaque": "PD94bWwgdmVyc2lvbj0iMS4wIj8+..." } }
+```
+
+base64 is not a preference. The outbox row lands in a JSONB column (lib-commons
+rejects anything else with `ErrOutboxEventPayloadNotJSON`), a JSON string must
+be valid UTF-8, and Go's encoder replaces invalid UTF-8 with U+FFFD **without
+returning an error** — so an ISO-8859-1 document written as a JSON string would
+come back silently corrupted. To read one back at the console:
+
+```sql
+SELECT convert_from(
+         decode(payload->'event'->>'PayloadOpaque', 'base64'),
+         'LATIN1')                       AS document,
+       payload->'event'->>'DataContentType' AS content_type
+FROM outbox_events
+WHERE event_type = 'lerian.streaming.publish'
+  AND payload->'event' ? 'PayloadOpaque';
+```
+
+### One sizing consequence
+
+The envelope's 1 MiB cap applies to the row AFTER base64, so an opaque payload
+runs out of room about 33% earlier than a JSON one — roughly 786 KiB of XML.
+That is the outbox column's limit, not the broker's; the 1 MiB Kafka record cap
+is unchanged and applies to the verbatim bytes. A payload between those two
+figures emits fine directly and is refused by the outbox with
+`ErrPayloadTooLarge`.

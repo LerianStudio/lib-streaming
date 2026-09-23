@@ -55,6 +55,7 @@ var (
 	ErrEmitterClosed                      = contract.ErrEmitterClosed
 	ErrEventDisabled                      = contract.ErrEventDisabled
 	ErrPayloadTooLarge                    = contract.ErrPayloadTooLarge
+	ErrEmptyPayload                       = contract.ErrEmptyPayload
 	ErrNotJSON                            = contract.ErrNotJSON
 	ErrInvalidCompression                 = contract.ErrInvalidCompression
 	ErrInvalidAcks                        = contract.ErrInvalidAcks
@@ -67,6 +68,7 @@ var (
 	ErrOutboxNotConfigured                = contract.ErrOutboxNotConfigured
 	ErrOutboxTxUnsupported                = contract.ErrOutboxTxUnsupported
 	ErrNilOutboxRegistry                  = contract.ErrNilOutboxRegistry
+	ErrLegacyOutboxRowUnroutable          = contract.ErrLegacyOutboxRowUnroutable
 	ErrMissingRequiredHeader              = cloudevents.ErrMissingRequiredHeader
 	ErrUnsupportedSpecVersion             = cloudevents.ErrUnsupportedSpecVersion
 )
@@ -135,6 +137,22 @@ var (
 	// ErrInvalidExpectSource is returned by ConsumerBuilder.Build when an
 	// ExpectSources(...) entry is not a legal ce-source.
 	ErrInvalidExpectSource = consumer.ErrInvalidExpectSource
+	// ErrDiscardHandlerAndHandlerBothSet is returned by ConsumerBuilder.Build
+	// when DiscardHandler is combined with Handler, On/OnFrom, Commands,
+	// UnmatchedPolicy, Apps or ExpectSources. A DLQ reader is a third answer to "who selects events" —
+	// it selects nothing and receives every quarantine entry on the topics it
+	// drains — so preferring one silently would drop the other's handlers
+	// without a word, and UnmatchedPolicy, which decides what the DISPATCHER
+	// does with an unregistered key, would sit inert with no registry to act on.
+	// Apps would subscribe the reader to fact topics, never a ".dlq", and
+	// ExpectSources would be ignored because a reader never verifies ce-source.
+	ErrDiscardHandlerAndHandlerBothSet = consumer.ErrDiscardHandlerAndHandlerBothSet
+	// ErrSubscribedToOwnQuarantineTopic is returned by ConsumerBuilder.Build
+	// when a DISCARD reader subscribes to lerian.streaming.<Source>.dlq — the
+	// topic it quarantines into. Give the reader its own ce-source, whose
+	// ".dlq" it then owns and provisions. A plain Handler on the same shape is
+	// warned about rather than refused, because the released library accepts it.
+	ErrSubscribedToOwnQuarantineTopic = consumer.ErrSubscribedToOwnQuarantineTopic
 	// ErrConsumerPartitionHalted is returned by Consumer.Healthy when a
 	// partition has been halted across consecutive poll cycles — a wedge, not a
 	// blip. Wire it into readiness so a consumer that polls cleanly while

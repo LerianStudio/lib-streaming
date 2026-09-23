@@ -72,7 +72,39 @@ func (m *streamingMetrics) recordOutboxRouted(ctx context.Context, topic, reason
 func (m *streamingMetrics) recordOutboxReplayTargetUnknown(ctx context.Context, target string) {
 	m.addOne(ctx, metricNameOutboxReplayTargetUnknown,
 		"Total outbox replay rows blocked because their target was not registered.",
-		map[string]string{"target": target})
+		map[string]string{labelTarget: target})
+}
+
+// recordOutboxRelayRejected increments streaming_outbox_relay_rejected_total
+// by 1. Called from handleOutboxRow whenever a decoded row is refused, with
+// reason drawn from the closed set in outbox_handler.go:
+//
+//   - "version_unsupported": the row's envelope version is neither the written
+//     version 2 nor the read-only legacy version 1. Undispatchable. The row is
+//     bound for INVALID.
+//   - "legacy_unroutable": a version-1 row that cannot be re-derived under the
+//     current topology. Kept retryable so an operator can rewrite it.
+//
+// This metric exists because the INVALID transition itself is UNOBSERVABLE
+// from here and very nearly unobservable anywhere. lib-commons flips
+// FAILED -> INVALID inside a SQL CASE expression that emits nothing, its
+// "outbox event is non-retryable; marking invalid" ERROR line is unreachable
+// unless the service wired a retry classifier, and outbox.events.failed counts
+// every failure identically with no reason dimension. Emitting at the point of
+// REFUSAL — with the reason the storage layer will never record — is the only
+// place lib-streaming can make the row's fate visible, and it fires
+// independently of any WithOnInvalid callback the service may or may not have
+// registered.
+//
+// Cardinality: reason is a closed two-value set; target is operator-controlled
+// and bounded (single digits per service), matching
+// recordOutboxReplayTargetUnknown. The offending ce-source and row id are
+// deliberately NOT labels — they are unbounded, and they go in the paired
+// ERROR log instead. No tenant_id label (PROJECT_RULES §13).
+func (m *streamingMetrics) recordOutboxRelayRejected(ctx context.Context, target, reason string) {
+	m.addOne(ctx, metricNameOutboxRelayRejected,
+		"Total outbox relay rows refused, by reason.",
+		map[string]string{labelTarget: target, "reason": reason})
 }
 
 // recordCircuitState sets the streaming_circuit_state gauge. state is one of

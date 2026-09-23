@@ -3,8 +3,6 @@ package producer
 import (
 	"context"
 	"encoding/json"
-	"mime"
-	"strings"
 
 	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
 )
@@ -106,6 +104,15 @@ func (p *Producer) preFlightWithPayload(ctx context.Context, event Event, valida
 	// JSON validity so the dominant caller mistake (huge payload) short-
 	// circuits the slightly more expensive json.Valid scan.
 	if validatePayload {
+		// Lower length bound. newEmitRequest already refused an empty payload
+		// on the caller path; this copy guards the OTHER input to preflight —
+		// an outbox row decoded on replay, where the "caller" is the database
+		// and the bytes may have been edited or truncated at rest. The size
+		// cap below is duplicated for exactly the same reason.
+		if len(event.Payload) == 0 {
+			return contract.ErrEmptyPayload
+		}
+
 		if len(event.Payload) > maxPayloadBytes {
 			// Caller bug — payload exceeds the single-target 1 MiB cap.
 			// Pair the trident with the multi-target site at
@@ -125,12 +132,12 @@ func (p *Producer) preFlightWithPayload(ctx context.Context, event Event, valida
 		// Payload must parse as JSON — but only for JSON content types. This
 		// is the line of defense that keeps malformed bytes out of consumers
 		// and prevents DLQ replay from repeatedly re-poisoning the same topic.
-		// An empty payload is permitted ONLY when it's valid JSON (e.g. `null`,
-		// `{}`); a genuinely empty byte slice fails json.Valid and surfaces
-		// ErrNotJSON. A non-JSON content type (e.g. application/xml) ships its
+		// A genuinely empty byte slice never reaches here — the lower length
+		// bound above refuses it by name for every content type. A non-JSON
+		// content type (e.g. application/xml) ships its
 		// payload verbatim as the record value and skips the scan; the size
 		// cap above still protects Kafka's max.message.bytes.
-		if isJSONContentType(event.DataContentType) && !json.Valid(event.Payload) {
+		if contract.IsJSONContentType(event.DataContentType) && !json.Valid(event.Payload) {
 			return ErrNotJSON
 		}
 	}
@@ -169,30 +176,4 @@ func (*Producer) validateHeaderSafeFields(event Event) error {
 	}
 
 	return nil
-}
-
-// isJSONContentType reports whether a CloudEvents DataContentType denotes a
-// JSON payload that must pass json.Valid. The recognition is media-type aware:
-// parameters are stripped (application/json; charset=utf-8) and the RFC 6839
-// structured "+json" suffix is honored (application/cloudevents+json,
-// application/hal+json). An empty value means the CloudEvents default
-// (application/json). A non-JSON media type (e.g. application/xml) is opaque:
-// the payload ships verbatim and the json.Valid scan is skipped.
-//
-// A parse error with no recoverable media type fails CLOSED: an unrecognizable
-// content type re-enters the json.Valid gate rather than silently skipping it.
-// If mime.ParseMediaType recovers the base media type but rejects malformed
-// parameters, classify from that base type so an opaque payload is not
-// incorrectly forced through json.Valid.
-func isJSONContentType(ct string) bool {
-	if ct == "" {
-		return true
-	}
-
-	mt, _, err := mime.ParseMediaType(ct)
-	if err != nil && mt == "" {
-		return true
-	}
-
-	return mt == "application/json" || strings.HasSuffix(mt, "+json")
 }

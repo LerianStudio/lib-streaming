@@ -43,6 +43,14 @@ func newEmitRequest(request EmitRequest, copyPayload bool) (EmitRequest, error) 
 		return EmitRequest{}, err
 	}
 
+	// The two ends of one length check. Empty is refused for every content
+	// type: the JSON path used to report it as ErrNotJSON (a misleading
+	// diagnosis for a forgotten body) and the opaque path used to accept it
+	// and fail later inside the envelope marshal.
+	if len(request.Payload) == 0 {
+		return EmitRequest{}, ErrEmptyPayload
+	}
+
 	if len(request.Payload) > MaxPayloadBytes {
 		return EmitRequest{}, ErrPayloadTooLarge
 	}

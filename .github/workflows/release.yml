@@ -1,6 +1,7 @@
 name: Release
 
 on:
+  workflow_dispatch:
   push:
     branches: [main, release-candidate, develop]
     paths-ignore:
@@ -16,11 +17,12 @@ jobs:
   pre-release-validation:
     name: Pre-release validation
     permissions:
+      actions: read
       contents: read
       packages: read
       pull-requests: write
       security-events: write
-    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/go-pr-analysis.yml@v1.33.0
+    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/go-pr-analysis.yml@v1.66.1
     with:
       go_version: "1.26.3"
       golangci_lint_version: "v2.12.2"
@@ -36,7 +38,7 @@ jobs:
       issues: write
       pull-requests: write
       packages: read
-    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/release.yml@v1.33.0
+    uses: LerianStudio/github-actions-shared-workflows/.github/workflows/release.yml@v1.66.1
     with:
       enable_changelog: ${{ github.ref == 'refs/heads/main' }}
     secrets: inherit
