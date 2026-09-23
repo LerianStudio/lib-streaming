@@ -394,15 +394,18 @@ func handleLegacyRow(t *testing.T, registry *outbox.HandlerRegistry, payload []b
 // A version-1 KAFKA row with such a source never reaches preflight —
 // ResolveDestination refuses it first. A non-Kafka row keeps its persisted
 // destination, so preflight is where its source is checked, and that refusal
-// must be re-cast exactly like the resolution one.
+// must be re-cast exactly like the resolution one. The fixture uses an
+// EventBridge destination because its shape validates locally; an SQS queue
+// URL is DNS-resolved during envelope validation, which would make the test
+// depend on the network before it ever reached preflight.
 func TestOutboxRelay_LegacyRowWithInvalidSourceFailingPreflightStaysRetryable(t *testing.T) {
 	registry := newLegacyRelayRegistry(t)
 
 	payload := legacyEnvelopeJSON(t, "//lerian.midaz/transaction-service", "transaction", "created", newTestUUIDv7(t).String())
 	payload = rewriteLegacyFixture(t, payload,
 		`"destination": {"kind": "kafka", "name": "//lerian.midaz/transaction-service.transaction.created"}`,
-		`"destination": {"kind": "sqs", "address": "https://sqs.us-east-1.amazonaws.com/123/tx"}`)
-	payload = rewriteLegacyFixture(t, payload, `"transport": "kafka"`, `"transport": "sqs"`)
+		`"destination": {"kind": "eventbridge", "name": "lerian-bus"}`)
+	payload = rewriteLegacyFixture(t, payload, `"transport": "kafka"`, `"transport": "eventbridge"`)
 
 	err := handleLegacyRow(t, registry, payload)
 	if err == nil {
@@ -616,5 +619,40 @@ func TestOutboxRelay_RejectionMetricKeepsRegisteredTarget(t *testing.T) {
 
 	if got := attrSets[0]["reason"]; got != relayRejectLegacyUnroutable {
 		t.Errorf("reason label = %q, want %q", got, relayRejectLegacyUnroutable)
+	}
+}
+
+// TestOutboxRelay_UndecodableEnvelopeIsCallerError pins that a row whose
+// payload is valid JSON (so it survived the JSONB column) but does not decode
+// into an outbox envelope is classified as a caller error. Nothing can ever
+// publish it, so a wired classifier must send it to INVALID immediately instead
+// of burning the retry budget.
+func TestOutboxRelay_UndecodableEnvelopeIsCallerError(t *testing.T) {
+	registry := newLegacyRelayRegistry(t)
+
+	for name, payload := range map[string]string{
+		"event is not an object":    `{"version": 2, "event": "not an object"}`,
+		"version is not a number":   `{"version": "two"}`,
+		"envelope is not an object": `["not", "an", "envelope"]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := handleLegacyRow(t, registry, []byte(payload))
+			if err == nil {
+				t.Fatal("registry.Handle err = nil; the row must not be reported as published")
+			}
+
+			if !errors.Is(err, contract.ErrInvalidOutboxEnvelope) {
+				t.Errorf("err = %v, want it to wrap ErrInvalidOutboxEnvelope", err)
+			}
+
+			if !contract.IsCallerError(err) {
+				t.Errorf("IsCallerError(%v) = false; the row would retry instead of landing in INVALID", err)
+			}
+
+			var typeErr *json.UnmarshalTypeError
+			if !errors.As(err, &typeErr) {
+				t.Errorf("err = %v, want the decode error kept in the chain", err)
+			}
+		})
 	}
 }
