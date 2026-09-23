@@ -264,6 +264,10 @@ type DiscardHandler interface {
 // restate-and-drift failure these exports exist to stop. DLQMaxErrorMessageBytes
 // does not answer it: the cut output is shorter than the bound whenever a split
 // multi-byte rune is dropped.
+//
+// Only a marker that ENDS the message counts. A re-quarantined entry can carry
+// an earlier hop's marker in the middle of its text, followed by the current
+// cause; that message is whole and reports (0, false).
 func TruncatedErrorMessageBytes(message string) (int, bool) {
 	return dlqheader.TruncatedErrorMessageBytes(message)
 }

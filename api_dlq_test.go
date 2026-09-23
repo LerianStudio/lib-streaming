@@ -456,6 +456,28 @@ func TestTruncatedErrorMessageBytes_DetectsACutMessage(t *testing.T) {
 		}
 	})
 
+	// A marker counts only as the COMPLETE canonical suffix with a positive
+	// length. A re-quarantine wraps the previous hop's message, marker and all,
+	// so an embedded marker followed by the current cause is a WHOLE message.
+	for _, message := range []string{
+		"handler: previous hop: boom...[truncated, 9000 bytes total]: loan already settled",
+		"boom...[truncated, 9000 bytes total]trailing",
+		"boom...[truncated, 0 bytes total]",
+		"boom...[truncated, -5 bytes total]",
+		"boom...[truncated,  9000 bytes total]",
+		"boom...[truncated, +9000 bytes total]",
+		"boom...[truncated, 09000 bytes total]",
+		"boom...[truncated, bytes total]",
+		"boom...[truncated, 99999999999999999999 bytes total]",
+	} {
+		t.Run("not a marker: "+message, func(t *testing.T) {
+			t.Parallel()
+
+			if size, cut := streaming.TruncatedErrorMessageBytes(message); cut {
+				t.Errorf("reported (%d, true); want (0, false)", size)
+			}
+		})
+	}
 }
 
 // TestNewConsumer_DiscardHandlerBuilds proves the seam reaches a real runtime,
