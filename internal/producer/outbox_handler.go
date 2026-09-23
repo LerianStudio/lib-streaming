@@ -129,14 +129,15 @@ func (p *Producer) handleOutboxRow(ctx context.Context, row *outbox.OutboxEvent)
 	}
 
 	if err := p.preFlightWithPayload(ctx, envelope.Event, true); err != nil {
-		// A version-1 row that fails preflight is failing because v4 demands
-		// something v2 permitted — a ce-source v2 would have sanitized is the
-		// one that happens in practice. Every such rejection is a caller-error
-		// sentinel, which the dispatcher turns into an immediate INVALID, so
-		// it is re-cast here to keep the row. A version-2 row keeps the
-		// original semantics: it was written by THIS contract, so a preflight
-		// failure is a genuine defect and staying non-retryable is correct.
-		if envelope.Version == contract.OutboxEnvelopeVersionLegacy {
+		// A version-1 row whose ce-source v4 rejects is failing because v4
+		// demands something v2 permitted: v2 folded the source through a
+		// lossy sanitizer, v4 refuses it outright. That is the only preflight
+		// check that changed between the majors, so it is the only refusal
+		// re-cast to keep the row. Every other preflight failure (system-event
+		// gate, empty/oversized/non-JSON payload, header safety) was enforced
+		// identically by v2, so the row is as unpublishable as a version-2 row
+		// would be and stays a caller error bound for INVALID.
+		if isLegacySourceRejection(envelope, err) {
 			return p.keepLegacyOutboxRow(ctx, row, envelope, err)
 		}
 
@@ -186,6 +187,14 @@ func (p *Producer) handleOutboxRow(ctx context.Context, row *outbox.OutboxEvent)
 	}
 
 	return nil
+}
+
+// isLegacySourceRejection reports whether a preflight refusal of envelope is a
+// version-1 row failing ValidateSource — the same set ResolveDestination
+// treats as unroutable for a version-1 Kafka row.
+func isLegacySourceRejection(envelope contract.OutboxEnvelope, err error) bool {
+	return envelope.Version == contract.OutboxEnvelopeVersionLegacy &&
+		(errors.Is(err, contract.ErrMissingSource) || errors.Is(err, contract.ErrInvalidSource))
 }
 
 // Closed set of reasons for streaming_outbox_relay_rejected_total. Keep these
@@ -262,7 +271,10 @@ func (p *Producer) recordOutboxRelayRejection(
 // instead of being invalidated on its first attempt.
 //
 // The guarantee is bounded to the two refusals this function sees: destination
-// RESOLUTION and PREFLIGHT. A caller-class failure raised deeper — inside a
+// RESOLUTION and a preflight SOURCE rejection (ErrMissingSource /
+// ErrInvalidSource, the one preflight check v4 tightened over v2). Every other
+// preflight refusal stays a caller error and is invalidated on attempt one, as
+// it would be for a version-2 row. A caller-class failure raised deeper — inside a
 // transport adapter, e.g. a v1 SQS or EventBridge row between the 256 KiB
 // adapter cap and the 1 MiB preflight cap failing with ErrPayloadTooLarge —
 // never reaches here, so the dispatcher invalidates it on attempt one with no
@@ -308,6 +320,6 @@ func (p *Producer) keepLegacyOutboxRow(
 	// branch is a preflight rejection holding ErrInvalidSource, a caller-error
 	// sentinel; %w would make IsCallerError true and the dispatcher would
 	// destroy this durable row on its first attempt.
-	// TestOutboxRelay_UnroutableLegacyRowStaysRetryable fails if this is "fixed".
+	// TestOutboxRelay_LegacyRowWithInvalidSourceFailingPreflightStaysRetryable fails if this is "fixed".
 	return fmt.Errorf("streaming: outbox row %s: %w: %v", row.ID, contract.ErrLegacyOutboxRowUnroutable, cause)
 }

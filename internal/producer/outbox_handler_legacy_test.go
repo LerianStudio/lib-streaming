@@ -336,22 +336,11 @@ func TestOutboxRelay_UnknownVersionStillRejected(t *testing.T) {
 	}
 }
 
-// TestOutboxRelay_LegacyRowFailingPreflightStaysRetryable covers the second
-// way a version-1 row can be structurally incompatible with the current
-// contract: it survives destination resolution and is then refused by
-// preflight.
-//
-// The row here has a perfectly routable source, so ResolveDestination
-// succeeds; it carries SystemEvent, which this producer was not built to
-// allow. That returns ErrSystemEventsNotAllowed — a caller-error sentinel,
-// exactly the class the dispatcher turns into an immediate INVALID — so this
-// pins that the handler re-casts a PREFLIGHT rejection too, not just a
-// resolution failure.
-//
-// A version-2 row deliberately keeps the original behaviour: it was written by
-// the current contract, so a preflight failure there is a genuine defect and
-// staying non-retryable is correct.
-func TestOutboxRelay_LegacyRowFailingPreflightStaysRetryable(t *testing.T) {
+// newLegacyRelayRegistry builds a kfake-backed producer and registers its
+// outbox relay, the shared setup of the preflight-classification tests.
+func newLegacyRelayRegistry(t *testing.T) *outbox.HandlerRegistry {
+	t.Helper()
+
 	cfg, _ := kfakeConfig(t)
 
 	emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
@@ -360,22 +349,31 @@ func TestOutboxRelay_LegacyRowFailingPreflightStaysRetryable(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = emitter.Close() })
 
-	p := asProducer(t, emitter)
 	registry := outbox.NewHandlerRegistry()
-	if err := p.RegisterOutboxRelay(registry); err != nil {
+	if err := asProducer(t, emitter).RegisterOutboxRelay(registry); err != nil {
 		t.Fatalf("RegisterOutboxRelay err = %v", err)
 	}
 
-	aggregateID := newTestUUIDv7(t)
-	payload := legacyEnvelopeJSON(t, "test", "transaction", "created", aggregateID.String())
-	payload = []byte(strings.Replace(string(payload),
-		`"Subject": "tx-legacy-1",`,
-		`"Subject": "tx-legacy-1", "SystemEvent": true,`, 1))
+	return registry
+}
 
-	if !strings.Contains(string(payload), `"SystemEvent": true`) {
-		t.Fatal("fixture rewrite failed; the test would assert nothing")
+// rewriteLegacyFixture applies one textual edit to a legacy fixture and fails
+// loudly if the edit did not land, so a drifted fixture cannot make a test
+// assert nothing.
+func rewriteLegacyFixture(t *testing.T, payload []byte, old, replacement string) []byte {
+	t.Helper()
+
+	if !strings.Contains(string(payload), old) {
+		t.Fatalf("fixture rewrite failed: %q not found; the test would assert nothing", old)
 	}
 
+	return []byte(strings.Replace(string(payload), old, replacement, 1))
+}
+
+func handleLegacyRow(t *testing.T, registry *outbox.HandlerRegistry, payload []byte) error {
+	t.Helper()
+
+	aggregateID := newTestUUIDv7(t)
 	row := &outbox.OutboxEvent{
 		ID:          newTestUUIDv7(t),
 		EventType:   StreamingOutboxEventType,
@@ -386,7 +384,27 @@ func TestOutboxRelay_LegacyRowFailingPreflightStaysRetryable(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	err = registry.Handle(ctx, row)
+	return registry.Handle(ctx, row)
+}
+
+// TestOutboxRelay_LegacyRowWithInvalidSourceFailingPreflightStaysRetryable
+// covers the one preflight refusal that is a v2 -> v4 contract difference: a
+// ce-source v2's lossy sanitizer accepted and v4's ValidateSource rejects.
+//
+// A version-1 KAFKA row with such a source never reaches preflight —
+// ResolveDestination refuses it first. A non-Kafka row keeps its persisted
+// destination, so preflight is where its source is checked, and that refusal
+// must be re-cast exactly like the resolution one.
+func TestOutboxRelay_LegacyRowWithInvalidSourceFailingPreflightStaysRetryable(t *testing.T) {
+	registry := newLegacyRelayRegistry(t)
+
+	payload := legacyEnvelopeJSON(t, "//lerian.midaz/transaction-service", "transaction", "created", newTestUUIDv7(t).String())
+	payload = rewriteLegacyFixture(t, payload,
+		`"destination": {"kind": "kafka", "name": "//lerian.midaz/transaction-service.transaction.created"}`,
+		`"destination": {"kind": "sqs", "address": "https://sqs.us-east-1.amazonaws.com/123/tx"}`)
+	payload = rewriteLegacyFixture(t, payload, `"transport": "kafka"`, `"transport": "sqs"`)
+
+	err := handleLegacyRow(t, registry, payload)
 	if err == nil {
 		t.Fatal("registry.Handle err = nil; the row must not be reported as published")
 	}
@@ -396,12 +414,69 @@ func TestOutboxRelay_LegacyRowFailingPreflightStaysRetryable(t *testing.T) {
 	}
 
 	if contract.IsCallerError(err) {
-		t.Errorf("IsCallerError(%v) = true; the preflight sentinel must not survive into the chain "+
+		t.Errorf("IsCallerError(%v) = true; the source sentinel must not survive into the chain "+
 			"or the dispatcher invalidates the row on attempt one", err)
 	}
+}
 
-	if !strings.Contains(err.Error(), "system events not permitted") {
-		t.Errorf("err = %q, want the preflight reason preserved as text for the operator", err)
+// TestOutboxRelay_LegacyRowFailingNonSourcePreflightIsInvalid pins the
+// boundary of the re-cast. v2 enforced the system-event gate, the empty-payload
+// and size caps, and the JSON check exactly as v4 does, so a version-1 row
+// failing one of them is not a contract difference v4 introduced — it is the
+// same permanently-unpublishable row a version-2 row would be, and it must stay
+// a caller error so a wired classifier sends it to INVALID immediately instead
+// of burning the retry budget under a misleading legacy_unroutable reason.
+func TestOutboxRelay_LegacyRowFailingNonSourcePreflightIsInvalid(t *testing.T) {
+	registry := newLegacyRelayRegistry(t)
+
+	cases := []struct {
+		name      string
+		old, repl string
+		wantErr   error
+	}{
+		{
+			name:    "system event without opt-in",
+			old:     `"Subject": "tx-legacy-1",`,
+			repl:    `"Subject": "tx-legacy-1", "SystemEvent": true,`,
+			wantErr: ErrSystemEventsNotAllowed,
+		},
+		{
+			name: "empty payload",
+			old: `,
+	    "Payload": {"amount": 100}`,
+			repl:    ``,
+			wantErr: contract.ErrEmptyPayload,
+		},
+		{
+			name:    "non-JSON payload under JSON content type",
+			old:     `"Payload": {"amount": 100}`,
+			repl:    `"PayloadOpaque": "bm90IGpzb24="`,
+			wantErr: ErrNotJSON,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			payload := legacyEnvelopeJSON(t, "test", "transaction", "created", newTestUUIDv7(t).String())
+			payload = rewriteLegacyFixture(t, payload, tc.old, tc.repl)
+
+			err := handleLegacyRow(t, registry, payload)
+			if err == nil {
+				t.Fatal("registry.Handle err = nil; the row must not be reported as published")
+			}
+
+			if !errors.Is(err, tc.wantErr) {
+				t.Errorf("err = %v, want it to wrap %v", err, tc.wantErr)
+			}
+
+			if errors.Is(err, contract.ErrLegacyOutboxRowUnroutable) {
+				t.Errorf("err = %v wraps ErrLegacyOutboxRowUnroutable; only source errors are re-cast", err)
+			}
+
+			if !contract.IsCallerError(err) {
+				t.Errorf("IsCallerError(%v) = false; the row would retry instead of landing in INVALID", err)
+			}
+		})
 	}
 }
 
