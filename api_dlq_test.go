@@ -455,6 +455,29 @@ func TestTruncatedErrorMessageBytes_DetectsACutMessage(t *testing.T) {
 				streaming.DLQMaxErrorMessageBytes)
 		}
 	})
+
+	// A marker counts only as the COMPLETE canonical suffix with a positive
+	// length. A re-quarantine wraps the previous hop's message, marker and all,
+	// so an embedded marker followed by the current cause is a WHOLE message.
+	for _, message := range []string{
+		"handler: previous hop: boom...[truncated, 9000 bytes total]: loan already settled",
+		"boom...[truncated, 9000 bytes total]trailing",
+		"boom...[truncated, 0 bytes total]",
+		"boom...[truncated, -5 bytes total]",
+		"boom...[truncated,  9000 bytes total]",
+		"boom...[truncated, +9000 bytes total]",
+		"boom...[truncated, 09000 bytes total]",
+		"boom...[truncated, bytes total]",
+		"boom...[truncated, 99999999999999999999 bytes total]",
+	} {
+		t.Run("not a marker: "+message, func(t *testing.T) {
+			t.Parallel()
+
+			if size, cut := streaming.TruncatedErrorMessageBytes(message); cut {
+				t.Errorf("reported (%d, true); want (0, false)", size)
+			}
+		})
+	}
 }
 
 // TestNewConsumer_DiscardHandlerBuilds proves the seam reaches a real runtime,
@@ -540,6 +563,25 @@ func TestNewConsumer_DiscardHandlerIsMutuallyExclusive(t *testing.T) {
 			func() *streaming.ConsumerBuilder {
 				return base().Topics("lerian.streaming.lender.dlq").
 					DiscardHandler(noopDiscardHandler{}).UnmatchedPolicy(streaming.UnmatchedError)
+			},
+		},
+		{
+			// Apps subscribes to lerian.streaming.<app>, an ordinary fact topic,
+			// never a ".dlq". A reader there delivers codec faults and skips the
+			// ce-source check: both library verdicts lifted on a business stream.
+			"DiscardHandler with Apps",
+			func() *streaming.ConsumerBuilder {
+				return base().Apps("gateway").DiscardHandler(noopDiscardHandler{})
+			},
+		},
+		{
+			// A DLQ reader never verifies ce-source (a quarantine copy carries the
+			// original producer's), so an allowlist would be validated and then
+			// ignored while an operator believed it was enforced.
+			"DiscardHandler with ExpectSources",
+			func() *streaming.ConsumerBuilder {
+				return base().Topics("lerian.streaming.lender.dlq").
+					DiscardHandler(noopDiscardHandler{}).ExpectSources("lender")
 			},
 		},
 	}

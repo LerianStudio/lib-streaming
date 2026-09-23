@@ -434,8 +434,8 @@ but headroom is the actual fix.
 ### Reading a DLQ
 
 A quarantined record is durable but invisible until something drains it. The
-nine forensic `x-lerian-dlq-*` headers every entry carries (eleven keys exist;
-the two payload markers appear only when the payload was dropped) do not survive
+forensic `x-lerian-dlq-*` headers (six on every entry, three more on a consumer
+quarantine, and two payload markers only when the payload was dropped) do not survive
 the CloudEvents codec, so a plain `Handler` cannot see any of them —
 `DiscardHandler` is the seam that can:
 
@@ -495,8 +495,11 @@ nil — so the loop there is latent rather than active, and refusing it would tu
 a library upgrade into a startup outage. The log line names the topic; the fix is
 the same distinct `ce-source`.
 
-`DiscardHandler` is mutually exclusive with `Handler`, `On`/`OnFrom` and
-`Commands`, enforced at `Build` in either order.
+`DiscardHandler` is mutually exclusive with `Handler`, `On`/`OnFrom`,
+`Commands`, `UnmatchedPolicy`, `Apps` and `ExpectSources`, enforced at `Build` in
+either order. `Apps` subscribes to fact topics, never a `.dlq`, and a reader
+never verifies `ce-source`, so an allowlist would be ignored. Name the queue with
+`Topics(...)`.
 
 The origin triple is the stable natural key for deduping a redelivered or
 replayed quarantine; `ce-id` is not, because the replay path can quarantine the

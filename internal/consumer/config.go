@@ -56,22 +56,24 @@ var (
 		"streaming consumer: Handler(...) and On(...) are mutually exclusive — use On for per-event dispatch, Handler for the raw stream")
 
 	// ErrDiscardHandlerAndHandlerBothSet is returned when DiscardHandler is
-	// combined with Handler, On/OnFrom, Commands, or UnmatchedPolicy. A DLQ
-	// reader is a third answer to "who selects events" — it selects nothing and
-	// receives every quarantine entry on the topics it drains — so silently
-	// preferring one would drop the other's handlers without a word, and
-	// UnmatchedPolicy, which decides what the DISPATCHER does with an
-	// unregistered key, has nothing to act on.
+	// combined with Handler, On/OnFrom, Commands, UnmatchedPolicy, Apps or
+	// ExpectSources. A DLQ reader is a third answer to "who selects events" — it
+	// selects nothing and receives every quarantine entry on the topics it
+	// drains — so silently preferring one would drop the other's handlers
+	// without a word, and UnmatchedPolicy, which decides what the DISPATCHER
+	// does with an unregistered key, has nothing to act on. Apps subscribes to fact topics,
+	// never a ".dlq", and ExpectSources would be ignored because a reader never
+	// verifies ce-source.
 	//
 	// The dangerous order is DiscardHandler(h).Handler(x): the reader is demoted
 	// to a plain handler while still subscribed to a ".dlq" topic, which re-arms
 	// the codec-fault quarantine on it.
 	//
-	// It names all four rather than reusing the Handler-specific errors, so a
+	// It names all six rather than reusing the Handler-specific errors, so a
 	// caller who wrote DiscardHandler + UnmatchedPolicy is not sent hunting a
 	// Handler(...) call they never made.
 	ErrDiscardHandlerAndHandlerBothSet = errors.New(
-		"streaming consumer: DiscardHandler(...) is mutually exclusive with Handler(...), On(...), Commands(...) and UnmatchedPolicy(...) — a DLQ reader selects nothing, it receives every quarantine entry on the topics it drains")
+		"streaming consumer: DiscardHandler(...) is mutually exclusive with Handler(...), On(...), Commands(...), UnmatchedPolicy(...), Apps(...) and ExpectSources(...) — a DLQ reader selects nothing, it receives every quarantine entry on the topics it drains")
 
 	// ErrSubscribedToOwnQuarantineTopic is returned when a DISCARD READER
 	// subscribes to lerian.streaming.<Source>.dlq — the topic it quarantines

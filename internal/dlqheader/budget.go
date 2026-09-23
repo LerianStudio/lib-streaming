@@ -3,6 +3,7 @@ package dlqheader
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/twmb/franz-go/pkg/kerr"
@@ -74,19 +75,52 @@ const truncationMarkerPrefix = "...[truncated, "
 // exported keys exist to stop. The length bound alone does not answer it — the
 // cut output is SHORTER than MaxErrorMessageBytes whenever a split multi-byte
 // rune is dropped, so "len(msg) == MaxErrorMessageBytes" is not a test.
+//
+// Only a COMPLETE canonical suffix with a positive count is a marker. A
+// re-quarantine wraps the previous hop's message, marker included, and
+// appends the current cause after it; that message is whole, not cut.
 func TruncatedErrorMessageBytes(msg string) (int, bool) {
-	start := strings.LastIndex(msg, truncationMarkerPrefix)
-	if start < 0 {
-		return 0, false
+	_, original, ok := trailingMarker(msg)
+
+	return original, ok
+}
+
+// trailingMarker finds the truncation marker at the END of msg and returns
+// where it starts and the length it claims.
+//
+// It accepts only the exact bytes TruncateErrorMessage writes: a positive
+// decimal count with no sign, no leading zero and no extra spacing, and nothing
+// after the closing bracket. fmt.Sscanf is not used because it stops at the end
+// of its format, ignores what follows and tolerates spacing and signs, so a
+// marker-shaped run in the middle of a message would parse as a real one.
+func trailingMarker(msg string) (start, original int, ok bool) {
+	const suffix = " bytes total]"
+
+	start = strings.LastIndex(msg, truncationMarkerPrefix)
+
+	// The prefix ends and the suffix begins with a space, so they can overlap
+	// ("...[truncated, bytes total]"): check the lengths before slicing.
+	if start < 0 || !strings.HasSuffix(msg, suffix) || start+len(truncationMarkerPrefix) > len(msg)-len(suffix) {
+		return 0, 0, false
 	}
 
-	var original int
-
-	if _, err := fmt.Sscanf(msg[start:], truncationMarkerFormat, &original); err != nil {
-		return 0, false
+	digits := msg[start+len(truncationMarkerPrefix) : len(msg)-len(suffix)]
+	if digits == "" || digits[0] == '0' {
+		return 0, 0, false
 	}
 
-	return original, true
+	for _, c := range digits {
+		if c < '0' || c > '9' {
+			return 0, 0, false
+		}
+	}
+
+	original, err := strconv.Atoi(digits)
+	if err != nil {
+		return 0, 0, false
+	}
+
+	return start, original, true
 }
 
 // IsSizeError reports whether err is a transport's "this record is too large"
@@ -143,30 +177,20 @@ func ReboundSanitizedErrorMessage(sanitized string, originalBytes int) string {
 	body := sanitized
 	marker := fmt.Sprintf(truncationMarkerFormat, originalBytes)
 
-	if start := strings.LastIndex(sanitized, truncationMarkerPrefix); start >= 0 {
-		var original int
-
-		// A parsed marker is adopted ONLY when the canonical form of it is the
-		// COMPLETE suffix, and only when it claims a positive length.
-		//
-		// fmt.Sscanf stops at the end of its format and ignores whatever follows,
-		// so a marker-shaped run in the MIDDLE of a message parses exactly as
-		// happily as a real trailing one. Treating that as the marker throws away
-		// everything after it — and on the re-quarantine path, where a consumer
-		// wraps the previous hop's ErrorMessage into a new error, what follows the
-		// embedded marker is the CURRENT cause. Measured before this guard: a
-		// 6509-byte message came back 4096 bytes long with its tail gone, claiming
-		// an original length of 7 that belonged to an inner hop.
-		//
-		// A non-positive count is not a length either. Re-stamping one would put
-		// "...[truncated, -5 bytes total]" in front of a consumer as THIS
-		// library's own claim about the message, which is worse than the forged
-		// header it came from.
-		if _, err := fmt.Sscanf(sanitized[start:], truncationMarkerFormat, &original); err == nil && original > 0 {
-			if canonical := fmt.Sprintf(truncationMarkerFormat, original); sanitized[start:] == canonical {
-				body, marker = sanitized[:start], canonical
-			}
-		}
+	// A marker is adopted ONLY as the complete canonical suffix with a positive
+	// length (see trailingMarker). A marker-shaped run in the MIDDLE is not one:
+	// on the re-quarantine path, where a consumer wraps the previous hop's
+	// ErrorMessage into a new error, what follows the embedded marker is the
+	// CURRENT cause, and adopting the inner marker would throw it away. Measured
+	// before this guard: a 6509-byte message came back 4096 bytes long with its
+	// tail gone, claiming an original length of 7 that belonged to an inner hop.
+	//
+	// A non-positive count is not a length either. Re-stamping one would put
+	// "...[truncated, -5 bytes total]" in front of a consumer as THIS library's
+	// own claim about the message, which is worse than the forged header it
+	// came from.
+	if start, original, ok := trailingMarker(sanitized); ok {
+		body, marker = sanitized[:start], fmt.Sprintf(truncationMarkerFormat, original)
 	}
 
 	// The same cut TruncateErrorMessage makes: a split multi-byte rune is
