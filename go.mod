@@ -3,7 +3,7 @@ module github.com/LerianStudio/lib-streaming/v4
 go 1.26.3
 
 require (
-	github.com/LerianStudio/lib-commons/v7 v7.0.0
+	github.com/LerianStudio/lib-commons/v7 v7.1.1
 	github.com/Shopify/toxiproxy/v2 v2.12.0
 	github.com/cloudevents/sdk-go/v2 v2.16.2
 	github.com/google/uuid v1.6.0
