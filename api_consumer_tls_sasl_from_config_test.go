@@ -12,10 +12,9 @@ import (
 	streaming "github.com/LerianStudio/lib-streaming/v4"
 )
 
-// TestConsumerBuilder_TLSSASLFromConfig mirrors the producer's
-// builder_tls_sasl_from_config_test.go on the consumer: config-derived errors
-// are deferred to Build, disabled features are no-ops, and the SASL-requires-TLS
-// gate still runs. A nil want means Build must succeed.
+// TestConsumerBuilder_TLSSASLFromConfig pins that config errors surface at an
+// enabled Build, disabled features are no-ops, and SASL still requires TLS. A
+// nil want means Build must succeed.
 func TestConsumerBuilder_TLSSASLFromConfig(t *testing.T) {
 	t.Parallel()
 
