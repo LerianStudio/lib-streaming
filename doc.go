@@ -251,6 +251,8 @@
 //	STREAMING_SASL_USERNAME              | string   | ""              | SASL username; required when a mechanism is set
 //	STREAMING_SASL_PASSWORD              | string   | ""              | SASL password (SECRET; never logged)
 //	STREAMING_SASL_ALLOW_PLAINTEXT       | bool     | false           | Allow SASL without TLS (dev-only, unsafe)
+//	STREAMING_SIGNING_KEY_ID             | string   | ""              | Envelope-signing key id sent in ce-sigkid; matches ^[a-z0-9][a-z0-9._-]{0,63}$. Set with STREAMING_SIGNING_KEY or neither
+//	STREAMING_SIGNING_KEY                | string   | ""              | HMAC-SHA256 secret, standard base64, at least 32 bytes decoded (SECRET; never logged)
 //
 // Topic auto-provisioning is configured by a SEPARATE table, because these three
 // are NOT read by LoadConfig. They are read in internal/kafkasec at the point

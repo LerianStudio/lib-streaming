@@ -515,10 +515,10 @@ a library upgrade into a startup outage. The log line names the topic; the fix i
 the same distinct `ce-source`.
 
 `DiscardHandler` is mutually exclusive with `Handler`, `On`/`OnFrom`,
-`Commands`, `UnmatchedPolicy`, `Apps` and `ExpectSources`, enforced at `Build` in
-either order. `Apps` subscribes to fact topics, never a `.dlq`, and a reader
-never verifies `ce-source`, so an allowlist would be ignored. Name the queue with
-`Topics(...)`.
+`Commands`, `UnmatchedPolicy`, `Apps`, `ExpectSources` and `RequireSignatures`,
+enforced at `Build` in either order. `Apps` subscribes to fact topics, never a
+`.dlq`, and a reader never verifies `ce-source` or signatures, so an allowlist or
+a keyring would be ignored. Name the queue with `Topics(...)`.
 
 The origin triple is the stable natural key for deduping a redelivered or
 replayed quarantine; `ce-id` is not, because the replay path can quarantine the
