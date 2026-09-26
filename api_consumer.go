@@ -14,6 +14,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/LerianStudio/lib-streaming/v4/internal/consumer"
+	"github.com/LerianStudio/lib-streaming/v4/internal/envelopesig"
 	"github.com/LerianStudio/lib-streaming/v4/internal/kafkasec"
 	"github.com/LerianStudio/lib-streaming/v4/internal/transport"
 )
@@ -233,7 +234,14 @@ type ConsumerBuilder struct {
 	// internal dispatch seam, parsing each record's raw headers into a
 	// DiscardRecord on the way.
 	discard DiscardHandler
-	opts    []ConsumerOption
+	// fluentSignatureRing is the RequireSignatures(...) keyring and
+	// signaturesWanted records that the call happened, so a nil ring reports
+	// ErrConsumerSignatureKeysMissing rather than silently leaving
+	// verification off. Kept apart from cfg.RequireSignatures/SignatureKeys
+	// because a DLQ reader must refuse the fluent call and ignore the env.
+	fluentSignatureRing *Keyring
+	signaturesWanted    bool
+	opts                []ConsumerOption
 	// buildErr is the first deferred error from TLSFromConfig / SASLFromConfig;
 	// an enabled Build surfaces it before any other work.
 	buildErr error
@@ -618,6 +626,54 @@ func (b *ConsumerBuilder) SASLFromConfig(cfg Config) *ConsumerBuilder {
 	return b
 }
 
+// RequireSignatures makes the consumer REQUIRE a valid envelope signature on
+// every record, verified against ring in the runtime — after the codec, BEFORE
+// the ce-source check, in both handler modes. A record that is unsigned, signed
+// by a key id the ring does not hold, or fails verification (body or any ce-*
+// header changed after signing, a key bound to another source, a duplicated
+// signed header) quarantines to this consumer's own DLQ with cause kind
+// DLQCauseSignatureMissing / DLQCauseSignatureUnknownKey /
+// DLQCauseSignatureInvalid. The handler never runs for it and the Classifier is
+// never asked.
+//
+// Rotation is by overlap: put the old and the new key in ring, switch the
+// producers, drop the old key once nothing in flight carries it. It overrides
+// STREAMING_CONSUMER_SIGNATURE_KEYS. Build fails with
+// ErrConsumerSignatureKeysMissing for a nil ring, with
+// ErrConsumerSignatureKeyMissingForSource when an accepted producer (Apps,
+// Commands or ExpectSources) has no key in ring, and with
+// ErrDiscardHandlerAndHandlerBothSet on a DLQ reader.
+//
+// Turn it on only after the producers sign AND this consumer's lag is past
+// their first signed record, or the unsigned backlog quarantines as
+// signature_missing (recoverable by replay).
+func (b *ConsumerBuilder) RequireSignatures(ring *Keyring) *ConsumerBuilder {
+	if b == nil {
+		return b
+	}
+
+	b.fluentSignatureRing = ring
+	b.signaturesWanted = true
+
+	return b
+}
+
+// SignatureMaxSkew additionally refuses a record whose signing instant is
+// further than d from now (cause DLQCauseSignatureInvalid). 0, the default,
+// disables the check. UNSAFE for any consumer that can lag: its legitimately
+// old backlog would quarantine. Replay needs no age bound — ce-id is signed, so
+// a replayed record is byte-identical and dedupes on the handler's ce-id
+// idempotency. A negative d fails Build with ErrConsumerInvalidConfigField.
+func (b *ConsumerBuilder) SignatureMaxSkew(d time.Duration) *ConsumerBuilder {
+	if b == nil {
+		return b
+	}
+
+	b.cfg.SignatureMaxSkew = d
+
+	return b
+}
+
 // Handler wires a service-supplied handler that receives EVERY event on the
 // subscribed streams and does its own selection. Mutually exclusive with On;
 // one of the two is required.
@@ -638,9 +694,9 @@ func (b *ConsumerBuilder) Handler(h Handler) *ConsumerBuilder {
 // every non-ce-* header before Handle runs and the forensic x-lerian-dlq-* keys
 // are all of them.
 //
-// Mutually exclusive with Handler, On/OnFrom, Commands, UnmatchedPolicy, Apps
-// and ExpectSources — enforced at Build
-// with ErrDiscardHandlerAndHandlerBothSet, in either order.
+// Mutually exclusive with Handler, On/OnFrom, Commands, UnmatchedPolicy, Apps,
+// ExpectSources and RequireSignatures — enforced at Build with
+// ErrDiscardHandlerAndHandlerBothSet, in either order.
 //
 //	streaming.NewConsumer().
 //	    Brokers(brokers...).
@@ -663,8 +719,12 @@ func (b *ConsumerBuilder) Handler(h Handler) *ConsumerBuilder {
 // delivers the record with a zero envelope and the reason in
 // DiscardRecord.EnvelopeError (an unparseable envelope is what a DLQCauseCodec
 // entry IS), and ce-source verification is skipped (a quarantine copy carries
-// the ORIGINAL producer's ce-source). The error the handler RETURNS is not
-// lifted: it is classified like any other handler error.
+// the ORIGINAL producer's ce-source). Signatures are never verified either: a
+// quarantine copy keeps the original signature, and every signature_* entry is
+// one that fails. STREAMING_CONSUMER_REQUIRE_SIGNATURES is inert on a reader,
+// like the env allowlist, because one process shares one environment across
+// its consumers. The error the handler RETURNS is not lifted: it is classified
+// like any other handler error.
 func (b *ConsumerBuilder) DiscardHandler(h DiscardHandler) *ConsumerBuilder {
 	if b == nil {
 		return b
@@ -767,6 +827,22 @@ func (b *ConsumerBuilder) Build(ctx context.Context) (Consumer, error) {
 		handler = resolved
 	}
 
+	opts, err := b.runtimeOptions()
+	if err != nil {
+		return nil, err
+	}
+
+	// consumer.Build owns the full production wiring: the Enabled kill switch,
+	// cfg.Validate, the franz-go group client (BlockRebalanceOnPoll +
+	// DisableAutoCommit + TLS/SASL via kafkasec), the internal transport-seam DLQ
+	// publisher over the same config (NOT the public Emitter), and the transport
+	// error-source classifier. The handler typed-nil guard lives there too.
+	return consumer.Build(ctx, b.cfg, handler, opts...)
+}
+
+// runtimeOptions folds the builder-level settings into the runtime option list:
+// the classifier, the DLQ-reader seam and the signature verifier.
+func (b *ConsumerBuilder) runtimeOptions() ([]ConsumerOption, error) {
 	// Fold the builder-level classifier into the option list so the runtime
 	// reclassifier seam stays single-sourced (consumer.WithClassifier).
 	opts := b.opts
@@ -789,12 +865,74 @@ func (b *ConsumerBuilder) Build(ctx context.Context) (Consumer, error) {
 			}))
 	}
 
-	// consumer.Build owns the full production wiring: the Enabled kill switch,
-	// cfg.Validate, the franz-go group client (BlockRebalanceOnPoll +
-	// DisableAutoCommit + TLS/SASL via kafkasec), the internal transport-seam DLQ
-	// publisher over the same config (NOT the public Emitter), and the transport
-	// error-source classifier. The handler typed-nil guard lives there too.
-	return consumer.Build(ctx, b.cfg, handler, opts...)
+	// A DLQ reader never verifies (see DiscardHandler); the fluent call was
+	// already refused by resolveReceiver and the env switch is inert here.
+	if !b.cfg.Enabled || b.discardWanted {
+		return opts, nil
+	}
+
+	verifier, err := b.signatureVerifier()
+	if err != nil {
+		return nil, err
+	}
+
+	if verifier != nil {
+		opts = append(opts, consumer.WithSignatureVerifier(verifier))
+	}
+
+	return opts, nil
+}
+
+// signatureRing resolves the keyring the consumer verifies with, or nil when
+// signatures are not required. A fluent RequireSignatures(ring) wins over
+// STREAMING_CONSUMER_SIGNATURE_KEYS; keys present without either switch are
+// inert (LoadConsumerConfig already warned).
+func (b *ConsumerBuilder) signatureRing() (*Keyring, error) {
+	if b.signaturesWanted {
+		if b.fluentSignatureRing == nil {
+			return nil, fmt.Errorf("%w: RequireSignatures(nil)", consumer.ErrSignatureKeysMissing)
+		}
+
+		return b.fluentSignatureRing, nil
+	}
+
+	if !b.cfg.RequireSignatures {
+		return nil, nil //nolint:nilnil // nil ring is the "signatures not required" answer, not an error
+	}
+
+	if len(b.cfg.SignatureKeys) == 0 {
+		return nil, fmt.Errorf("%w: STREAMING_CONSUMER_REQUIRE_SIGNATURES is true", consumer.ErrSignatureKeysMissing)
+	}
+
+	return NewKeyring(b.cfg.SignatureKeys...)
+}
+
+// signatureVerifier builds the runtime's verifier, or nil when signatures are
+// not required. It proves coverage at Build: every accepted producer (the
+// resolved ExpectSources) needs at least one key bound to it, or that
+// producer's whole stream would quarantine while the consumer reported
+// healthy. An empty allowlist (raw Topics) has nothing to prove; the key-to-
+// source binding still holds per record.
+func (b *ConsumerBuilder) signatureVerifier() (*envelopesig.Verifier, error) {
+	ring, err := b.signatureRing()
+	if err != nil || ring == nil {
+		return nil, err
+	}
+
+	if b.cfg.SignatureMaxSkew < 0 {
+		return nil, fmt.Errorf("%w: SignatureMaxSkew=%s (must be >= 0; 0 disables the age check)",
+			consumer.ErrInvalidConfigField, b.cfg.SignatureMaxSkew)
+	}
+
+	covered := ring.Sources()
+
+	for _, source := range b.cfg.ExpectSources {
+		if _, ok := covered[source]; !ok {
+			return nil, fmt.Errorf("%w: no key for %q in %s", consumer.ErrSignatureKeyMissingForSource, source, ring)
+		}
+	}
+
+	return envelopesig.NewVerifier(ring, b.cfg.SignatureMaxSkew)
 }
 
 // resolveReceiver settles WHICH of the three whole-stream modes this consumer
@@ -819,10 +957,12 @@ func (b *ConsumerBuilder) resolveReceiver() (Handler, error) {
 	// fact topic, never a ".dlq", so a reader there would lift the codec-fault
 	// quarantine and the ce-source check on a business stream. ExpectSources
 	// would be validated and then ignored, because a reader never verifies
-	// ce-source. The env allowlist is NOT rejected: a service shares it across
-	// its consumers, and it is inert here by the same exemption.
+	// ce-source. RequireSignatures fails the same way: a reader never verifies
+	// signatures. The env allowlist and STREAMING_CONSUMER_REQUIRE_SIGNATURES
+	// are NOT rejected: a service shares them across its consumers, and they
+	// are inert here by the same exemption.
 	if b.handlerWanted || b.dispatchWanted || len(b.cfg.Commands) > 0 || b.unmatchedSet ||
-		len(b.cfg.Apps) > 0 || len(b.expectSources) > 0 {
+		len(b.cfg.Apps) > 0 || len(b.expectSources) > 0 || b.signaturesWanted {
 		return nil, consumer.ErrDiscardHandlerAndHandlerBothSet
 	}
 

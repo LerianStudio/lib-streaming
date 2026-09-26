@@ -157,13 +157,16 @@ var (
 	ErrInvalidExpectSource = consumer.ErrInvalidExpectSource
 	// ErrDiscardHandlerAndHandlerBothSet is returned by ConsumerBuilder.Build
 	// when DiscardHandler is combined with Handler, On/OnFrom, Commands,
-	// UnmatchedPolicy, Apps or ExpectSources. A DLQ reader is a third answer to "who selects events" —
-	// it selects nothing and receives every quarantine entry on the topics it
-	// drains — so preferring one silently would drop the other's handlers
-	// without a word, and UnmatchedPolicy, which decides what the DISPATCHER
-	// does with an unregistered key, would sit inert with no registry to act on.
-	// Apps would subscribe the reader to fact topics, never a ".dlq", and
-	// ExpectSources would be ignored because a reader never verifies ce-source.
+	// UnmatchedPolicy, Apps, ExpectSources or RequireSignatures. A DLQ reader
+	// is a third answer to "who selects events" — it selects nothing and
+	// receives every quarantine entry on the topics it drains — so preferring
+	// one silently would drop the other's handlers without a word, and
+	// UnmatchedPolicy, which decides what the DISPATCHER does with an
+	// unregistered key, would sit inert with no registry to act on. Apps would
+	// subscribe the reader to fact topics, never a ".dlq", ExpectSources would
+	// be ignored because a reader never verifies ce-source, and
+	// RequireSignatures would quarantine the queue back onto itself because
+	// every signature_* entry is one that fails verification.
 	ErrDiscardHandlerAndHandlerBothSet = consumer.ErrDiscardHandlerAndHandlerBothSet
 	// ErrSubscribedToOwnQuarantineTopic is returned by ConsumerBuilder.Build
 	// when a DISCARD reader subscribes to lerian.streaming.<Source>.dlq — the
@@ -171,6 +174,15 @@ var (
 	// ".dlq" it then owns and provisions. A plain Handler on the same shape is
 	// warned about rather than refused, because the released library accepts it.
 	ErrSubscribedToOwnQuarantineTopic = consumer.ErrSubscribedToOwnQuarantineTopic
+	// ErrConsumerSignatureKeysMissing is returned by ConsumerBuilder.Build when
+	// signatures are required (RequireSignatures(...) or
+	// STREAMING_CONSUMER_REQUIRE_SIGNATURES) but no keyring was supplied.
+	ErrConsumerSignatureKeysMissing = consumer.ErrSignatureKeysMissing
+	// ErrConsumerSignatureKeyMissingForSource is returned by
+	// ConsumerBuilder.Build when signatures are required and an accepted
+	// producer (Apps, Commands or ExpectSources) has no key bound to it in the
+	// keyring — its whole stream would otherwise quarantine.
+	ErrConsumerSignatureKeyMissingForSource = consumer.ErrSignatureKeyMissingForSource
 	// ErrConsumerPartitionHalted is returned by Consumer.Healthy when a
 	// partition has been halted across consecutive poll cycles — a wedge, not a
 	// blip. Wire it into readiness so a consumer that polls cleanly while

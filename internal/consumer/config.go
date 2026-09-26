@@ -2,8 +2,10 @@ package consumer
 
 import (
 	"crypto/tls"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -12,6 +14,7 @@ import (
 	"github.com/LerianStudio/lib-commons/v7/commons"
 
 	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/envelopesig"
 	"github.com/LerianStudio/lib-streaming/v4/internal/kafkasec"
 	"github.com/LerianStudio/lib-streaming/v4/internal/transport"
 )
@@ -56,24 +59,27 @@ var (
 		"streaming consumer: Handler(...) and On(...) are mutually exclusive — use On for per-event dispatch, Handler for the raw stream")
 
 	// ErrDiscardHandlerAndHandlerBothSet is returned when DiscardHandler is
-	// combined with Handler, On/OnFrom, Commands, UnmatchedPolicy, Apps or
-	// ExpectSources. A DLQ reader is a third answer to "who selects events" — it
+	// combined with Handler, On/OnFrom, Commands, UnmatchedPolicy, Apps,
+	// ExpectSources or RequireSignatures. A DLQ reader is a third answer to "who selects events" — it
 	// selects nothing and receives every quarantine entry on the topics it
 	// drains — so silently preferring one would drop the other's handlers
 	// without a word, and UnmatchedPolicy, which decides what the DISPATCHER
 	// does with an unregistered key, has nothing to act on. Apps subscribes to fact topics,
 	// never a ".dlq", and ExpectSources would be ignored because a reader never
-	// verifies ce-source.
+	// verifies ce-source. RequireSignatures is refused for the same reason: a
+	// quarantine copy keeps the original producer's signature, and every
+	// signature_* entry is one that fails, so a verifying reader would
+	// quarantine the queue it drains back onto itself.
 	//
 	// The dangerous order is DiscardHandler(h).Handler(x): the reader is demoted
 	// to a plain handler while still subscribed to a ".dlq" topic, which re-arms
 	// the codec-fault quarantine on it.
 	//
-	// It names all six rather than reusing the Handler-specific errors, so a
+	// It names all seven rather than reusing the Handler-specific errors, so a
 	// caller who wrote DiscardHandler + UnmatchedPolicy is not sent hunting a
 	// Handler(...) call they never made.
 	ErrDiscardHandlerAndHandlerBothSet = errors.New(
-		"streaming consumer: DiscardHandler(...) is mutually exclusive with Handler(...), On(...), Commands(...), UnmatchedPolicy(...), Apps(...) and ExpectSources(...) — a DLQ reader selects nothing, it receives every quarantine entry on the topics it drains")
+		"streaming consumer: DiscardHandler(...) is mutually exclusive with Handler(...), On(...), Commands(...), UnmatchedPolicy(...), Apps(...), ExpectSources(...) and RequireSignatures(...) — a DLQ reader selects nothing and verifies nothing, it receives every quarantine entry on the topics it drains")
 
 	// ErrSubscribedToOwnQuarantineTopic is returned when a DISCARD READER
 	// subscribes to lerian.streaming.<Source>.dlq — the topic it quarantines
@@ -149,6 +155,22 @@ var (
 	// undelivered commands are being quarantined when nothing is.
 	ErrHandlerAndCommandsBothSet = errors.New(
 		"streaming consumer: Commands(...) requires On(...)/OnFrom(...) dispatch — a whole-stream Handler(...) has no handler registry, so the strict unmatched-command quarantine cannot be honoured")
+
+	// ErrSignatureKeysMissing is returned when a consumer requires envelope
+	// signatures but no keyring was supplied, neither through
+	// RequireSignatures(ring) nor STREAMING_CONSUMER_SIGNATURE_KEYS. With no
+	// key every record would quarantine as signature_unknown_key.
+	ErrSignatureKeysMissing = errors.New(
+		"streaming consumer: signatures are required but no signing keys were supplied — pass a keyring to RequireSignatures(...) or set STREAMING_CONSUMER_SIGNATURE_KEYS")
+
+	// ErrSignatureKeyMissingForSource is returned when a consumer requires
+	// envelope signatures and accepts a producing application (Apps, Commands
+	// or ExpectSources) for which its keyring holds no key. That producer's
+	// whole stream would quarantine as signature_unknown_key or
+	// signature_invalid while the consumer reported healthy, so coverage is
+	// proved at Build instead.
+	ErrSignatureKeyMissingForSource = errors.New(
+		"streaming consumer: signatures are required but the keyring holds no key bound to an accepted source")
 )
 
 // ConsumerConfig is the full runtime configuration for a Consumer. It is the
@@ -248,6 +270,33 @@ type ConsumerConfig struct {
 	// most: it sees every record on a topic whose write ACL it does not own.
 	// ConsumerBuilder.ExpectSources(...) called on the builder overrides it.
 	ExpectSources []string
+	// RequireSignatures makes the consumer REQUIRE a valid envelope signature
+	// (ce-sigkid / ce-sigts / ce-sig) on every record, verified in the runtime
+	// ahead of the ce-source check and of both handler modes. A record that is
+	// unsigned, signed by an unknown key id, or fails verification quarantines
+	// with cause kind signature_missing / signature_unknown_key /
+	// signature_invalid and never reaches a handler or the Classifier.
+	// Default false. STREAMING_CONSUMER_REQUIRE_SIGNATURES.
+	//
+	// Turn it on only once the producers sign AND this consumer's lag is past
+	// their first signed record: an unsigned backlog quarantines as
+	// signature_missing (recoverable by replay). A DLQ reader ignores it.
+	RequireSignatures bool
+	// SignatureKeys is the keyring the verifier accepts when RequireSignatures
+	// is on; a ConsumerBuilder.RequireSignatures(ring) call overrides it. Each
+	// key is bound to the ce-source it speaks for, and a record verifies only
+	// when its ce-source equals the source of the key that signed it.
+	// STREAMING_CONSUMER_SIGNATURE_KEYS: csv of <kid>@<source>:<secret>, the
+	// secret standard base64 of at least 32 bytes. Secrets never render: every
+	// fmt verb, JSON and slog print the lib-observability mask.
+	SignatureKeys []envelopesig.Key
+	// SignatureMaxSkew, when positive, also refuses a record whose signing
+	// instant (ce-sigts) is further than this from now. Default 0: disabled.
+	// UNSAFE for any consumer that can lag — a legitimately old backlog would
+	// quarantine as signature_invalid. Replay is already defeated without it:
+	// ce-id is signed, so a replayed record is byte-identical and dedupes on
+	// the handler's ce-id idempotency. STREAMING_CONSUMER_SIGNATURE_MAX_SKEW_MS.
+	SignatureMaxSkew time.Duration
 	// ClientID is the Kafka client.id for broker-side diagnostics.
 	// STREAMING_CONSUMER_CLIENT_ID.
 	ClientID string
@@ -350,9 +399,12 @@ func DefaultBuilderConfig() ConsumerConfig {
 // applies defaults, and validates the result when Enabled=true.
 //
 // The second return value carries human-readable warnings; callers decide how
-// to surface them. It is never nil. TLS/SASL are wired programmatically (via
-// the builder's TLS/SASL setters), never from the environment — secrets do not
-// belong in env-string config (matches the producer's TRD §8 security boundary).
+// to surface them. It is never nil. TLS/SASL are wired through the builder
+// (TLS/SASL setters, or TLSFromConfig/SASLFromConfig over the producer's
+// Config), never from STREAMING_CONSUMER_*. The one secret read here is
+// STREAMING_CONSUMER_SIGNATURE_KEYS, for parity with the producer's
+// STREAMING_SIGNING_KEY; it is parsed only for an enabled consumer and its
+// value never reaches an error, a warning or a fmt rendering.
 func LoadConsumerConfig() (ConsumerConfig, []string, error) {
 	warnings := make([]string, 0)
 	enabled := commons.GetenvBoolOrDefault("STREAMING_CONSUMER_ENABLED", false)
@@ -374,10 +426,24 @@ func LoadConsumerConfig() (ConsumerConfig, []string, error) {
 		HaltBackoff:         getenvMsOrDefault("STREAMING_CONSUMER_HALT_BACKOFF_MS", defaultHaltBackoff),
 		PollTimeout:         getenvMsOrDefault("STREAMING_CONSUMER_POLL_TIMEOUT_MS", defaultPollTimeout),
 		CloseTimeout:        getenvSecOrDefault("STREAMING_CONSUMER_CLOSE_TIMEOUT_S", defaultCloseTimeout),
+		RequireSignatures:   commons.GetenvBoolOrDefault("STREAMING_CONSUMER_REQUIRE_SIGNATURES", false),
+		SignatureMaxSkew:    getenvMsOrDefault("STREAMING_CONSUMER_SIGNATURE_MAX_SKEW_MS", 0),
 	}
 
 	if !cfg.Enabled {
 		return cfg, warnings, nil
+	}
+
+	keys, err := loadSignatureKeys(os.Getenv("STREAMING_CONSUMER_SIGNATURE_KEYS"))
+	if err != nil {
+		return cfg, warnings, err
+	}
+
+	cfg.SignatureKeys = keys
+
+	if len(keys) > 0 && !cfg.RequireSignatures {
+		warnings = append(warnings,
+			"STREAMING_CONSUMER_SIGNATURE_KEYS is set but STREAMING_CONSUMER_REQUIRE_SIGNATURES is not true; the keys are inert and records are not verified")
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -447,6 +513,10 @@ func (c ConsumerConfig) Validate() error {
 		return fmt.Errorf("%w: PollTimeout=%s (must be >= 0)", ErrInvalidConfigField, c.PollTimeout)
 	}
 
+	if c.SignatureMaxSkew < 0 {
+		return fmt.Errorf("%w: SignatureMaxSkew=%s (must be >= 0; 0 disables the age check)", ErrInvalidConfigField, c.SignatureMaxSkew)
+	}
+
 	// Transport-security gate (shared with the producer via internal/kafkasec):
 	// reject a weakening TLS config and SASL-without-TLS unless explicitly opted
 	// into plaintext. SASL credentials must never cross the network in cleartext.
@@ -505,6 +575,67 @@ func (c ConsumerConfig) validateSources() error {
 	}
 
 	return nil
+}
+
+// loadSignatureKeys parses STREAMING_CONSUMER_SIGNATURE_KEYS: a csv of
+// <kid>@<source>:<secret>, the secret standard base64 (none of '@', ':' or ','
+// can appear in a key id, a source or base64, so the split is unambiguous).
+// Unset yields nil. The parsed set is validated as a keyring, so a bad id, an
+// illegal source, a short secret or a duplicate id fails here, at load, rather
+// than at Build. Every failure wraps both ErrInvalidConfigField and
+// ErrInvalidSigningKey and names the entry by position and key id only; the
+// raw value and the decoder's message (which quotes input offsets) never
+// reach the error.
+func loadSignatureKeys(raw string) ([]envelopesig.Key, error) {
+	entries := splitCSV(raw)
+	if len(entries) == 0 {
+		return nil, nil
+	}
+
+	keys := make([]envelopesig.Key, 0, len(entries))
+
+	for i, entry := range entries {
+		key, err := parseSignatureKey(entry)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w: STREAMING_CONSUMER_SIGNATURE_KEYS entry %d: %s",
+				ErrInvalidConfigField, contract.ErrInvalidSigningKey, i+1, err.Error())
+		}
+
+		keys = append(keys, key)
+	}
+
+	if _, err := envelopesig.NewKeyring(keys...); err != nil {
+		return nil, fmt.Errorf("%w: STREAMING_CONSUMER_SIGNATURE_KEYS: %w", ErrInvalidConfigField, err)
+	}
+
+	return keys, nil
+}
+
+// parseSignatureKey splits one <kid>@<source>:<secret> entry. The id and the
+// source are checked BEFORE anything echoes them: in a misordered entry either
+// position may hold the secret, so an error names the structural fault only
+// until both are known to be a legal id and a legal source.
+func parseSignatureKey(entry string) (envelopesig.Key, error) {
+	id, rest, hasSource := strings.Cut(entry, "@")
+	source, encoded, hasSecret := strings.Cut(rest, ":")
+
+	switch {
+	case !hasSource || !hasSecret:
+		return envelopesig.Key{}, errors.New("want <kid>@<source>:<base64 secret>")
+	case id == "" || source == "" || encoded == "":
+		return envelopesig.Key{}, errors.New("key id, source and secret must all be non-empty")
+	case !envelopesig.ValidKeyID(id):
+		return envelopesig.Key{}, errors.New("key id must be 1-64 characters of [a-z0-9._-], starting with [a-z0-9]")
+	case contract.ValidateSource(source) != nil:
+		return envelopesig.Key{}, fmt.Errorf("key %q: source is not a legal ce-source", id)
+	}
+
+	secret, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return envelopesig.Key{}, fmt.Errorf("key %q: secret is not valid standard base64", id)
+	}
+
+	return envelopesig.Key{ID: id, Source: source, Secret: secret}, nil
 }
 
 // getenvMsOrDefault reads a millisecond-valued env var, falling back to def on

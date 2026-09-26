@@ -405,7 +405,8 @@
 //     ErrBareOnWithMultipleApps, ErrUnknownDispatchApp,
 //     ErrAmbiguousSourceVerification, ErrExpectSourcesMissingApp,
 //     ErrInvalidExpectSource, ErrHandlerAndCommandsBothSet,
-//     ErrDiscardHandlerAndHandlerBothSet, ErrSubscribedToOwnQuarantineTopic.
+//     ErrDiscardHandlerAndHandlerBothSet, ErrSubscribedToOwnQuarantineTopic,
+//     ErrConsumerSignatureKeysMissing, ErrConsumerSignatureKeyMissingForSource.
 //
 //     The producer and the consumer define DIFFERENT error values for the
 //     same class of mistake, so each is named for its own side. A single bare
@@ -413,18 +414,22 @@
 //     the root used to export was the producer's.
 //
 //   - Consumer runtime (per record, or from Consumer.Healthy):
-//     ErrUnexpectedSource (ce-source outside the expected-producer allowlist —
-//     quarantined before any handler runs, in BOTH handler modes),
+//     ErrSignatureMissing, ErrSignatureUnknownKey, ErrSignatureInvalid (the
+//     consumer requires signatures and the record is unsigned, signed by an
+//     unknown key id, or does not verify — quarantined before the ce-source
+//     check, in BOTH handler modes), ErrUnexpectedSource (ce-source outside
+//     the expected-producer allowlist — quarantined before any handler runs,
+//     in BOTH handler modes),
 //     ErrUnhandledEvent (no handler for the (app, event key) pair — ALWAYS on a
 //     Commands(...) queue, and on a fact stream under the opt-in
 //     UnmatchedError policy), ErrConsumerPartitionHalted (a partition
 //     head-of-line blocked across consecutive poll cycles — returned by
 //     Healthy, not per record).
 //
-//     The library synthesizes ErrUnexpectedSource and ErrUnhandledEvent, so
-//     both quarantine outright and are never offered to the service
-//     Classifier: they are structural and can never become satisfiable by
-//     waiting, exactly like a codec fault.
+//     The library synthesizes the signature verdicts, ErrUnexpectedSource and
+//     ErrUnhandledEvent, so all of them quarantine outright and are never
+//     offered to the service Classifier: they are structural and can never
+//     become satisfiable by waiting, exactly like a codec fault.
 //
 //   - Lifecycle / wiring (NOT caller errors — IsCallerError returns false):
 //     ErrEmitterClosed, ErrNilProducer, ErrCircuitOpen,

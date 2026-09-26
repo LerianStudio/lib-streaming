@@ -17,6 +17,13 @@ const MinSecretBytes = 32
 // log line and a DLQ error message.
 var keyIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
+// ValidKeyID reports whether id is a legal key id. A caller parsing keys from
+// untrusted text uses it to decide whether the id is safe to echo in an error:
+// a value in the wrong position of a malformed entry may be secret material.
+func ValidKeyID(id string) bool {
+	return keyIDPattern.MatchString(id)
+}
+
 // Key is one signing key: an id carried on the wire in ce-sigkid, the
 // ce-source the key speaks for, and the HMAC secret.
 //

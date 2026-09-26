@@ -22,9 +22,11 @@ var errMyBusinessRule = errors.New("test: my business rule rejected this")
 // through it.
 func retryEverythingElse(err error) bool { return !errors.Is(err, errMyBusinessRule) }
 
-// TestLibraryVerdicts_BypassTheServiceClassifier proves the two sentinels the
+// TestLibraryVerdicts_BypassTheServiceClassifier proves the sentinels the
 // LIBRARY synthesizes are quarantined outright, not offered to the service's
-// Classifier.
+// Classifier. The three signature verdicts join them as defence in depth: the
+// runtime gate quarantines them before any handler runs, and a handler that
+// returns one anyway still cannot turn it into a retry.
 //
 // ErrUnhandledEvent and ErrUnexpectedSource are structural: no handler exists
 // for this key, or this record came from a source the consumer refuses. Neither
@@ -43,6 +45,9 @@ func TestLibraryVerdicts_BypassTheServiceClassifier(t *testing.T) {
 	}{
 		{"no handler registered for the key", fmt.Errorf("%w: %q", ErrUnhandledEvent, "loan.disbursed"), dlqCauseUnhandledKey},
 		{"record came from an unexpected producer", fmt.Errorf("%w: got %q", ErrUnexpectedSource, "stranger"), dlqCauseSourceMismatch},
+		{"record carries no signature", fmt.Errorf("%w: no ce-sig", ErrSignatureMissing), dlqCauseSignatureMissing},
+		{"record signed by an unknown key", fmt.Errorf("%w: k-old", ErrSignatureUnknownKey), dlqCauseSignatureUnknownKey},
+		{"record signature does not verify", fmt.Errorf("%w: mismatch", ErrSignatureInvalid), dlqCauseSignatureInvalid},
 	}
 
 	for _, tt := range tests {
