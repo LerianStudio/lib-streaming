@@ -120,3 +120,23 @@ func TestSigner_TimestampIsSigningInstantUTC(t *testing.T) {
 	ceTime, _ := headerValue(signed, "ce-time")
 	assert.Equal(t, "2026-09-26T12:00:00Z", ceTime)
 }
+
+func TestStrip_RemovesOnlySignatureHeadersAndCopies(t *testing.T) {
+	t.Parallel()
+
+	ring := mustKeyring(t, Key{ID: "k1", Source: "ledger", Secret: testSecret(1, MinSecretBytes)})
+	signed := mustSigner(t, ring, "k1", "ledger").Sign(headersFor(fullEvent()), []byte(`{}`))
+
+	stripped := Strip(signed)
+
+	require.Len(t, stripped, len(signed)-3)
+
+	for _, h := range stripped {
+		require.False(t, isSignatureHeader(h.Key), "header %s survived Strip", h.Key)
+	}
+
+	require.Equal(t, headersFor(fullEvent()), stripped)
+
+	stripped[0].Key = "mutated"
+	require.NotEqual(t, "mutated", signed[0].Key, "Strip must return a fresh slice")
+}

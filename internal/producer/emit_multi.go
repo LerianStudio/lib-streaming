@@ -122,7 +122,7 @@ func (p *Producer) emitMulti(ctx context.Context, request contract.EmitRequest) 
 	// the elements it receives.
 	outcomes := make([]routeOutcome, 0, len(routes))
 
-	headers := buildTransportHeaders(ctx, event)
+	headers := p.publishHeaders(ctx, event)
 	for i := range routes {
 		route := commandRoute(routes[i], event.Source, resolved.Class)
 		outcomes = append(outcomes, p.dispatchRoute(ctx, span, event, topic, resolved.DefinitionKey, policy, headers, route))

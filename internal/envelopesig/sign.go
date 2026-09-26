@@ -111,6 +111,22 @@ func (s *Signer) Sign(headers []transport.Header, body []byte) []transport.Heade
 	)
 }
 
+// Strip returns headers without the three signature headers, as a fresh slice;
+// the input is never modified. A publisher uses it for a copy that must not
+// carry a signature — for example a record whose body was dropped, which a
+// signature over the empty body would turn into a verifiable event.
+func Strip(headers []transport.Header) []transport.Header {
+	out := make([]transport.Header, 0, len(headers))
+
+	for _, h := range headers {
+		if !isSignatureHeader(h.Key) {
+			out = append(out, h)
+		}
+	}
+
+	return out
+}
+
 // isSignatureHeader reports whether key is one of the three signature headers.
 func isSignatureHeader(key string) bool {
 	return key == HeaderKeyID || key == HeaderSignedAt || key == HeaderSignature

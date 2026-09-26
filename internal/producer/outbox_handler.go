@@ -179,7 +179,7 @@ func (p *Producer) handleOutboxRow(ctx context.Context, row *outbox.OutboxEvent)
 		TenantID:    envelope.Event.TenantID,
 		Key:         partKey,
 		Payload:     envelope.Event.Payload,
-		Headers:     buildTransportHeaders(ctx, envelope.Event),
+		Headers:     p.publishHeaders(ctx, envelope.Event),
 		Attributes:  destination.Attributes,
 	}
 
