@@ -8,9 +8,11 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/LerianStudio/lib-commons/v7/commons/circuitbreaker"
 	"github.com/LerianStudio/lib-commons/v7/commons/outbox"
 	"github.com/LerianStudio/lib-observability/v4/log"
 	"github.com/twmb/franz-go/pkg/kgo"
@@ -200,9 +202,11 @@ func TestEmitMulti_HeadersByteIdenticalWithoutSigner(t *testing.T) {
 	}
 }
 
-// TestOutboxRelay_SignsAtRelayInstantNotEnqueue proves the relay signs when it
-// publishes, not when the event was emitted: an enqueue-time signature would
-// age in the outbox and turn legitimate backlog into rejections.
+// TestOutboxRelay_SignsAtRelayInstantNotEnqueue drives the real fallback: an
+// Emit with the breaker open writes the outbox row at t0, and the relay later
+// publishes it at t1. The persisted row must carry no signature material and
+// the relayed record must be signed at t1: an enqueue-time signature would age
+// in the outbox and turn legitimate backlog into rejections.
 func TestOutboxRelay_SignsAtRelayInstantNotEnqueue(t *testing.T) {
 	t.Parallel()
 
@@ -211,14 +215,104 @@ func TestOutboxRelay_SignsAtRelayInstantNotEnqueue(t *testing.T) {
 	ctx := context.Background()
 	adapter := fake.NewAdapter(TransportKafkaLike)
 	ring := signingTestKeyring(t, signingTestKeyID, source)
-	catalog := sampleCatalog(t)
+	cbManager := newFakeCBManager()
+	repo := &fakeOutboxRepo{}
 	routes := mustMultiRouteTable(t,
 		multiTestRoute("transaction.created.kafka.primary", "transaction.created", "primary", "lerian.streaming."+source, contract.RouteRequired),
 	)
 
 	p, err := NewProducerMulti(ctx, MultiProducerConfig{Source: source}, nil,
 		[]TargetSpec{{Name: "primary", Kind: TransportKafkaLike, Adapter: adapter}},
-		routes, catalog,
+		routes, sampleCatalog(t),
+		WithLogger(log.NewNop()),
+		WithCircuitBreakerManager(cbManager),
+		WithOutboxRepository(repo),
+		WithEnvelopeSigning(ring, signingTestKeyID),
+	)
+	if err != nil {
+		t.Fatalf("NewProducerMulti() error = %v", err)
+	}
+	t.Cleanup(func() { _ = p.Close() })
+
+	enqueueAt := time.Date(2026, 9, 26, 12, 30, 0, 0, time.UTC)
+	relayAt := enqueueAt.Add(6 * time.Hour)
+
+	var clock atomic.Pointer[time.Time]
+
+	clock.Store(&enqueueAt)
+
+	p.signer, err = envelopesig.NewSigner(ring, signingTestKeyID, source, envelopesig.WithClock(func() time.Time { return *clock.Load() }))
+	if err != nil {
+		t.Fatalf("NewSigner() error = %v", err)
+	}
+
+	primaryService := p.targets["primary"].cbServiceName
+	cbManager.ForceTransition(primaryService, circuitbreaker.StateOpen)
+
+	if err := p.Emit(ctx, eventToRequest(sampleEvent())); err != nil {
+		t.Fatalf("Emit() with the breaker open error = %v; want the outbox fallback", err)
+	}
+
+	if got := len(adapter.Messages()); got != 0 {
+		t.Fatalf("breaker open: adapter received %d messages; want 0 (outboxed)", got)
+	}
+
+	row := repo.firstCreated()
+	if row == nil {
+		t.Fatal("Emit with the breaker open wrote no outbox row")
+	}
+
+	for _, needle := range []string{envelopesig.HeaderKeyID, envelopesig.HeaderSignedAt, envelopesig.HeaderSignature, signingTestKeyID, enqueueAt.Format(time.RFC3339Nano)} {
+		if strings.Contains(string(row.Payload), needle) {
+			t.Errorf("persisted outbox row carries signature material %q: %s", needle, row.Payload)
+		}
+	}
+
+	clock.Store(&relayAt)
+	cbManager.ForceTransition(primaryService, circuitbreaker.StateClosed)
+
+	if err := p.handleOutboxRow(ctx, row); err != nil {
+		t.Fatalf("handleOutboxRow() error = %v", err)
+	}
+
+	messages := adapter.Messages()
+	if len(messages) != 1 {
+		t.Fatalf("relay published %d messages; want 1", len(messages))
+	}
+
+	signedAt, _ := dlqHeader(messages[0], envelopesig.HeaderSignedAt)
+	if want := relayAt.Format(time.RFC3339Nano); signedAt != want {
+		t.Errorf("%s = %q; want the relay instant %q", envelopesig.HeaderSignedAt, signedAt, want)
+	}
+
+	if err := verifyMessage(t, ring, messages[0]); err != nil {
+		t.Errorf("relayed record does not verify: %v", err)
+	}
+}
+
+// TestOutboxRelay_RefusesRowOfAnotherSource pins the signing binding at relay
+// time: a row persisted under a source other than the producer's own (the
+// service renamed its source with rows still in the outbox, or a table shared
+// across sources) is failed as a caller error instead of being published with
+// a signature every verifying consumer is certain to quarantine as a forgery.
+func TestOutboxRelay_RefusesRowOfAnotherSource(t *testing.T) {
+	t.Parallel()
+
+	const (
+		source    = "svc-sign-relay"
+		rowSource = "svc-sign-renamed"
+	)
+
+	ctx := context.Background()
+	adapter := fake.NewAdapter(TransportKafkaLike)
+	ring := signingTestKeyring(t, signingTestKeyID, source)
+	routes := mustMultiRouteTable(t,
+		multiTestRoute("transaction.created.kafka.primary", "transaction.created", "primary", "lerian.streaming."+source, contract.RouteRequired),
+	)
+
+	p, err := NewProducerMulti(ctx, MultiProducerConfig{Source: source}, nil,
+		[]TargetSpec{{Name: "primary", Kind: TransportKafkaLike, Adapter: adapter}},
+		routes, sampleCatalog(t),
 		WithLogger(log.NewNop()),
 		WithEnvelopeSigning(ring, signingTestKeyID),
 	)
@@ -227,16 +321,8 @@ func TestOutboxRelay_SignsAtRelayInstantNotEnqueue(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = p.Close() })
 
-	relayAt := time.Date(2026, 9, 26, 18, 30, 0, 123456789, time.UTC)
-
-	p.signer, err = envelopesig.NewSigner(ring, signingTestKeyID, source, envelopesig.WithClock(func() time.Time { return relayAt }))
-	if err != nil {
-		t.Fatalf("NewSigner() error = %v", err)
-	}
-
 	event := sampleEvent()
-	event.Source = source
-	event.Timestamp = relayAt.Add(-6 * time.Hour)
+	event.Source = rowSource
 	event.ApplyDefaults()
 
 	envelope := testOutboxEnvelope(event, event.Topic(), "transaction.created", DefaultDeliveryPolicy(), newTestUUIDv7(t))
@@ -253,27 +339,23 @@ func TestOutboxRelay_SignsAtRelayInstantNotEnqueue(t *testing.T) {
 		Payload:     payload,
 	}
 
-	if err := p.handleOutboxRow(ctx, row); err != nil {
-		t.Fatalf("handleOutboxRow() error = %v", err)
+	err = p.handleOutboxRow(ctx, row)
+	if !errors.Is(err, contract.ErrInvalidSigningKey) {
+		t.Fatalf("handleOutboxRow() error = %v; want ErrInvalidSigningKey", err)
 	}
 
-	messages := adapter.Messages()
-	if len(messages) != 1 {
-		t.Fatalf("relay published %d messages; want 1", len(messages))
+	if !contract.IsCallerError(err) {
+		t.Errorf("handleOutboxRow() error = %v; want a caller-class error", err)
 	}
 
-	signedAt, _ := dlqHeader(messages[0], envelopesig.HeaderSignedAt)
-	if want := relayAt.Format(time.RFC3339Nano); signedAt != want {
-		t.Errorf("%s = %q; want the relay instant %q", envelopesig.HeaderSignedAt, signedAt, want)
+	for _, want := range []string{`"` + rowSource + `"`, `"` + source + `"`, `"` + signingTestKeyID + `"`} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not name %s", err, want)
+		}
 	}
 
-	ceTime, _ := dlqHeader(messages[0], "ce-time")
-	if ceTime == signedAt {
-		t.Errorf("ce-time = %s equals the signing instant; want the original emit time", ceTime)
-	}
-
-	if err := verifyMessage(t, ring, messages[0]); err != nil {
-		t.Errorf("relayed record does not verify: %v", err)
+	if got := len(adapter.Messages()); got != 0 {
+		t.Errorf("relay published %d messages for a foreign-source row; want 0", got)
 	}
 }
 

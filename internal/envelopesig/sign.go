@@ -49,12 +49,18 @@ type Signer struct {
 
 // NewSigner returns a signer for the key activeKeyID in ring. It refuses a nil
 // ring, an id absent from it, and a key bound to a source other than the
-// producer's own — a producer can only ever vouch for itself.
+// producer's own — a producer can only ever vouch for itself. An activeKeyID
+// the id pattern refuses is never echoed: it may be a secret in the wrong slot.
 func NewSigner(ring *Keyring, activeKeyID, source string, opts ...Option) (*Signer, error) {
+	if !ValidKeyID(activeKeyID) {
+		return nil, fmt.Errorf("%w: active signing key id is not a legal key id (must match %s)",
+			contract.ErrInvalidSigningKey, keyIDPattern.String())
+	}
+
 	key, ok := ring.lookup(activeKeyID)
 	if !ok {
-		return nil, fmt.Errorf("%w: active signing key %s is not in the keyring %s",
-			contract.ErrInvalidSigningKey, quoteBounded([]byte(activeKeyID)), ring)
+		return nil, fmt.Errorf("%w: active signing key %q is not in the keyring %s",
+			contract.ErrInvalidSigningKey, activeKeyID, ring)
 	}
 
 	if key.Source != source {
@@ -63,6 +69,23 @@ func NewSigner(ring *Keyring, activeKeyID, source string, opts ...Option) (*Sign
 	}
 
 	return &Signer{key: key, now: resolveOptions(opts).now}, nil
+}
+
+// CheckSource reports whether the signer may sign a record claiming source:
+// only a record of the source its key is bound to. NewSigner checks the
+// binding once against the producer's configured source; a publisher calls
+// CheckSource per record for records it did not build itself — an outbox row
+// persisted under an earlier or another source — so it fails that record
+// instead of publishing a signature every verifier is certain to refuse.
+// Returns nil on a nil *Signer (signing not configured) and otherwise wraps
+// contract.ErrInvalidSigningKey.
+func (s *Signer) CheckSource(source string) error {
+	if s == nil || source == s.key.Source {
+		return nil
+	}
+
+	return fmt.Errorf("%w: record claims source %s but active signing key %q is bound to source %q",
+		contract.ErrInvalidSigningKey, quoteBounded([]byte(source)), s.key.ID, s.key.Source)
 }
 
 // Sign returns a NEW header slice: headers without any previous signature,

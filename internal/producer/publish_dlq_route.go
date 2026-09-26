@@ -125,7 +125,19 @@ func (p *Producer) publishRouteDLQ(
 	// The CloudEvents headers are signed over the payload BEFORE the forensic
 	// set is appended: the DLQ copy is a publication of its own, signed at the
 	// DLQ instant, and the x-lerian-dlq-* headers are outside the signature.
-	headers := p.publishHeaders(ctx, event)
+	headers, err := p.publishHeaders(ctx, event)
+	if err != nil {
+		p.metrics.recordDLQFailed(ctx, sourceLabel)
+		p.logger.Log(ctx, obs.LevelError, "streaming: route DLQ copy cannot be signed",
+			"producer_id", p.producerID,
+			"route_key", route.Key,
+			"target", route.Target,
+			"error", err.Error(),
+		)
+
+		return false, err
+	}
+
 	headers = append(headers,
 		transport.Header{Key: dlqheader.SourceTopic, Value: []byte(sourceLabel)},
 		transport.Header{Key: dlqheader.ErrorClass, Value: []byte(cls)},
@@ -146,7 +158,7 @@ func (p *Producer) publishRouteDLQ(
 		Attributes:  dlqDest.Attributes,
 	}
 
-	err := rt.adapter.Publish(ctx, transport.CloneMessage(message))
+	err = rt.adapter.Publish(ctx, transport.CloneMessage(message))
 	if err != nil && dlqheader.IsSizeError(err) {
 		// The copy does not fit. Quarantining the metadata WITHOUT the payload
 		// beats losing the entry entirely: the event id, tenant, route, and

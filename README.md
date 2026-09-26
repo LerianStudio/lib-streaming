@@ -615,6 +615,14 @@ when that is replayed.
 built, for a nil ring, an empty or unknown key id, or a key bound to another
 source. A producer can only vouch for itself.
 
+The same rule holds per record at relay time. An outbox row carries the
+`ce-source` it was persisted under, which is not the producer's current one
+when the service renamed its source with rows still pending, or when a table
+is shared across sources. The relay fails such a row with `ErrInvalidSigningKey`
+(a caller error, so a wired `IsCallerError` classifier marks it `INVALID`, and
+the row stays in the table for an operator) instead of publishing a record
+every verifying consumer would quarantine as a forgery.
+
 ### Consumer
 
 ```go

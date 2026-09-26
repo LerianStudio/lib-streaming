@@ -186,3 +186,30 @@ func TestNewKeyring_ErrorsNeverCarrySecret(t *testing.T) {
 	assert.NotContains(t, err.Error(), "S3CR3T")
 	assert.True(t, errors.Is(err, contract.ErrInvalidSigningKey))
 }
+
+// TestNewKeyring_InvalidIDNeverEchoed pins that an id refused by the pattern
+// never reaches the error text: the usual way an id is invalid is an operator
+// pasting the base64 secret into the id slot, and that error is logged at boot.
+func TestNewKeyring_InvalidIDNeverEchoed(t *testing.T) {
+	t.Parallel()
+
+	for _, id := range []string{
+		"c2VjcmV0LXNlY3JldC1zZWNyZXQtc2VjcmV0LXNlY3JlNQ==",
+		"Zm9vYmFy/K+x",
+		"k1\n",
+	} {
+		_, err := NewKeyring(Key{ID: id, Source: "ledger", Secret: testSecret(1, 32)})
+		require.ErrorIs(t, err, contract.ErrInvalidSigningKey, "id %q", id)
+		assert.NotContains(t, err.Error(), strings.TrimSpace(id), "id %q echoed", id)
+		assert.NotContains(t, err.Error(), id[:min(6, len(id))], "id %q prefix echoed", id)
+		assert.Contains(t, err.Error(), "key 1:", "error should name the key position")
+	}
+
+	// A legal id stays in the text: it is what the operator greps for.
+	_, err := NewKeyring(
+		Key{ID: "k1", Source: "ledger", Secret: testSecret(1, 32)},
+		Key{ID: "k1", Source: "ledger", Secret: testSecret(2, 32)},
+	)
+	require.ErrorIs(t, err, contract.ErrInvalidSigningKey)
+	assert.Contains(t, err.Error(), `"k1"`)
+}

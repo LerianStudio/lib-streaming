@@ -140,3 +140,41 @@ func TestStrip_RemovesOnlySignatureHeadersAndCopies(t *testing.T) {
 	stripped[0].Key = "mutated"
 	require.NotEqual(t, "mutated", signed[0].Key, "Strip must return a fresh slice")
 }
+
+// TestSigner_InvalidActiveIDNeverEchoed pins that an active key id refused by
+// the pattern never reaches the error text: it may be secret material pasted
+// into the wrong slot. A legal but unknown id is still named.
+func TestSigner_InvalidActiveIDNeverEchoed(t *testing.T) {
+	t.Parallel()
+
+	ring := mustKeyring(t, Key{ID: "k1", Source: "ledger", Secret: testSecret(1, 32)})
+
+	const secretLike = "c2VjcmV0LXNlY3JldC1zZWNyZXQtc2VjcmV0LXNlY3JlNQ=="
+
+	_, err := NewSigner(ring, secretLike, "ledger")
+	require.ErrorIs(t, err, contract.ErrInvalidSigningKey)
+	assert.NotContains(t, err.Error(), secretLike[:6])
+
+	_, err = NewSigner(ring, "k2", "ledger")
+	require.ErrorIs(t, err, contract.ErrInvalidSigningKey)
+	assert.Contains(t, err.Error(), `"k2"`)
+}
+
+// TestSigner_CheckSource pins the per-record binding a publisher applies to a
+// record it did not build: only the key's own source may be signed.
+func TestSigner_CheckSource(t *testing.T) {
+	t.Parallel()
+
+	signer := mustSigner(t, mustKeyring(t, Key{ID: "k1", Source: "ledger", Secret: testSecret(1, 32)}), "k1", "ledger")
+
+	require.NoError(t, signer.CheckSource("ledger"))
+
+	err := signer.CheckSource("lender")
+	require.ErrorIs(t, err, contract.ErrInvalidSigningKey)
+	assert.Contains(t, err.Error(), `"lender"`)
+	assert.Contains(t, err.Error(), `"ledger"`)
+	assert.Contains(t, err.Error(), `"k1"`)
+
+	var nilSigner *Signer
+	require.NoError(t, nilSigner.CheckSource("anything"))
+}

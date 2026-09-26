@@ -31,6 +31,16 @@ func newSigner(spec *signingSpec, source string) (*envelopesig.Signer, error) {
 // producer publish path calls it at publish time, so a relayed or
 // dead-lettered record carries a signature from the instant it was written,
 // never one inherited from an earlier attempt.
-func (p *Producer) publishHeaders(ctx context.Context, event Event) []transport.Header {
-	return p.signer.Sign(buildTransportHeaders(ctx, event), event.Payload)
+//
+// It refuses, with contract.ErrInvalidSigningKey, an event whose source is not
+// the one the signing key is bound to. An Emit always carries the producer's
+// own source; an outbox row carries the source it was persisted under, which
+// may be an earlier or another one, and publishing it signed would only hand
+// every verifying consumer a record it quarantines as a forgery.
+func (p *Producer) publishHeaders(ctx context.Context, event Event) ([]transport.Header, error) {
+	if err := p.signer.CheckSource(event.Source); err != nil {
+		return nil, err
+	}
+
+	return p.signer.Sign(buildTransportHeaders(ctx, event), event.Payload), nil
 }

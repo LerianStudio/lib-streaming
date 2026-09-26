@@ -58,7 +58,9 @@ type keyringState struct {
 // a caller that zeroes or reuses its buffers afterwards does not reach the
 // ring. It refuses an empty ring, an invalid or duplicate id, a Source that is
 // not a legal ce-source, and a secret shorter than MinSecretBytes, all with
-// contract.ErrInvalidSigningKey. Error texts name ids and sources only.
+// contract.ErrInvalidSigningKey. Error texts name legal ids and sources only:
+// an id the pattern refuses is identified by its position, never echoed,
+// because the usual way it is invalid is a secret pasted into the id slot.
 func NewKeyring(keys ...Key) (*Keyring, error) {
 	if len(keys) == 0 {
 		return nil, fmt.Errorf("%w: keyring is empty", contract.ErrInvalidSigningKey)
@@ -66,10 +68,10 @@ func NewKeyring(keys ...Key) (*Keyring, error) {
 
 	byID := make(map[string]*Key, len(keys))
 
-	for _, key := range keys {
-		if !keyIDPattern.MatchString(key.ID) {
-			return nil, fmt.Errorf("%w: key id %s must match %s",
-				contract.ErrInvalidSigningKey, quoteBounded([]byte(key.ID)), keyIDPattern.String())
+	for i, key := range keys {
+		if !ValidKeyID(key.ID) {
+			return nil, fmt.Errorf("%w: key %d: id is not a legal key id (must match %s)",
+				contract.ErrInvalidSigningKey, i+1, keyIDPattern.String())
 		}
 
 		if _, dup := byID[key.ID]; dup {

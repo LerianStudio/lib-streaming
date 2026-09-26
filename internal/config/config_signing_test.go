@@ -171,3 +171,45 @@ func assertNoSecret(t *testing.T, rendered string) {
 		}
 	}
 }
+
+// TestLoadConfig_SigningSwappedVariablesNeverLeakSecret covers the operator
+// who swaps the two variables: the base64 secret lands in
+// STREAMING_SIGNING_KEY_ID and a short id that happens to decode as base64 in
+// STREAMING_SIGNING_KEY. The refusal is logged at boot, so it must not echo
+// the id slot's value.
+func TestLoadConfig_SigningSwappedVariablesNeverLeakSecret(t *testing.T) {
+	setSigningBaseEnv(t)
+	t.Setenv("STREAMING_SIGNING_KEY_ID", base64.StdEncoding.EncodeToString(signingTestSecret))
+	t.Setenv("STREAMING_SIGNING_KEY", "lenderk1")
+
+	_, _, err := LoadConfig()
+	if !errors.Is(err, contract.ErrInvalidSigningKey) {
+		t.Fatalf("LoadConfig() err = %v; want ErrInvalidSigningKey", err)
+	}
+
+	assertNoSecret(t, err.Error())
+
+	if encoded := base64.StdEncoding.EncodeToString(signingTestSecret); strings.Contains(err.Error(), encoded[:12]) {
+		t.Fatalf("error echoes a prefix of the secret: %s", err)
+	}
+}
+
+// TestLoadConfig_SigningBase64SecretInIDSlotNeverLeaks covers the secret
+// pasted into STREAMING_SIGNING_KEY_ID next to a valid key.
+func TestLoadConfig_SigningBase64SecretInIDSlotNeverLeaks(t *testing.T) {
+	setSigningBaseEnv(t)
+	encoded := base64.StdEncoding.EncodeToString(signingTestSecret)
+	t.Setenv("STREAMING_SIGNING_KEY_ID", encoded)
+	t.Setenv("STREAMING_SIGNING_KEY", encoded)
+
+	_, _, err := LoadConfig()
+	if !errors.Is(err, contract.ErrInvalidSigningKey) {
+		t.Fatalf("LoadConfig() err = %v; want ErrInvalidSigningKey", err)
+	}
+
+	assertNoSecret(t, err.Error())
+
+	if strings.Contains(err.Error(), encoded[:12]) {
+		t.Fatalf("error echoes a prefix of the secret: %s", err)
+	}
+}
