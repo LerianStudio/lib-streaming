@@ -36,7 +36,7 @@ Internal:
 - `internal/transport/eventbridge`: EventBridge adapter built on a caller-supplied `PutEvents` client.
 
 Public test support:
-- `streamingtest`: public test double and assertion helpers.
+- `streamingtest`: public test double and assertion helpers, plus the signed-record helpers `SigningKey` (deterministic, test-only secret), `Keyring`, `SignedRecord`, `UnsignedRecord` and `ForgedRecord`, which build records through the same header codec and signer the producer uses, so a record they sign verifies exactly as a published one does. `streamingtest` exposes `*kgo.Record` (franz-go), as `ParseDiscardRecord` already exposes `kgo.RecordHeader`.
 
 Support:
 - `docs/`: design notes and standards pointers.

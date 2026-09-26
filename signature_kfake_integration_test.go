@@ -14,6 +14,7 @@ import (
 
 	"github.com/LerianStudio/lib-observability/v4/log"
 	streaming "github.com/LerianStudio/lib-streaming/v4"
+	"github.com/LerianStudio/lib-streaming/v4/streamingtest"
 )
 
 // This file drives envelope signing end to end against the Kafka protocol: a
@@ -357,4 +358,115 @@ func keepProducingRecord(t *testing.T, cluster *kfake.Cluster, record *kgo.Recor
 			}
 		}
 	})
+}
+
+// TestIntegration_StreamingtestRecordsThroughVerifyingConsumer proves the
+// streamingtest helpers build what the real consumer meets on the wire: the
+// signed record reaches the handler, and the unsigned and forged records land
+// on the consumer's own DLQ as signature_missing and signature_invalid.
+func TestIntegration_StreamingtestRecordsThroughVerifyingConsumer(t *testing.T) {
+	cluster := dispatchCluster(t)
+	key := streamingtest.SigningKey("lender-k1", dispatchApp)
+
+	recorder := newPayloadRecorder()
+	stopConsumer := runConsumer(t, verifyingConsumer(t, cluster, dispatchGroup+"-streamingtest", streamingtest.Keyring(t, key), recorder.handle))
+
+	defer stopConsumer()
+
+	event := func(payload string) streaming.Event {
+		return streaming.Event{
+			TenantID:     "tenant-abc",
+			ResourceType: "loan_contract",
+			EventType:    "disbursed",
+			Source:       dispatchApp,
+			Payload:      []byte(payload),
+		}
+	}
+
+	signed := streamingtest.SignedRecord(t, dispatchTopic, key, event(`{"record":"signed"}`))
+	unsigned := streamingtest.UnsignedRecord(t, dispatchTopic, event(`{"record":"unsigned"}`))
+	forged := streamingtest.ForgedRecord(t, dispatchTopic, key, event(`{"record":"forged"}`))
+
+	stop := make(chan struct{})
+
+	var producers sync.WaitGroup
+
+	for _, rec := range []*kgo.Record{signed, unsigned, forged} {
+		keepProducingRecord(t, cluster, rec, stop, &producers)
+	}
+
+	recorder.awaitPayloads(t, signed.Value)
+	causes := awaitDLQCauses(t, cluster, dispatchConsumerDLQTopic, streaming.DLQCauseSignatureMissing, streaming.DLQCauseSignatureInvalid)
+
+	close(stop)
+	producers.Wait()
+
+	if recorder.saw(unsigned.Value) || recorder.saw(forged.Value) {
+		t.Error("the handler received an unsigned or forged record; verification must quarantine before dispatch")
+	}
+
+	if got := causes[streaming.DLQCauseSignatureMissing]; !bytes.Equal(got, unsigned.Value) {
+		t.Errorf("signature_missing entry carries %q; want the unsigned record %q", got, unsigned.Value)
+	}
+
+	if got := causes[streaming.DLQCauseSignatureInvalid]; !bytes.Equal(got, forged.Value) {
+		t.Errorf("signature_invalid entry carries %q; want the forged record %q", got, forged.Value)
+	}
+}
+
+// awaitDLQCauses reads topic from the start until an entry of every wanted
+// cause kind has landed, returning the payload of the first entry per kind.
+func awaitDLQCauses(t *testing.T, cluster *kfake.Cluster, topic string, wanted ...string) map[string][]byte {
+	t.Helper()
+
+	cl, err := kgo.NewClient(
+		kgo.SeedBrokers(cluster.ListenAddrs()...),
+		kgo.ConsumeTopics(topic),
+		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()),
+	)
+	if err != nil {
+		t.Fatalf("DLQ reader init: %v", err)
+	}
+
+	defer cl.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), dispatchWaitBudget)
+	defer cancel()
+
+	found := map[string][]byte{}
+
+	for {
+		fetches := cl.PollFetches(ctx)
+		if ctx.Err() != nil {
+			t.Fatalf("DLQ %s holds cause kinds %v within %s; want %v", topic, keysOf(found), dispatchWaitBudget, wanted)
+		}
+
+		fetches.EachRecord(func(rec *kgo.Record) {
+			kind := streaming.ParseDiscardRecord(rec.Headers, rec.Value).CauseKind
+			if _, seen := found[kind]; !seen {
+				found[kind] = rec.Value
+			}
+		})
+
+		complete := true
+
+		for _, kind := range wanted {
+			if _, ok := found[kind]; !ok {
+				complete = false
+			}
+		}
+
+		if complete {
+			return found
+		}
+	}
+}
+
+func keysOf(m map[string][]byte) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+
+	return keys
 }
