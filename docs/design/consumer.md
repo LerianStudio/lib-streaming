@@ -111,6 +111,10 @@ loop until ctx canceled:
      for rec in p.Records (ascending offset):
         ev, terminal? := codec(rec.Headers)  # parse CE headers (§7b)
         if terminal?: dlq.PublishDLQ(rec); stage commit; continue   # codec-decode fault = poison
+        if signatures required and verify(rec.Headers, rec.Value) fails:
+           dlq.PublishDLQ(rec, signature_*); stage commit; continue   # structural; RAW headers, not ev
+        if ev.Source not accepted:
+           dlq.PublishDLQ(rec, source_mismatch); stage commit; continue
         if rec.Topic is a Commands(...) queue and no handler for the key:
            dlq.PublishDLQ(rec, unhandled_key); stage commit; continue   # STRICT: a command is work addressed to us
         if ev.SystemEvent: metric system_event   # observability only, NOT control flow
@@ -332,6 +336,9 @@ producer lacks). Prefix `STREAMING_CONSUMER_`.
 | Commands              | STREAMING_CONSUMER_COMMANDS (csv)            | —       | APPLICATIONS THAT COMMAND THIS ONE, by `ce-source`. Each resolves to that app's commands queue (`lerian.streaming.<app>.commands`) and feeds the same allowlist `Apps` fills. Those topics are STRICT: an unmatched event key QUARANTINES with cause kind `unhandled_key` instead of being skipped and committed. Naming one app in BOTH `Apps` and `Commands` is legal — two subscriptions, one deduped allowlist entry |
 | Topics                | STREAMING_CONSUMER_TOPICS (csv)              | —       | RAW subscription list — the escape hatch for topics this library did not derive (legacy streams, third-party producers). NOT strict, even when an entry spells a `.commands` name: the escape hatch has no allowlist and no class knowledge, so promoting it would quarantine on a guess |
 | ExpectSources         | STREAMING_CONSUMER_EXPECT_SOURCES (csv)      | ""      | explicit `ce-source` allowlist. REPLACES the one `Apps`+`Commands` would have implied, must COVER every entry in BOTH, and every entry is validated against the strict source contract. It is the ONLY way to resolve the named-app + `Topics` refusal from the environment; a fluent `ExpectSources(...)` overrides it, and failures name whichever origin the list came from. Applies in BOTH handler modes |
+| RequireSignatures     | STREAMING_CONSUMER_REQUIRE_SIGNATURES        | false   | verify every record's envelope signature before the source check, in both handler modes; failures quarantine as `signature_missing` / `signature_unknown_key` / `signature_invalid`. Inert on a DLQ reader. A fluent `RequireSignatures(ring)` sets it too |
+| SignatureKeys         | STREAMING_CONSUMER_SIGNATURE_KEYS (csv)      | —       | **secret**: the verifying ring, `<kid>@<source>:<std-base64>` per entry, each secret >= 32 bytes. `Build` needs a key for every accepted producer (`ErrConsumerSignatureKeyMissingForSource`). A malformed entry fails with no key bytes in the message; keys without `RequireSignatures` are inert and warned about. A fluent ring replaces them |
+| SignatureMaxSkew      | STREAMING_CONSUMER_SIGNATURE_MAX_SKEW_MS     | 0       | optional age bound on the signing instant, `0` = off. **Unsafe for any consumer that can lag**: its legitimate backlog would quarantine. Replay needs no age bound, because `ce-id` is signed |
 | ClientID              | STREAMING_CONSUMER_CLIENT_ID                 | ""      | client.id |
 | RetryBudget           | STREAMING_CONSUMER_RETRY_BUDGET              | 3       | **in-loop** transient-retry attempts per record (NOT "before DLQ"; transients never DLQ) |
 | RetryBackoffInitial   | STREAMING_CONSUMER_RETRY_BACKOFF_INITIAL_MS  | 100ms   | first in-loop retry backoff |
@@ -373,6 +380,18 @@ verification at all, and made `ExpectSources` a hard build error there
 `STREAMING_CONSUMER_EXPECT_SOURCES` consequently CrashLooped every Handler-mode
 service with no in-API opt-out. A mismatch quarantines with
 `x-lerian-dlq-cause-kind: source_mismatch` in both modes.
+
+**Signature verification runs in the RUNTIME too, one step earlier.** When the
+consumer requires signatures, the verifier judges the RAW `rec.Headers` bytes
+and the record value right after the codec and before the source check, in both
+handler modes. It reads the raw headers because the codec sanitizes values and
+keeps the last of a repeated key; a repeated signed header is itself a
+`signature_invalid`. It runs before the source check because a forged record
+claiming a foreign `ce-source` is a forgery first. Each key in the ring is
+bound to the `ce-source` it may sign for, which is what stops one accepted
+producer forging another, and `Build` refuses a ring that leaves an accepted
+producer without a key. A DLQ reader never verifies: a quarantine copy keeps
+the original signature, and every `signature_*` entry fails by definition.
 
 **Source verification and the named-app / Topics combination.** With `Apps`
 and/or `Commands` alone, those applications become the `ce-source` allowlist for
@@ -439,13 +458,19 @@ the shared `STREAMING_TLS_*` / `STREAMING_SASL_*` surface (`TLSFromConfig` /
   `-source-partition`, `-source-offset` are on every consumer quarantine and are
   what a replay follows back to the original record.
 - **Cause kind:** every quarantined record carries `x-lerian-dlq-cause-kind`,
-  one of `codec` / `handler` / `source_mismatch` / `unhandled_key`, alongside
+  one of `codec` / `handler` / `source_mismatch` / `unhandled_key` /
+  `signature_missing` / `signature_unknown_key` / `signature_invalid`, alongside
   the sanitized underlying error in `x-lerian-dlq-error-message`. The same value
-  labels `streaming_consumer_dlq_total`. Those four have four different owners:
-  a codec fault means the producer's wire format drifted, a source mismatch
-  means a foreign write or a stale allowlist, an unhandled key means this
-  consumer's `On(...)` registrations fell behind the producer's catalog, and
-  `handler` is a genuine business rejection.
+  labels `streaming_consumer_dlq_total`. Each has its own owner: a codec fault
+  means the producer's wire format drifted, a source mismatch means a foreign
+  write or a stale allowlist, an unhandled key means this consumer's `On(...)`
+  registrations fell behind the producer's catalog, and `handler` is a genuine
+  business rejection. The signature trio appears only on a consumer that
+  requires signatures: `signature_missing` is a rollout-order problem (the
+  requirement came before consumer lag passed the producers' first signed
+  record) or a producer that lost its key, `signature_unknown_key` is key
+  distribution lagging a rotation, and `signature_invalid` is tampering, a
+  forgery, or a key bound to the wrong source.
 
   `unhandled_key` fires on EVERY unmatched key from a `Commands(...)` queue
   (always strict) and on a fact stream only under the opt-in `UnmatchedError`
@@ -498,10 +523,13 @@ the shared `STREAMING_TLS_*` / `STREAMING_SASL_*` surface (`TLSFromConfig` /
     would not decode — the producer's wire format is the suspect), `handler` (a
     genuine business rejection), `source_mismatch` (a foreign write, or a
     drifted `ExpectSources` allowlist), `unhandled_key` (this consumer's `On`
-    registrations fell behind the producer's catalog). Filter and alert on this;
-    read `x-lerian-dlq-error-message` for the detail. Without it a filling DLQ
-    said only "something was terminal", and those four causes have four
-    different owners and four different fixes.
+    registrations fell behind the producer's catalog), and on a consumer that
+    requires signatures `signature_missing` / `signature_unknown_key` /
+    `signature_invalid` (rollout order, key distribution, forgery or a wrong
+    key). Filter and alert on this; read `x-lerian-dlq-error-message` for the
+    detail, which names the key id and the claimed source but never a MAC or
+    key bytes. Without it a filling DLQ said only "something was terminal", and
+    these causes have different owners and different fixes.
 
   > **PII: `x-lerian-dlq-error-message` carries the handler's error string
   > verbatim.** The only transformation applied is `SanitizeBrokerURL`, which
@@ -575,7 +603,9 @@ the shared `STREAMING_TLS_*` / `STREAMING_SASL_*` surface (`TLSFromConfig` /
   ```
 
   `streaming_consumer_dlq_total{cause_kind=...}` routes the DLQ page to the
-  right owner.
+  right owner. On a consumer that requires signatures, page on
+  `cause_kind=~"signature_.*"` too: every one of them is a record the handler
+  never saw.
 
 ---
 
@@ -600,6 +630,8 @@ transient — right for transport (handled in the drain), wrong for handler/code
 | **Empty `ce-tenantid`** (system event OR non-system business event) | dispatch | `Handle` with empty `TenantID`; **NOT** poison — empty tenant is a valid single-tenant scope (mirrors producer v1.6.2). System events also emit a `system_event` metric (observability only) |
 | **TRANSPORT/FETCH** error (broker/network/timeout, data-loss, auth, ctx-cancel, client-closed) | handled in `drainFetchErrors`, **not** `classify` | `ErrClientClosed`/ctx → clean `Run` return; `*ErrDataLoss` → log+metric+alert (cursor auto-reset, unrecoverable); any other → log+metric+alert + cross-poll backoff. franz-go retries transient fetch errors internally. **NEVER DLQ** |
 | **CODEC** decode fault (`ErrMissingRequiredHeader` / `ErrUnsupportedSpecVersion`) | `dispositionDLQ` | **always terminal** — malformed CloudEvent can never parse; not reclassifiable. DLQ-publish + stage commit + alert |
+| **SIGNATURE** missing, unknown key id, or not verifying (only when signatures are required) | `dispositionDLQ` | **always terminal**, decided in the guard chain right after the codec and BEFORE the source check, in both handler modes. Quarantine with `ErrSignatureMissing` / `ErrSignatureUnknownKey` / `ErrSignatureInvalid` and cause kind `signature_missing` / `signature_unknown_key` / `signature_invalid`; never retried, never offered to the `Classifier`. No age rejection unless `SignatureMaxSkew` is set |
+| **SOURCE** outside the accepted set | `dispositionDLQ` | **always terminal**, decided in the guard chain BEFORE dispatch, in both handler modes. Quarantine with `ErrUnexpectedSource` / cause kind `source_mismatch`; never offered to the `Classifier`. Skipped on a DLQ reader |
 | **UNMATCHED KEY on a `Commands(...)` topic** (no registered handler) | `dispositionDLQ` | **always terminal**, decided in the guard chain BEFORE dispatch (the verdict is a property of `rec.Topic`, which `Handle` never sees). Quarantine with `ErrUnhandledEvent` / cause kind `unhandled_key`; never retried, never offered to the `Classifier`. Not configurable — `UnmatchedPolicy` governs fact streams only |
 | **UNMATCHED KEY on a fact topic** (no registered handler) | `dispositionCommit` (default) | skipped + committed, metered on `streaming_consumer_unmatched_total` and logged once per key. `UnmatchedPolicy(UnmatchedError)` opts into quarantining these too |
 | **HANDLER** error, `Classifier` returns true (known downstream-transient) | retry in-loop | reclassified to transient → retry up to `RetryBudget` (capped backoff); on a SUSTAINED transient → `SetOffsets{Epoch,Offset}` + halt partition + `AllowRebalance` + cross-poll `HaltBackoff`, re-delivered next poll; **NEVER DLQ** |
@@ -685,7 +717,13 @@ legitimate single-tenant emits. The consumer mirrors this: an empty
 1. `event, err := codec(rec.Headers)` — parse CE headers via the codec.
 2. **`if err != nil` → codec-decode fault → DLQ.** A malformed CloudEvent is
    poison (`classify(err, sourceCodec)` → always DLQ); it can never parse.
-3. **else → dispatch ALWAYS.** Any successfully-decoded event is dispatched to
+3. **Signature, when required → DLQ on failure.** The verifier judges the RAW
+   record headers and value, not `event`; a failure quarantines as
+   `signature_*` and the Classifier never sees it.
+4. **Source → DLQ outside the accepted set** (`source_mismatch`), skipped on a
+   DLQ reader.
+5. **Commands queue → DLQ on an unhandled key** (`unhandled_key`).
+6. **else → dispatch ALWAYS.** Any successfully-decoded event is dispatched to
    `Handle`. If `TenantID != ""`, it is seeded onto `ctx` + span (`tenant.id`)
    from `ce-tenantid` **only** (never the payload); if empty, the event dispatches
    with an empty tenant on `ctx`. A **system event** (`ce-systemevent:"true"`,
