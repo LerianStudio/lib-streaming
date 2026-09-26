@@ -155,6 +155,14 @@ func (p *Producer) handleOutboxRow(ctx context.Context, row *outbox.OutboxEvent)
 
 	headers, err := p.publishHeaders(ctx, envelope.Event)
 	if err != nil {
+		// The only refusal here is ErrSigningSourceMismatch: a row persisted
+		// under a source this producer's signing key does not speak for. It
+		// is a configuration fault, not a property of the row, and the
+		// sentinel is not a caller error, so the row stays retryable instead
+		// of being invalidated on its first attempt; the rejection counter and
+		// ERROR log make every attempt visible.
+		p.recordOutboxRelayRejection(ctx, row, envelope, relayRejectSigningSourceMismatch, err)
+
 		return fmt.Errorf("streaming: outbox replay row %s: %w", row.ID, err)
 	}
 
@@ -226,6 +234,11 @@ const (
 	// relayRejectLegacyUnroutable: a version-1 row that cannot be re-derived
 	// under the current topology. Kept retryable for operator action.
 	relayRejectLegacyUnroutable = "legacy_unroutable"
+
+	// relayRejectSigningSourceMismatch: a row persisted under a ce-source the
+	// producer's active signing key is not bound to. Kept retryable for
+	// operator action (ErrSigningSourceMismatch is not a caller error).
+	relayRejectSigningSourceMismatch = "signing_source_mismatch"
 )
 
 // relayTargetUnknownLabel is the placeholder used in place of a target name

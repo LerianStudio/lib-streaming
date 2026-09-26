@@ -435,7 +435,8 @@
 //
 //   - Lifecycle / wiring (NOT caller errors — IsCallerError returns false):
 //     ErrEmitterClosed, ErrNilProducer, ErrCircuitOpen,
-//     ErrOutboxNotConfigured, ErrOutboxTxUnsupported, ErrNilOutboxRegistry.
+//     ErrOutboxNotConfigured, ErrOutboxTxUnsupported, ErrNilOutboxRegistry,
+//     ErrSigningSourceMismatch.
 //
 // Use IsCallerError(err) to distinguish caller-correctable faults from
 // infrastructure faults without matching each sentinel individually.

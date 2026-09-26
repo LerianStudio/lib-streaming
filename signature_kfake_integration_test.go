@@ -366,7 +366,7 @@ func keepProducingRecord(t *testing.T, cluster *kfake.Cluster, record *kgo.Recor
 // on the consumer's own DLQ as signature_missing and signature_invalid.
 func TestIntegration_StreamingtestRecordsThroughVerifyingConsumer(t *testing.T) {
 	cluster := dispatchCluster(t)
-	key := streamingtest.SigningKey("lender-k1", dispatchApp)
+	key := streamingtest.SigningKey(t, "lender-k1", dispatchApp)
 
 	recorder := newPayloadRecorder()
 	stopConsumer := runConsumer(t, verifyingConsumer(t, cluster, dispatchGroup+"-streamingtest", streamingtest.Keyring(t, key), recorder.handle))

@@ -65,6 +65,7 @@ var (
 	ErrInvalidSASLMechanism               = contract.ErrInvalidSASLMechanism
 	ErrInvalidSchemaRegistryConfig        = contract.ErrInvalidSchemaRegistryConfig
 	ErrInvalidSigningKey                  = contract.ErrInvalidSigningKey
+	ErrSigningSourceMismatch              = contract.ErrSigningSourceMismatch
 	ErrNilProducer                        = contract.ErrNilProducer
 	ErrCircuitOpen                        = contract.ErrCircuitOpen
 	ErrOutboxNotConfigured                = contract.ErrOutboxNotConfigured

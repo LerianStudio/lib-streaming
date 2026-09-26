@@ -287,9 +287,14 @@ type ConsumerConfig struct {
 	// key is bound to the ce-source it speaks for, and a record verifies only
 	// when its ce-source equals the source of the key that signed it.
 	// STREAMING_CONSUMER_SIGNATURE_KEYS: csv of <kid>@<source>:<secret>, the
-	// secret standard base64 of at least 32 bytes. Secrets never render: every
-	// fmt verb, JSON and slog print the lib-observability mask.
-	SignatureKeys []envelopesig.Key
+	// secret standard base64 of at least 32 bytes.
+	//
+	// A pointer to the ring, never keys by value: the builder and the runtime
+	// hold this config in an unexported field, where fmt cannot reach a
+	// secret's own mask, so a key stored by value would print its bytes under
+	// %+v on either. Through the pointer fmt reaches an address at most, and
+	// the ring renders its key ids only.
+	SignatureKeys *envelopesig.Keyring
 	// SignatureMaxSkew, when positive, also refuses a record whose signing
 	// instant (ce-sigts) is further than this from now. Default 0: disabled.
 	// UNSAFE for any consumer that can lag — a legitimately old backlog would
@@ -434,14 +439,14 @@ func LoadConsumerConfig() (ConsumerConfig, []string, error) {
 		return cfg, warnings, nil
 	}
 
-	keys, err := loadSignatureKeys(os.Getenv("STREAMING_CONSUMER_SIGNATURE_KEYS"))
+	ring, err := loadSignatureKeys(os.Getenv("STREAMING_CONSUMER_SIGNATURE_KEYS"))
 	if err != nil {
 		return cfg, warnings, err
 	}
 
-	cfg.SignatureKeys = keys
+	cfg.SignatureKeys = ring
 
-	if len(keys) > 0 && !cfg.RequireSignatures {
+	if ring != nil && !cfg.RequireSignatures {
 		warnings = append(warnings,
 			"STREAMING_CONSUMER_SIGNATURE_KEYS is set but STREAMING_CONSUMER_REQUIRE_SIGNATURES is not true; the keys are inert and records are not verified")
 	}
@@ -579,17 +584,17 @@ func (c ConsumerConfig) validateSources() error {
 
 // loadSignatureKeys parses STREAMING_CONSUMER_SIGNATURE_KEYS: a csv of
 // <kid>@<source>:<secret>, the secret standard base64 (none of '@', ':' or ','
-// can appear in a key id, a source or base64, so the split is unambiguous).
-// Unset yields nil. The parsed set is validated as a keyring, so a bad id, an
-// illegal source, a short secret or a duplicate id fails here, at load, rather
-// than at Build. Every failure wraps both ErrInvalidConfigField and
-// ErrInvalidSigningKey and names the entry by position and key id only; the
-// raw value and the decoder's message (which quotes input offsets) never
-// reach the error.
-func loadSignatureKeys(raw string) ([]envelopesig.Key, error) {
+// can appear in a key id, a source or base64, so the split is unambiguous),
+// into the keyring the verifier uses. Unset yields nil. Building the ring
+// here means a bad id, an illegal source, a short secret or a duplicate id
+// fails at load rather than at Build. Every failure wraps both
+// ErrInvalidConfigField and ErrInvalidSigningKey and names the entry by
+// position and key id only; the raw value and the decoder's message (which
+// quotes input offsets) never reach the error.
+func loadSignatureKeys(raw string) (*envelopesig.Keyring, error) {
 	entries := splitCSV(raw)
 	if len(entries) == 0 {
-		return nil, nil
+		return nil, nil //nolint:nilnil // a nil ring is the documented "no keys configured" answer, not an error
 	}
 
 	keys := make([]envelopesig.Key, 0, len(entries))
@@ -604,11 +609,12 @@ func loadSignatureKeys(raw string) ([]envelopesig.Key, error) {
 		keys = append(keys, key)
 	}
 
-	if _, err := envelopesig.NewKeyring(keys...); err != nil {
+	ring, err := envelopesig.NewKeyring(keys...)
+	if err != nil {
 		return nil, fmt.Errorf("%w: STREAMING_CONSUMER_SIGNATURE_KEYS: %w", ErrInvalidConfigField, err)
 	}
 
-	return keys, nil
+	return ring, nil
 }
 
 // parseSignatureKey splits one <kid>@<source>:<secret> entry. The id and the

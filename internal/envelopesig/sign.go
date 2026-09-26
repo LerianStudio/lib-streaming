@@ -78,14 +78,15 @@ func NewSigner(ring *Keyring, activeKeyID, source string, opts ...Option) (*Sign
 // persisted under an earlier or another source — so it fails that record
 // instead of publishing a signature every verifier is certain to refuse.
 // Returns nil on a nil *Signer (signing not configured) and otherwise wraps
-// contract.ErrInvalidSigningKey.
+// contract.ErrSigningSourceMismatch, which is not a caller error: the record is
+// fine, the producer holding it is the wrong one to sign it.
 func (s *Signer) CheckSource(source string) error {
 	if s == nil || source == s.key.Source {
 		return nil
 	}
 
 	return fmt.Errorf("%w: record claims source %s but active signing key %q is bound to source %q",
-		contract.ErrInvalidSigningKey, quoteBounded([]byte(source)), s.key.ID, s.key.Source)
+		contract.ErrSigningSourceMismatch, quoteBounded([]byte(source)), s.key.ID, s.key.Source)
 }
 
 // Sign returns a NEW header slice: headers without any previous signature,

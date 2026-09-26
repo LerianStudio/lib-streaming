@@ -900,11 +900,11 @@ func (b *ConsumerBuilder) signatureRing() (*Keyring, error) {
 		return nil, nil //nolint:nilnil // nil ring is the "signatures not required" answer, not an error
 	}
 
-	if len(b.cfg.SignatureKeys) == 0 {
+	if b.cfg.SignatureKeys == nil {
 		return nil, fmt.Errorf("%w: STREAMING_CONSUMER_REQUIRE_SIGNATURES is true", consumer.ErrSignatureKeysMissing)
 	}
 
-	return NewKeyring(b.cfg.SignatureKeys...)
+	return b.cfg.SignatureKeys, nil
 }
 
 // signatureVerifier builds the runtime's verifier, or nil when signatures are

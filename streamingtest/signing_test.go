@@ -56,7 +56,7 @@ func header(rec *kgo.Record, key string) (string, bool) {
 func TestSigningKey_Deterministic(t *testing.T) {
 	t.Parallel()
 
-	a, again := streamingtest.SigningKey("lender-k1", signingSource), streamingtest.SigningKey("lender-k1", signingSource)
+	a, again := streamingtest.SigningKey(t, "lender-k1", signingSource), streamingtest.SigningKey(t, "lender-k1", signingSource)
 	if !bytes.Equal(a.Secret, again.Secret) {
 		t.Error("the same id and source gave two secrets; a test key must be reproducible across processes")
 	}
@@ -70,8 +70,8 @@ func TestSigningKey_Deterministic(t *testing.T) {
 	}
 
 	for _, other := range []streaming.SigningKey{
-		streamingtest.SigningKey("lender-k2", signingSource),
-		streamingtest.SigningKey("lender-k1", "matcher"),
+		streamingtest.SigningKey(t, "lender-k2", signingSource),
+		streamingtest.SigningKey(t, "lender-k1", "matcher"),
 	} {
 		if bytes.Equal(a.Secret, other.Secret) {
 			t.Errorf("key {%s %s} shares the secret of {lender-k1 %s}", other.ID, other.Source, signingSource)
@@ -86,7 +86,7 @@ func TestSigningKey_Deterministic(t *testing.T) {
 func TestSignedRecord_VerifiesUnderKeyring(t *testing.T) {
 	t.Parallel()
 
-	key := streamingtest.SigningKey("lender-k1", signingSource)
+	key := streamingtest.SigningKey(t, "lender-k1", signingSource)
 	ev := signingEvent()
 
 	rec := streamingtest.SignedRecord(t, signingTopic, key, ev)
@@ -119,7 +119,7 @@ func TestSignedRecord_VerifiesUnderKeyring(t *testing.T) {
 func TestSignedRecord_EmptySourceSignsAsTheKeysSource(t *testing.T) {
 	t.Parallel()
 
-	key := streamingtest.SigningKey("lender-k1", signingSource)
+	key := streamingtest.SigningKey(t, "lender-k1", signingSource)
 	ev := signingEvent()
 	ev.Source = ""
 
@@ -137,7 +137,7 @@ func TestSignedRecord_EmptySourceSignsAsTheKeysSource(t *testing.T) {
 func TestSignedRecord_DoesNotAliasThePayload(t *testing.T) {
 	t.Parallel()
 
-	key := streamingtest.SigningKey("lender-k1", signingSource)
+	key := streamingtest.SigningKey(t, "lender-k1", signingSource)
 	ev := signingEvent()
 
 	rec := streamingtest.SignedRecord(t, signingTopic, key, ev)
@@ -151,7 +151,7 @@ func TestSignedRecord_DoesNotAliasThePayload(t *testing.T) {
 func TestUnsignedRecord_IsSignatureMissing(t *testing.T) {
 	t.Parallel()
 
-	key := streamingtest.SigningKey("lender-k1", signingSource)
+	key := streamingtest.SigningKey(t, "lender-k1", signingSource)
 
 	rec := streamingtest.UnsignedRecord(t, signingTopic, signingEvent())
 
@@ -173,7 +173,7 @@ func TestUnsignedRecord_IsSignatureMissing(t *testing.T) {
 func TestForgedRecord_IsSignatureInvalid(t *testing.T) {
 	t.Parallel()
 
-	key := streamingtest.SigningKey("lender-k1", signingSource)
+	key := streamingtest.SigningKey(t, "lender-k1", signingSource)
 	ev := signingEvent()
 
 	rec := streamingtest.ForgedRecord(t, signingTopic, key, ev)
@@ -194,8 +194,8 @@ func TestForgedRecord_IsSignatureInvalid(t *testing.T) {
 func TestSignedRecord_UnknownToAnotherRing(t *testing.T) {
 	t.Parallel()
 
-	rec := streamingtest.SignedRecord(t, signingTopic, streamingtest.SigningKey("lender-k1", signingSource), signingEvent())
-	other := streamingtest.Keyring(t, streamingtest.SigningKey("lender-k2", signingSource))
+	rec := streamingtest.SignedRecord(t, signingTopic, streamingtest.SigningKey(t, "lender-k1", signingSource), signingEvent())
+	other := streamingtest.Keyring(t, streamingtest.SigningKey(t, "lender-k2", signingSource))
 
 	if err := verify(t, other, rec); !errors.Is(err, streaming.ErrSignatureUnknownKey) {
 		t.Errorf("Verify under a ring without lender-k1 = %v; want ErrSignatureUnknownKey", err)
@@ -206,7 +206,7 @@ func TestSignedRecord_SignedAtIsFresh(t *testing.T) {
 	t.Parallel()
 
 	before := time.Now().UTC().Add(-time.Second)
-	rec := streamingtest.SignedRecord(t, signingTopic, streamingtest.SigningKey("lender-k1", signingSource), signingEvent())
+	rec := streamingtest.SignedRecord(t, signingTopic, streamingtest.SigningKey(t, "lender-k1", signingSource), signingEvent())
 
 	raw, _ := header(rec, streaming.CloudEventsHeaderSignedAt)
 

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/envelopesig"
 )
 
 // setSignatureBaseEnv sets the minimum environment for an enabled consumer.
@@ -55,20 +56,25 @@ func TestLoadConsumerConfig_SignatureKeys(t *testing.T) {
 		t.Error("RequireSignatures = false; want true")
 	}
 
-	if len(cfg.SignatureKeys) != 2 {
-		t.Fatalf("SignatureKeys = %d entries; want 2", len(cfg.SignatureKeys))
+	if got := cfg.SignatureKeys.String(); got != "Keyring{ids:[lender-2026-08 lender-2026-09]}" {
+		t.Fatalf("SignatureKeys = %s; want both env keys", got)
 	}
 
-	want := []struct {
-		id     string
-		secret []byte
-	}{{"lender-2026-08", s1}, {"lender-2026-09", s2}}
+	// Each parsed key must verify a record its producer signs with the
+	// decoded secret, bound to the parsed source.
+	verifier, err := envelopesig.NewVerifier(cfg.SignatureKeys, 0)
+	if err != nil {
+		t.Fatalf("NewVerifier: %v", err)
+	}
 
-	for i, w := range want {
-		got := cfg.SignatureKeys[i]
-		if got.ID != w.id || got.Source != "lender" || !bytes.Equal(got.Secret, w.secret) {
-			t.Errorf("SignatureKeys[%d] = {%q %q len=%d}; want {%q lender len=%d}",
-				i, got.ID, got.Source, len(got.Secret), w.id, len(w.secret))
+	lenderHeaders := withHeader(ceHeaders("tenantA", false), "ce-source", "lender")
+
+	for _, w := range []envelopesig.Key{
+		{ID: "lender-2026-08", Source: "lender", Secret: s1},
+		{ID: "lender-2026-09", Source: "lender", Secret: s2},
+	} {
+		if err := verifier.Verify(signed(t, w, lenderHeaders, sigRecordBody), sigRecordBody); err != nil {
+			t.Errorf("key %s parsed from env does not verify its producer's record: %v", w.ID, err)
 		}
 	}
 

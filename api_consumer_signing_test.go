@@ -151,7 +151,7 @@ func TestConsumerBuilder_DiscardHandlerIgnoresEnvRequireSignatures(t *testing.T)
 		Source:              "lender-dlq-desk",
 		Topics:              []string{"lerian.streaming.lender.dlq"},
 		RequireSignatures:   true,
-		SignatureKeys:       []streaming.SigningKey{lenderSigningKey()},
+		SignatureKeys:       consumerKeyring(t, lenderSigningKey()),
 		RetryBudget:         1,
 		RetryBackoffInitial: time.Millisecond,
 		RetryBackoffMax:     time.Millisecond,
@@ -165,32 +165,6 @@ func TestConsumerBuilder_DiscardHandlerIgnoresEnvRequireSignatures(t *testing.T)
 	}
 
 	_ = c.Close()
-}
-
-func TestConsumerBuilder_RequireSignaturesInvalidConfigKeys(t *testing.T) {
-	t.Parallel()
-
-	cfg := streaming.ConsumerConfig{
-		Enabled:           true,
-		Brokers:           []string{"localhost:9092"},
-		Group:             "svc",
-		Source:            "loan-projector",
-		Apps:              []string{"lender"},
-		RequireSignatures: true,
-		SignatureKeys: []streaming.SigningKey{
-			{ID: "lender-k1", Source: "lender", Secret: []byte("too-short")},
-		},
-		RetryBudget:         1,
-		RetryBackoffInitial: time.Millisecond,
-		RetryBackoffMax:     time.Millisecond,
-		RetryInLoopMaxDwell: time.Millisecond,
-		CloseTimeout:        time.Second,
-	}
-
-	_, err := streaming.NewConsumer().FromConfig(cfg).On("loan.created", noopHandlerFunc).Build(context.Background())
-	if !errors.Is(err, streaming.ErrInvalidSigningKey) {
-		t.Errorf("Build err = %v; want ErrInvalidSigningKey", err)
-	}
 }
 
 func TestConsumerBuilder_SignatureMaxSkewNegativeFails(t *testing.T) {

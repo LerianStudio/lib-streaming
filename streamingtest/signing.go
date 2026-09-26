@@ -22,8 +22,12 @@ import (
 // SigningKey returns a key for id bound to source with a deterministic secret
 // derived from both, so two processes (a producer and a consumer under test)
 // agree on it without sharing state. The secret is public by construction:
-// TEST USE ONLY, never in a deployed service.
-func SigningKey(id, source string) streaming.SigningKey {
+// anyone can derive it and forge records for source. It takes a testing.TB so
+// production wiring cannot call it without a test at hand, and so the misuse
+// shows at the call site.
+func SigningKey(t testing.TB, id, source string) streaming.SigningKey {
+	t.Helper()
+
 	sum := sha256.Sum256([]byte("lib-streaming/streamingtest\x00" + id + "\x00" + source))
 
 	return streaming.SigningKey{ID: id, Source: source, Secret: streaming.SigningSecret(sum[:])}

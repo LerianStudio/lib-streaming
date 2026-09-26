@@ -21,7 +21,11 @@ func whiteboxSigningKey(id, source string, seed byte) SigningKey {
 func TestConsumerBuilder_RequireSignaturesFromConfig(t *testing.T) {
 	t.Parallel()
 
-	envKey := whiteboxSigningKey("lender-env", "lender", 1)
+	envRing, err := NewKeyring(whiteboxSigningKey("lender-env", "lender", 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	fluentKey := whiteboxSigningKey("lender-fluent", "lender", 2)
 
 	base := func(require bool) consumer.ConsumerConfig {
@@ -31,7 +35,7 @@ func TestConsumerBuilder_RequireSignaturesFromConfig(t *testing.T) {
 		cfg.Source = "loan-projector"
 		cfg.Apps = []string{"lender"}
 		cfg.RequireSignatures = require
-		cfg.SignatureKeys = []SigningKey{envKey}
+		cfg.SignatureKeys = envRing
 		cfg.SignatureMaxSkew = time.Minute
 
 		return cfg

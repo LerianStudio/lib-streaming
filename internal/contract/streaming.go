@@ -329,9 +329,29 @@ var (
 	// duplicate key id, a key whose Source is not a legal ce-source, a secret
 	// shorter than 32 bytes, an active signing key that is absent from the ring
 	// or bound to another source, or a negative verification skew. Surfaced at
-	// construction, never per record. Caller-correctable. The error message
-	// names key ids and sources, never secret bytes.
+	// construction, never per record (a per-record refusal is
+	// ErrSigningSourceMismatch). Caller-correctable. The error message names
+	// key ids and sources, never secret bytes.
 	ErrInvalidSigningKey = errors.New("streaming: invalid envelope signing key")
+
+	// ErrSigningSourceMismatch is returned when a signing producer is asked to
+	// publish a record whose ce-source is not the source its active signing
+	// key is bound to. An Emit always carries the producer's own source, so in
+	// practice this is an outbox row persisted under an earlier or another
+	// source (a renamed source with rows still waiting, a table shared by two
+	// sources). Publishing it signed would hand every verifying consumer a
+	// record it quarantines as a forgery, so the row is refused instead.
+	//
+	// DELIBERATELY NOT A CALLER ERROR. The condition is a configuration fault
+	// an operator can fix (relay the row from a producer of its source, or
+	// turn signing off to drain it), not a property of the durable row. With
+	// the documented WithRetryClassifier(streaming.IsCallerError) wiring the
+	// lib-commons dispatcher keeps the row retryable (FAILED, not INVALID) for
+	// its whole retry budget while the relay logs at ERROR and increments
+	// streaming_outbox_relay_rejected_total{reason="signing_source_mismatch"}
+	// on every attempt. The message names sources and the key id, never
+	// secret bytes.
+	ErrSigningSourceMismatch = errors.New("streaming: record source does not match the signing key source")
 
 	// ErrNilProducer is returned when a method is invoked on a nil *Producer.
 	// Parallels circuitbreaker.ErrNilCircuitBreaker. Callers should treat this

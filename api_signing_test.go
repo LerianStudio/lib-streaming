@@ -55,4 +55,10 @@ func TestIsCallerError_InvalidSigningKey(t *testing.T) {
 	} {
 		assert.False(t, streaming.IsCallerError(err), "%v", err)
 	}
+
+	// A relayed row of another source is a configuration fault an operator
+	// fixes, not a property of the row: as a caller error the documented
+	// IsCallerError retry classifier would move it to INVALID on attempt one.
+	assert.False(t, streaming.IsCallerError(streaming.ErrSigningSourceMismatch))
+	assert.False(t, streaming.IsCallerError(fmt.Errorf("wrap: %w", streaming.ErrSigningSourceMismatch)))
 }

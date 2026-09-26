@@ -170,7 +170,9 @@ func TestSigner_CheckSource(t *testing.T) {
 	require.NoError(t, signer.CheckSource("ledger"))
 
 	err := signer.CheckSource("lender")
-	require.ErrorIs(t, err, contract.ErrInvalidSigningKey)
+	require.ErrorIs(t, err, contract.ErrSigningSourceMismatch)
+	assert.NotErrorIs(t, err, contract.ErrInvalidSigningKey, "ErrInvalidSigningKey is construction-only")
+	assert.False(t, contract.IsCallerError(err), "a per-record source mismatch is not a caller error")
 	assert.Contains(t, err.Error(), `"lender"`)
 	assert.Contains(t, err.Error(), `"ledger"`)
 	assert.Contains(t, err.Error(), `"k1"`)

@@ -217,7 +217,7 @@ A service whose consumer requires signatures tests its ring and its DLQ
 handling with records built the way the wire carries them:
 
 ```go
-key := streamingtest.SigningKey("lender-k1", "lender") // deterministic, test-only secret
+key := streamingtest.SigningKey(t, "lender-k1", "lender") // deterministic, test-only secret
 ring := streamingtest.Keyring(t, key)
 
 good := streamingtest.SignedRecord(t, topic, key, event) // verifies under ring
@@ -618,10 +618,14 @@ source. A producer can only vouch for itself.
 The same rule holds per record at relay time. An outbox row carries the
 `ce-source` it was persisted under, which is not the producer's current one
 when the service renamed its source with rows still pending, or when a table
-is shared across sources. The relay fails such a row with `ErrInvalidSigningKey`
-(a caller error, so a wired `IsCallerError` classifier marks it `INVALID`, and
-the row stays in the table for an operator) instead of publishing a record
-every verifying consumer would quarantine as a forgery.
+is shared across sources. The relay refuses such a row with
+`ErrSigningSourceMismatch` instead of publishing a record every verifying
+consumer would quarantine as a forgery. That sentinel is deliberately not a
+caller error: the row is fine, the producer relaying it is the wrong one to
+sign it. A wired `IsCallerError` classifier therefore keeps the row retryable
+for its whole retry budget, and every attempt logs at ERROR and increments
+`streaming_outbox_relay_rejected_total{reason="signing_source_mismatch"}`.
+Drain it by relaying from a producer of that source, or with signing off.
 
 ### Consumer
 
@@ -952,9 +956,12 @@ ERROR log naming the row id call for an operator. Alert on it:
 increase(streaming_outbox_relay_rejected_total{reason="legacy_unroutable"}[15m]) > 0
 ```
 
-The counter's other reason, `version_unsupported`, is a different condition
-with a different cause — an envelope this build cannot read, bound for INVALID
-— so alert on it separately rather than folding the two together.
+The counter's other reasons are different conditions with different causes,
+so alert on each separately rather than folding them together:
+`version_unsupported` is an envelope this build cannot read, bound for
+INVALID; `signing_source_mismatch` is a row a signing producer will not sign
+because it was persisted under another `ce-source` (kept retryable, see
+[Signing and verifying envelopes](#signing-and-verifying-envelopes)).
 
 ### DLQ alerting
 

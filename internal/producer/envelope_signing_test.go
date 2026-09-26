@@ -293,8 +293,12 @@ func TestOutboxRelay_SignsAtRelayInstantNotEnqueue(t *testing.T) {
 // TestOutboxRelay_RefusesRowOfAnotherSource pins the signing binding at relay
 // time: a row persisted under a source other than the producer's own (the
 // service renamed its source with rows still in the outbox, or a table shared
-// across sources) is failed as a caller error instead of being published with
-// a signature every verifying consumer is certain to quarantine as a forgery.
+// across sources) is not published with a signature every verifying consumer
+// is certain to quarantine as a forgery. The refusal is a configuration fault,
+// not a property of the durable row, so it stays RETRYABLE (never a caller
+// error, which the documented IsCallerError retry classifier would send to
+// INVALID on the first attempt) and is counted and logged as a relay
+// rejection with reason signing_source_mismatch.
 func TestOutboxRelay_RefusesRowOfAnotherSource(t *testing.T) {
 	t.Parallel()
 
@@ -310,10 +314,13 @@ func TestOutboxRelay_RefusesRowOfAnotherSource(t *testing.T) {
 		multiTestRoute("transaction.created.kafka.primary", "transaction.created", "primary", "lerian.streaming."+source, contract.RouteRequired),
 	)
 
+	factory, snapshot := newManualMeterSetup(t)
+
 	p, err := NewProducerMulti(ctx, MultiProducerConfig{Source: source}, nil,
 		[]TargetSpec{{Name: "primary", Kind: TransportKafkaLike, Adapter: adapter}},
 		routes, sampleCatalog(t),
 		WithLogger(log.NewNop()),
+		WithMetricsRecorder(factory),
 		WithEnvelopeSigning(ring, signingTestKeyID),
 	)
 	if err != nil {
@@ -340,12 +347,16 @@ func TestOutboxRelay_RefusesRowOfAnotherSource(t *testing.T) {
 	}
 
 	err = p.handleOutboxRow(ctx, row)
-	if !errors.Is(err, contract.ErrInvalidSigningKey) {
-		t.Fatalf("handleOutboxRow() error = %v; want ErrInvalidSigningKey", err)
+	if !errors.Is(err, contract.ErrSigningSourceMismatch) {
+		t.Fatalf("handleOutboxRow() error = %v; want ErrSigningSourceMismatch", err)
 	}
 
-	if !contract.IsCallerError(err) {
-		t.Errorf("handleOutboxRow() error = %v; want a caller-class error", err)
+	if errors.Is(err, contract.ErrInvalidSigningKey) {
+		t.Errorf("handleOutboxRow() error = %v; ErrInvalidSigningKey is construction-only", err)
+	}
+
+	if contract.IsCallerError(err) {
+		t.Errorf("IsCallerError(%v) = true; the retry classifier would move a durable row to INVALID on its first attempt", err)
 	}
 
 	for _, want := range []string{`"` + rowSource + `"`, `"` + source + `"`, `"` + signingTestKeyID + `"`} {
@@ -356,6 +367,24 @@ func TestOutboxRelay_RefusesRowOfAnotherSource(t *testing.T) {
 
 	if got := len(adapter.Messages()); got != 0 {
 		t.Errorf("relay published %d messages for a foreign-source row; want 0", got)
+	}
+
+	metric, ok := findMetric(snapshot(), metricNameOutboxRelayRejected)
+	if !ok {
+		t.Fatalf("metric %s was never recorded", metricNameOutboxRelayRejected)
+	}
+
+	_, attrSets := sumInt64DataPoints(t, metric)
+	if len(attrSets) != 1 {
+		t.Fatalf("attribute sets = %d, want exactly 1", len(attrSets))
+	}
+
+	if got := attrSets[0]["reason"]; got != relayRejectSigningSourceMismatch {
+		t.Errorf("reason label = %q, want %q", got, relayRejectSigningSourceMismatch)
+	}
+
+	if got := attrSets[0][labelTarget]; got != "primary" {
+		t.Errorf("target label = %q, want %q", got, "primary")
 	}
 }
 
