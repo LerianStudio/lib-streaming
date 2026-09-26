@@ -1,5 +1,47 @@
 # Lib-streaming Changelog
 
+## [4.1.0](https://github.com/LerianStudio/lib-streaming/releases/tag/v4.1.0)
+
+Features:
+- Re-export `ErrLegacyOutboxRowUnroutable` to enhance error handling in streaming operations. (@fredcamaral)
+- Sign emit spans with module scope to improve traceability in the producer. (@fredcamaral)
+- Carry opaque payloads in the outbox without JSON coercion, allowing for more flexible data handling. (@fredcamaral)
+- Export the discard record and a DLQ reader seam to facilitate better error management and debugging. (@fredcamaral)
+
+Fixes:
+- Classify an undecodable envelope as a caller error in the outbox, ensuring proper error categorization. (@fredcamaral)
+- Recast only source errors for version-1 rows in the outbox to maintain backward compatibility. (@fredcamaral)
+- Refuse an empty payload by name before persisting it in the outbox to prevent invalid data storage. (@fredcamaral)
+- Bound the relay rejection metric's target label in the outbox to improve metric accuracy. (@fredcamaral)
+- Compare legacy topics against `v2`'s sanitized output in the outbox for consistent topic handling. (@fredcamaral)
+- Rewrite only the destinations `v2` derived in the outbox to ensure correct routing. (@fredcamaral)
+- Read version-1 envelopes instead of invalidating them in the outbox to support legacy data. (@fredcamaral)
+- Emit one forensic set per quarantine and reject negatives in the consumer to enhance error reporting. (@fredcamaral)
+- Warn instead of refusing a plain handler on its own DLQ in the consumer to allow more flexible configurations. (@fredcamaral)
+- Arm the DLQ reader from the builder, not a method set, in the consumer to streamline initialization. (@fredcamaral)
+- Match the whole truncation marker suffix in the consumer for accurate data processing. (@fredcamaral)
+- Reject Apps and ExpectSources on a DLQ reader in the consumer to prevent unsupported operations. (@fredcamaral)
+- Re-apply the error message budget after sanitizing in the consumer to maintain error message integrity. (@fredcamaral)
+- Sanitize header values before indexing them in cloudevents to prevent injection vulnerabilities. (@fredcamaral)
+
+Improvements:
+- Correct which rows become INVALID immediately in the outbox documentation for clarity. (@fredcamaral)
+- Document opaque payloads on the outbox route to provide better guidance for developers. (@fredcamaral)
+- Check the destination before requeueing rows in the outbox documentation to ensure accurate instructions. (@fredcamaral)
+- Narrow the legacy row guarantee to what it covers in the outbox documentation for precision. (@fredcamaral)
+- Read tenant identity from the payload, not a column, in the outbox documentation for correct implementation guidance. (@fredcamaral)
+- Make the operator queries safe and specific in the outbox documentation to enhance security. (@fredcamaral)
+- Warn that version-1 rows drain on deploy in the outbox documentation to prepare users for potential data loss. (@fredcamaral)
+- Move the `v1` read-compat notes under Unreleased in the documentation to organize information better. (@fredcamaral)
+- Correct two overstated claims on the sanitizer in the consumer documentation for accuracy. (@fredcamaral)
+- Scope the payload-omitted marker to its own quarantine in the consumer documentation for better clarity. (@fredcamaral)
+- State the writer-path change and fix the header count in the DLQ documentation to ensure accurate information. (@fredcamaral)
+- Stop counting the forensic keys in two places in the DLQ documentation to avoid redundancy. (@fredcamaral)
+
+[Compare changes](https://github.com/LerianStudio/lib-streaming/compare/v4.0.0...v4.1.0)
+
+---
+
 ## [4.0.0](https://github.com/LerianStudio/lib-streaming/releases/tag/v4.0.0)
 
 Features:
