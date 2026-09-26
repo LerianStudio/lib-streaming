@@ -4,6 +4,7 @@ import (
 	"github.com/LerianStudio/lib-streaming/v4/internal/cloudevents"
 	"github.com/LerianStudio/lib-streaming/v4/internal/consumer"
 	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/envelopesig"
 )
 
 type (
@@ -63,6 +64,7 @@ var (
 	ErrPlaintextSASLNotAllowed            = contract.ErrPlaintextSASLNotAllowed
 	ErrInvalidSASLMechanism               = contract.ErrInvalidSASLMechanism
 	ErrInvalidSchemaRegistryConfig        = contract.ErrInvalidSchemaRegistryConfig
+	ErrInvalidSigningKey                  = contract.ErrInvalidSigningKey
 	ErrNilProducer                        = contract.ErrNilProducer
 	ErrCircuitOpen                        = contract.ErrCircuitOpen
 	ErrOutboxNotConfigured                = contract.ErrOutboxNotConfigured
@@ -71,6 +73,22 @@ var (
 	ErrLegacyOutboxRowUnroutable          = contract.ErrLegacyOutboxRowUnroutable
 	ErrMissingRequiredHeader              = cloudevents.ErrMissingRequiredHeader
 	ErrUnsupportedSpecVersion             = cloudevents.ErrUnsupportedSpecVersion
+)
+
+// Envelope-signature verification outcomes. They describe a record on the
+// wire, not a caller mistake, so IsCallerError returns false for all three.
+// They are disjoint, and each has its own owner.
+var (
+	// ErrSignatureMissing: the record carries no complete signature — the
+	// producer does not sign yet (a rollout gap).
+	ErrSignatureMissing = envelopesig.ErrSignatureMissing
+	// ErrSignatureUnknownKey: the record names a well-formed key id the
+	// verifier's keyring does not hold (key distribution).
+	ErrSignatureUnknownKey = envelopesig.ErrSignatureUnknownKey
+	// ErrSignatureInvalid: the signature is malformed, does not match, was made
+	// with a key bound to another source, or repeats a signed header (forgery,
+	// tampering or a wrong key).
+	ErrSignatureInvalid = envelopesig.ErrSignatureInvalid
 )
 
 // Producer and consumer config sentinels, disambiguated by side.

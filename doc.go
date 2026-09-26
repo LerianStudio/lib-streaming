@@ -390,7 +390,8 @@
 //     ErrInvalidDestination, ErrDuplicateRouteDefinition,
 //     ErrNoRoutesConfigured, ErrNoRequiredRoute, ErrMissingTarget,
 //     ErrMultiTransportRuntimeNotConfigured, ErrInvalidTLSConfig,
-//     ErrPlaintextSASLNotAllowed, ErrInvalidSASLMechanism.
+//     ErrPlaintextSASLNotAllowed, ErrInvalidSASLMechanism,
+//     ErrInvalidSigningKey.
 //
 //   - Producer config validation (LoadConfig, Builder.Build):
 //     ErrProducerMissingBrokers, ErrMissingSource, ErrInvalidSource,

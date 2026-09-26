@@ -324,6 +324,15 @@ var (
 	// The error message never includes the registry password.
 	ErrInvalidSchemaRegistryConfig = errors.New("streaming: invalid schema registry config")
 
+	// ErrInvalidSigningKey is returned when envelope-signing keys cannot be
+	// used: an empty keyring, a key id outside ^[a-z0-9][a-z0-9._-]{0,63}$, a
+	// duplicate key id, a key whose Source is not a legal ce-source, a secret
+	// shorter than 32 bytes, an active signing key that is absent from the ring
+	// or bound to another source, or a negative verification skew. Surfaced at
+	// construction, never per record. Caller-correctable. The error message
+	// names key ids and sources, never secret bytes.
+	ErrInvalidSigningKey = errors.New("streaming: invalid envelope signing key")
+
 	// ErrNilProducer is returned when a method is invoked on a nil *Producer.
 	// Parallels circuitbreaker.ErrNilCircuitBreaker. Callers should treat this
 	// as a programming error — a nil Producer indicates construction was
@@ -470,6 +479,7 @@ var callerErrorSentinels = []error{
 	ErrPlaintextSASLNotAllowed,
 	ErrInvalidSASLMechanism,
 	ErrInvalidSchemaRegistryConfig,
+	ErrInvalidSigningKey,
 	ErrInvalidTenantID,
 	ErrInvalidResourceType,
 	ErrInvalidEventType,
@@ -515,7 +525,8 @@ var callerErrorSentinels = []error{
 //     ErrInvalidDestination, ErrDuplicateRouteDefinition,
 //     ErrNoRoutesConfigured, ErrNoRequiredRoute, ErrMissingTarget,
 //     ErrMultiTransportRuntimeNotConfigured, ErrInvalidTLSConfig,
-//     ErrPlaintextSASLNotAllowed, ErrInvalidSASLMechanism
+//     ErrPlaintextSASLNotAllowed, ErrInvalidSASLMechanism,
+//     ErrInvalidSchemaRegistryConfig, ErrInvalidSigningKey
 //   - An *EmitError whose Class is ClassSerialization, ClassValidation, or
 //     ClassAuth.
 //

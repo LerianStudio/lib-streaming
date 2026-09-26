@@ -1,5 +1,12 @@
 # Lib-streaming Changelog
 
+## [Unreleased]
+
+Features:
+- Add opt-in envelope signing primitives (br-sfn BRSFN-60): `NewKeyring`, `SigningKey`, `SigningSecret`, `Keyring`, `MinSigningSecretBytes`, the `CloudEventsHeaderSignatureKeyID` / `CloudEventsHeaderSignedAt` / `CloudEventsHeaderSignature` header names (`ce-sigkid`, `ce-sigts`, `ce-sig`), the caller error `ErrInvalidSigningKey`, and the verification outcomes `ErrSignatureMissing` / `ErrSignatureUnknownKey` / `ErrSignatureInvalid`. The signature is HMAC-SHA256 over a length-prefixed encoding of all 13 CloudEvents headers, the key id, the signing instant and the SHA-256 of the body; every key is bound to the `ce-source` it speaks for, and secrets never render in logs, errors or JSON. Nothing signs or verifies yet, so the wire output of every existing producer and consumer is unchanged.
+
+---
+
 ## [4.1.0](https://github.com/LerianStudio/lib-streaming/releases/tag/v4.1.0)
 
 Features:
