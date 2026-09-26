@@ -405,8 +405,9 @@ member is kicked mid-retry (franz-go warns this exact failure mode at
 `HaltBackoff` path instead, where the group is unblocked — so a downstream that is
 down for minutes blocks the partition without ever risking a kick or a DLQ.
 
-TLS/SASL are wired programmatically (`TLS`/`SASL`/`AllowPlaintextSASL`),
-mirroring the producer; validated at `Build`.
+TLS/SASL are wired programmatically (`TLS`/`SASL`/`AllowPlaintextSASL`) or from
+the shared `STREAMING_TLS_*` / `STREAMING_SASL_*` surface (`TLSFromConfig` /
+`SASLFromConfig`), mirroring the producer; validated at `Build`.
 
 ---
 

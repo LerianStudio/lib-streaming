@@ -14,6 +14,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/LerianStudio/lib-streaming/v4/internal/consumer"
+	"github.com/LerianStudio/lib-streaming/v4/internal/kafkasec"
 	"github.com/LerianStudio/lib-streaming/v4/internal/transport"
 )
 
@@ -65,9 +66,9 @@ type ConsumerConfig = consumer.ConsumerConfig
 // applies defaults, and validates the result when Enabled=true. The second
 // return value carries human-readable warnings and is never nil.
 //
-// TLS and SASL are deliberately absent from the environment surface — wire
-// them programmatically through ConsumerBuilder.TLS / .SASL. Secrets do not
-// belong in env-string config.
+// TLS and SASL are not part of ConsumerConfig. Apply the shared STREAMING_TLS_* /
+// STREAMING_SASL_* surface read by LoadConfig with ConsumerBuilder.TLSFromConfig
+// / .SASLFromConfig, or wire them directly through .TLS / .SASL.
 //
 // Pair it with ConsumerBuilder.FromConfig to go from environment to a running
 // consumer without restating a single knob:
@@ -233,6 +234,9 @@ type ConsumerBuilder struct {
 	// DiscardRecord on the way.
 	discard DiscardHandler
 	opts    []ConsumerOption
+	// buildErr is the first deferred error from TLSFromConfig / SASLFromConfig;
+	// an enabled Build surfaces it before any other work.
+	buildErr error
 }
 
 // NewConsumer returns a ConsumerBuilder defaulted to ENABLED — an explicitly
@@ -562,6 +566,58 @@ func (b *ConsumerBuilder) AllowPlaintextSASL() *ConsumerBuilder {
 	return b
 }
 
+// TLSFromConfig applies the STREAMING_TLS_* surface of a loaded Config, exactly
+// as Builder.TLSFromConfig does for the producer. TLS disabled is a no-op; a
+// malformed CA is deferred to Build as ErrInvalidTLSConfig (first error wins).
+func (b *ConsumerBuilder) TLSFromConfig(cfg Config) *ConsumerBuilder {
+	if b == nil {
+		return b
+	}
+
+	tc, err := cfg.BuildTLSConfig()
+	if err != nil {
+		if b.buildErr == nil {
+			b.buildErr = err
+		}
+
+		return b
+	}
+
+	if tc != nil {
+		b.cfg = b.cfg.WithTLSConfig(tc)
+	}
+
+	return b
+}
+
+// SASLFromConfig applies the STREAMING_SASL_* surface of a loaded Config, exactly
+// as Builder.SASLFromConfig does for the producer. An empty mechanism is a no-op
+// that keeps the plaintext gate closed; a bad mechanism is deferred to Build.
+func (b *ConsumerBuilder) SASLFromConfig(cfg Config) *ConsumerBuilder {
+	if b == nil {
+		return b
+	}
+
+	mech, err := kafkasec.BuildSASLMechanism(cfg.SASLMechanism, cfg.SASLUsername, cfg.SASLPassword)
+	if err != nil {
+		if b.buildErr == nil {
+			b.buildErr = err
+		}
+
+		return b
+	}
+
+	if mech != nil {
+		b.cfg = b.cfg.WithSASL(mech)
+
+		if cfg.SASLAllowPlaintext {
+			b.cfg = b.cfg.WithAllowPlaintextSASL()
+		}
+	}
+
+	return b
+}
+
 // Handler wires a service-supplied handler that receives EVERY event on the
 // subscribed streams and does its own selection. Mutually exclusive with On;
 // one of the two is required.
@@ -699,6 +755,10 @@ func (b *ConsumerBuilder) Build(ctx context.Context) (Consumer, error) {
 	var handler Handler
 
 	if b.cfg.Enabled {
+		if b.buildErr != nil {
+			return nil, b.buildErr
+		}
+
 		resolved, err := b.resolveReceiver()
 		if err != nil {
 			return nil, err
