@@ -18,6 +18,7 @@ import (
 	"github.com/LerianStudio/lib-observability/v4/log"
 	"github.com/LerianStudio/lib-streaming/v4/internal/buildmeta"
 	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/envelopesig"
 )
 
 // emitSpanName lives in emit_span.go (colocated with the attribute-builder
@@ -164,6 +165,12 @@ type Producer struct {
 	// process-local state only — no tenant labels and no per-target cardinality.
 	cbRecoveryRunning      atomic.Bool
 	cbRecoveryLastPokeUnix atomic.Int64
+
+	// signer signs every publication: direct route publishes, outbox relays
+	// and route-DLQ copies. Nil means signing is not configured, and
+	// Signer.Sign on a nil receiver returns the headers unchanged. Immutable
+	// after construction.
+	signer *envelopesig.Signer
 }
 
 // Compile-time assertion: *Producer must satisfy Emitter. A missing method

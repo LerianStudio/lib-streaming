@@ -148,6 +148,47 @@ func (p *Producer) handleOutboxRow(ctx context.Context, row *outbox.OutboxEvent)
 		return fmt.Errorf("streaming: outbox replay preflight rejected row %s: %w", row.ID, err)
 	}
 
+	rt, err := p.replayTarget(ctx, row, envelope)
+	if err != nil {
+		return err
+	}
+
+	headers, err := p.publishHeaders(ctx, envelope.Event)
+	if err != nil {
+		// The only refusal here is ErrSigningSourceMismatch: a row persisted
+		// under a source this producer's signing key does not speak for. It
+		// is a configuration fault, not a property of the row, and the
+		// sentinel is not a caller error, so the row stays retryable instead
+		// of being invalidated on its first attempt; the rejection counter and
+		// ERROR log make every attempt visible.
+		p.recordOutboxRelayRejection(ctx, row, envelope, relayRejectSigningSourceMismatch, err)
+
+		return fmt.Errorf("streaming: outbox replay row %s: %w", row.ID, err)
+	}
+
+	message := transport.TransportMessage{
+		Destination: destination,
+		TenantID:    envelope.Event.TenantID,
+		Key:         p.resolvePartitionKey(envelope.Event),
+		Payload:     envelope.Event.Payload,
+		Headers:     headers,
+		Attributes:  destination.Attributes,
+	}
+
+	// Bypass the per-target breaker on replay — see godoc on this function
+	// for the rationale (no re-enqueue loops, original failure already
+	// counted).
+	if err := rt.adapter.Publish(ctx, transport.CloneMessage(message)); err != nil {
+		return fmt.Errorf("streaming: replay outbox row %s: %w", row.ID, err)
+	}
+
+	return nil
+}
+
+// replayTarget returns the registered target a relayed row publishes through.
+// A target removed or renamed since the row was written, or one whose
+// transport no longer matches the envelope, fails the row.
+func (p *Producer) replayTarget(ctx context.Context, row *outbox.OutboxEvent, envelope contract.OutboxEnvelope) (*targetRuntime, error) {
 	rt, ok := p.targets[envelope.Target]
 	if !ok || rt == nil || rt.adapter == nil {
 		// Target was removed/renamed between failure and replay. Return
@@ -164,33 +205,15 @@ func (p *Producer) handleOutboxRow(ctx context.Context, row *outbox.OutboxEvent)
 			"transport", string(envelope.Transport),
 		)
 
-		return fmt.Errorf("streaming: replay outbox row %s: target %q is not registered: %w", row.ID, envelope.Target, contract.ErrMissingTarget)
+		return nil, fmt.Errorf("streaming: replay outbox row %s: target %q is not registered: %w", row.ID, envelope.Target, contract.ErrMissingTarget)
 	}
 
 	if rt.kind != envelope.Transport || rt.kind != envelope.Destination.Kind {
-		return fmt.Errorf("streaming: outbox replay row %s: target %q transport %q does not match envelope %q/%q",
+		return nil, fmt.Errorf("streaming: outbox replay row %s: target %q transport %q does not match envelope %q/%q",
 			row.ID, envelope.Target, rt.kind, envelope.Transport, envelope.Destination.Kind)
 	}
 
-	partKey := p.resolvePartitionKey(envelope.Event)
-
-	message := transport.TransportMessage{
-		Destination: destination,
-		TenantID:    envelope.Event.TenantID,
-		Key:         partKey,
-		Payload:     envelope.Event.Payload,
-		Headers:     buildTransportHeaders(ctx, envelope.Event),
-		Attributes:  destination.Attributes,
-	}
-
-	// Bypass the per-target breaker on replay — see godoc on this function
-	// for the rationale (no re-enqueue loops, original failure already
-	// counted).
-	if err := rt.adapter.Publish(ctx, transport.CloneMessage(message)); err != nil {
-		return fmt.Errorf("streaming: replay outbox row %s: %w", row.ID, err)
-	}
-
-	return nil
+	return rt, nil
 }
 
 // isLegacySourceRejection reports whether a preflight refusal of envelope is a
@@ -211,6 +234,11 @@ const (
 	// relayRejectLegacyUnroutable: a version-1 row that cannot be re-derived
 	// under the current topology. Kept retryable for operator action.
 	relayRejectLegacyUnroutable = "legacy_unroutable"
+
+	// relayRejectSigningSourceMismatch: a row persisted under a ce-source the
+	// producer's active signing key is not bound to. Kept retryable for
+	// operator action (ErrSigningSourceMismatch is not a caller error).
+	relayRejectSigningSourceMismatch = "signing_source_mismatch"
 )
 
 // relayTargetUnknownLabel is the placeholder used in place of a target name

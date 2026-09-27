@@ -1,8 +1,10 @@
 package consumer
 
 import (
-	"github.com/LerianStudio/lib-streaming/v4/obs"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/LerianStudio/lib-streaming/v4/internal/envelopesig"
+	"github.com/LerianStudio/lib-streaming/v4/obs"
 )
 
 // Option configures the consumer runtime at construction. Mirrors the producer's
@@ -47,6 +49,16 @@ func WithDLQPublisher(p dlqPublisher) Option {
 // reader" a build-time fact rather than a method-set accident.
 func WithDiscardDispatch(fn DiscardDispatch) Option {
 	return func(c *consumerRuntime) { c.discard = fn }
+}
+
+// WithSignatureVerifier makes the runtime REQUIRE a valid envelope signature on
+// every record, checked right after the codec and before the ce-source check,
+// in both handler modes. A record that fails quarantines with a signature cause
+// kind and never reaches a handler or the Classifier. A nil verifier leaves
+// verification off. The root builder's RequireSignatures(...) is the intended
+// caller; New refuses it on a DLQ reader.
+func WithSignatureVerifier(v *envelopesig.Verifier) Option {
+	return func(c *consumerRuntime) { c.verifier = v }
 }
 
 // WithCodec overrides the CloudEvents header decoder (tenant extraction seam).

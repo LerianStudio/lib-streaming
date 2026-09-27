@@ -433,6 +433,8 @@ func clearStreamingEnv(t *testing.T) {
 		"STREAMING_SCHEMA_REGISTRY_URL",
 		"STREAMING_SCHEMA_REGISTRY_USERNAME",
 		"STREAMING_SCHEMA_REGISTRY_PASSWORD",
+		"STREAMING_SIGNING_KEY_ID",
+		"STREAMING_SIGNING_KEY",
 	}
 	for _, v := range vars {
 		t.Setenv(v, "")

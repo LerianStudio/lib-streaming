@@ -90,7 +90,7 @@ func dlqHeader(message transport.TransportMessage, key string) (string, bool) {
 
 // newSizeCappedProducer wires a single-target producer whose only route fails
 // and whose DLQ enforces dlqMaxBytes.
-func newSizeCappedProducer(t *testing.T, adapter *sizeCappedRouteAdapter) *Producer {
+func newSizeCappedProducer(t *testing.T, adapter *sizeCappedRouteAdapter, opts ...EmitterOption) *Producer {
 	t.Helper()
 
 	routes := mustMultiRouteTable(t,
@@ -104,7 +104,7 @@ func newSizeCappedProducer(t *testing.T, adapter *sizeCappedRouteAdapter) *Produ
 		[]TargetSpec{{Name: "primary", Kind: TransportKafkaLike, Adapter: adapter}},
 		routes,
 		sampleCatalog(t),
-		WithLogger(log.NewNop()),
+		append([]EmitterOption{WithLogger(log.NewNop())}, opts...)...,
 	)
 	if err != nil {
 		t.Fatalf("NewProducerMulti() error = %v", err)

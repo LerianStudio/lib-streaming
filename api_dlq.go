@@ -76,7 +76,7 @@ const (
 	// DLQHeaderSourceOffset carries the origin offset.
 	DLQHeaderSourceOffset = "x-lerian-dlq-source-offset"
 	// DLQHeaderCauseKind names WHICH gate quarantined the record — one of the
-	// four DLQCause* values. It is the low-cardinality bucket an operator
+	// DLQCause* values. It is the low-cardinality bucket an operator
 	// filters and alerts on; the sanitized error text is in
 	// DLQHeaderErrorMessage.
 	DLQHeaderCauseKind = "x-lerian-dlq-cause-kind"
@@ -97,8 +97,8 @@ const (
 	DLQHeaderPayloadBytes = "x-lerian-dlq-payload-bytes"
 )
 
-// The four cause kinds stamped on DLQHeaderCauseKind. They have four different
-// owners and four different fixes, which is the whole reason the header exists.
+// The cause kinds stamped on DLQHeaderCauseKind. Each has its own owner and its
+// own fix, which is the whole reason the header exists.
 const (
 	// DLQCauseCodec: the CloudEvents headers would not decode. The producer's
 	// wire format is the suspect.
@@ -112,6 +112,17 @@ const (
 	// DLQCauseUnhandledKey: no handler registered for the event key — this
 	// consumer's registrations drifted behind the producer's catalog.
 	DLQCauseUnhandledKey = "unhandled_key"
+	// DLQCauseSignatureMissing: the consumer requires signatures and the record
+	// carries none — the producer does not sign yet, or the record predates its
+	// signing rollout. Recoverable by replay once the producer signs.
+	DLQCauseSignatureMissing = "signature_missing"
+	// DLQCauseSignatureUnknownKey: the record is signed by a key id the
+	// consumer's keyring does not hold — key distribution is the suspect.
+	DLQCauseSignatureUnknownKey = "signature_unknown_key"
+	// DLQCauseSignatureInvalid: the signature does not verify — the record was
+	// changed after signing, forged, signed by a key bound to another source,
+	// malformed, or outside an opt-in max skew.
+	DLQCauseSignatureInvalid = "signature_invalid"
 )
 
 // DLQMaxErrorMessageBytes is the bound every DLQ writer applies to
@@ -163,10 +174,11 @@ type DiscardRecord struct {
 	SourceOffset    int64
 
 	// CauseKind is the low-cardinality bucket naming WHICH gate quarantined the
-	// record: DLQCauseCodec, DLQCauseHandler, DLQCauseSourceMismatch or
-	// DLQCauseUnhandledKey. A value outside that set came from a writer this
-	// version does not know; it travels through verbatim rather than being
-	// normalized away.
+	// record: DLQCauseCodec, DLQCauseHandler, DLQCauseSourceMismatch,
+	// DLQCauseUnhandledKey, DLQCauseSignatureMissing,
+	// DLQCauseSignatureUnknownKey or DLQCauseSignatureInvalid. A value outside
+	// that set came from a writer this version does not know; it travels
+	// through verbatim rather than being normalized away.
 	CauseKind string
 	// ErrorClass is the transport adapter's classification of the cause.
 	// Forensic metadata only, never a routing decision.

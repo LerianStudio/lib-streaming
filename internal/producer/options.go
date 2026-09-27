@@ -9,6 +9,7 @@ import (
 	"github.com/LerianStudio/lib-commons/v7/commons/circuitbreaker"
 	"github.com/LerianStudio/lib-commons/v7/commons/outbox"
 	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/envelopesig"
 	"github.com/LerianStudio/lib-streaming/v4/internal/kafkasec"
 	"github.com/twmb/franz-go/pkg/sasl"
 	"go.opentelemetry.io/otel/trace"
@@ -85,6 +86,17 @@ type emitterOptions struct {
 	// with a new DefinitionKey is appended. Empty means pure auto-generation.
 	// See WithRouteOverrides and contract.MergeRouteOverrides.
 	routeOverrides []contract.RouteDefinition
+
+	// signing, when non-nil, turns on envelope signing. NewProducerMulti turns
+	// it into the Producer's signer and fails construction when the ring or the
+	// active key id cannot be used. See WithEnvelopeSigning.
+	signing *signingSpec
+}
+
+// signingSpec is the raw WithEnvelopeSigning input, validated at construction.
+type signingSpec struct {
+	ring        *envelopesig.Keyring
+	activeKeyID string
 }
 
 // WithLogger sets the structured logger used across the package. When not
@@ -317,5 +329,22 @@ func WithCatalog(catalog Catalog) EmitterOption {
 func WithRouteOverrides(routes ...contract.RouteDefinition) EmitterOption {
 	return func(o *emitterOptions) {
 		o.routeOverrides = append([]contract.RouteDefinition(nil), routes...)
+	}
+}
+
+// WithEnvelopeSigning signs every record this Producer publishes with the key
+// activeKeyID from ring: the direct publish of every route, every outbox relay,
+// and every route-DLQ copy. Each is signed at the instant it is published — an
+// outbox relay signs at relay time, so a backlog never ages into rejections.
+// The three signature headers (ce-sigkid, ce-sigts, ce-sig) are appended after
+// the CloudEvents headers.
+//
+// Construction fails with ErrInvalidSigningKey when ring is nil, activeKeyID is
+// not in it, or that key is bound to a source other than the Producer's own:
+// a producer can only vouch for itself. Without this option nothing is signed
+// and the headers are byte-identical to an unsigned producer's. Last call wins.
+func WithEnvelopeSigning(ring *envelopesig.Keyring, activeKeyID string) EmitterOption {
+	return func(o *emitterOptions) {
+		o.signing = &signingSpec{ring: ring, activeKeyID: activeKeyID}
 	}
 }

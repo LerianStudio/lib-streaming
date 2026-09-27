@@ -3,12 +3,12 @@ package producer
 import (
 	"context"
 	"github.com/LerianStudio/lib-streaming/v4/obs"
-	"slices"
 	"strconv"
 	"time"
 
 	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
 	"github.com/LerianStudio/lib-streaming/v4/internal/dlqheader"
+	"github.com/LerianStudio/lib-streaming/v4/internal/envelopesig"
 	"github.com/LerianStudio/lib-streaming/v4/internal/transport"
 )
 
@@ -122,7 +122,22 @@ func (p *Producer) publishRouteDLQ(
 		causeMessage = dlqheader.TruncateErrorMessage(sanitizeBrokerURL(cause.Error()))
 	}
 
-	headers := buildTransportHeaders(ctx, event)
+	// The CloudEvents headers are signed over the payload BEFORE the forensic
+	// set is appended: the DLQ copy is a publication of its own, signed at the
+	// DLQ instant, and the x-lerian-dlq-* headers are outside the signature.
+	headers, err := p.publishHeaders(ctx, event)
+	if err != nil {
+		p.metrics.recordDLQFailed(ctx, sourceLabel)
+		p.logger.Log(ctx, obs.LevelError, "streaming: route DLQ copy cannot be signed",
+			"producer_id", p.producerID,
+			"route_key", route.Key,
+			"target", route.Target,
+			"error", err.Error(),
+		)
+
+		return false, err
+	}
+
 	headers = append(headers,
 		transport.Header{Key: dlqheader.SourceTopic, Value: []byte(sourceLabel)},
 		transport.Header{Key: dlqheader.ErrorClass, Value: []byte(cls)},
@@ -143,7 +158,7 @@ func (p *Producer) publishRouteDLQ(
 		Attributes:  dlqDest.Attributes,
 	}
 
-	err := rt.adapter.Publish(ctx, transport.CloneMessage(message))
+	err = rt.adapter.Publish(ctx, transport.CloneMessage(message))
 	if err != nil && dlqheader.IsSizeError(err) {
 		// The copy does not fit. Quarantining the metadata WITHOUT the payload
 		// beats losing the entry entirely: the event id, tenant, route, and
@@ -151,8 +166,13 @@ func (p *Producer) publishRouteDLQ(
 		// what a dropped DLQ write destroys. The payload is NOT recoverable on
 		// this side — the original publish never landed anywhere — so the
 		// marker headers say plainly that it is gone.
+		//
+		// The slim copy carries NO signature. Re-signed over the empty body it
+		// would be a valid signed event with the real ce-id; moved onto a fact
+		// topic it would be processed, and its ce-id would then dedupe away the
+		// real event when that is replayed.
 		message.Payload = nil
-		message.Headers = append(slices.Clone(headers),
+		message.Headers = append(envelopesig.Strip(headers),
 			transport.Header{Key: dlqheader.PayloadOmitted, Value: []byte("true")},
 			transport.Header{Key: dlqheader.PayloadBytes, Value: []byte(strconv.Itoa(len(event.Payload)))},
 		)

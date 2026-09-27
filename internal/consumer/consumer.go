@@ -19,12 +19,13 @@ import (
 
 	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
 	"github.com/LerianStudio/lib-streaming/v4/internal/dlqheader"
+	"github.com/LerianStudio/lib-streaming/v4/internal/envelopesig"
 	"github.com/LerianStudio/lib-streaming/v4/internal/transport"
 	"github.com/LerianStudio/lib-streaming/v4/internal/transport/kafka"
 )
 
 // DLQ cause kinds, stamped on x-lerian-dlq-cause-kind. The values — and the
-// reasoning behind having four of them — live in internal/dlqheader beside the
+// reasoning behind having one per owner — live in internal/dlqheader beside the
 // header key whose values they are, because they are a wire contract a DLQ
 // reader compares against. These are the runtime's local names for them.
 const (
@@ -32,6 +33,28 @@ const (
 	dlqCauseHandler        = dlqheader.CauseHandler
 	dlqCauseSourceMismatch = dlqheader.CauseSourceMismatch
 	dlqCauseUnhandledKey   = dlqheader.CauseUnhandledKey
+
+	dlqCauseSignatureMissing    = dlqheader.CauseSignatureMissing
+	dlqCauseSignatureUnknownKey = dlqheader.CauseSignatureUnknownKey
+	dlqCauseSignatureInvalid    = dlqheader.CauseSignatureInvalid
+)
+
+// The three envelope-signature verdicts, returned when the consumer requires
+// signatures (WithSignatureVerifier) and a record fails verification. They are
+// structural like ErrUnexpectedSource: the record is quarantined before any
+// handler runs and never offered to the service Classifier, because no amount
+// of waiting makes a missing, unknown or wrong signature verify. They are the
+// envelopesig values, so errors.Is matches whichever package a caller names.
+var (
+	// ErrSignatureMissing: the record carries no complete ce-sigkid / ce-sigts
+	// / ce-sig set. Cause kind signature_missing.
+	ErrSignatureMissing = envelopesig.ErrSignatureMissing
+	// ErrSignatureUnknownKey: the record is signed by a key id the verifier's
+	// keyring does not hold. Cause kind signature_unknown_key.
+	ErrSignatureUnknownKey = envelopesig.ErrSignatureUnknownKey
+	// ErrSignatureInvalid: the signature does not verify. Cause kind
+	// signature_invalid.
+	ErrSignatureInvalid = envelopesig.ErrSignatureInvalid
 )
 
 // ErrUnexpectedSource is returned when a record's ce-source is not one of the
@@ -58,6 +81,10 @@ type quarantineCause struct {
 // arrive as handler errors but are NOT business rejections, and lumping them
 // under "handler" would point an operator at the wrong owner.
 func handlerQuarantineCause(err error) quarantineCause {
+	if kind, ok := signatureCauseKind(err); ok {
+		return quarantineCause{kind: kind, err: err}
+	}
+
 	switch {
 	case errors.Is(err, ErrUnexpectedSource):
 		return quarantineCause{kind: dlqCauseSourceMismatch, err: err}
@@ -65,6 +92,21 @@ func handlerQuarantineCause(err error) quarantineCause {
 		return quarantineCause{kind: dlqCauseUnhandledKey, err: err}
 	default:
 		return quarantineCause{kind: dlqCauseHandler, err: err}
+	}
+}
+
+// signatureCauseKind maps a signature verdict to its cause kind, reporting
+// false for any other error.
+func signatureCauseKind(err error) (string, bool) {
+	switch {
+	case errors.Is(err, ErrSignatureMissing):
+		return dlqCauseSignatureMissing, true
+	case errors.Is(err, ErrSignatureUnknownKey):
+		return dlqCauseSignatureUnknownKey, true
+	case errors.Is(err, ErrSignatureInvalid):
+		return dlqCauseSignatureInvalid, true
+	default:
+		return "", false
 	}
 }
 
@@ -248,6 +290,12 @@ type consumerRuntime struct {
 	// DiscardDispatch.
 	discard DiscardDispatch
 
+	// verifier checks each record's envelope signature ahead of every other
+	// verdict but the codec, installed only by WithSignatureVerifier. Nil means
+	// signatures are not required and the record goes on unverified, exactly
+	// as before signing existed. New refuses it together with discard.
+	verifier *envelopesig.Verifier
+
 	// commandTopics is the set of subscribed topics carrying STRICT unmatched
 	// semantics, resolved once from cfg.Commands. Read per record on the guard
 	// chain, which is why it is a set rather than a slice scan.
@@ -304,6 +352,15 @@ func New(cfg ConsumerConfig, client GroupClient, handler Handler, opts ...Option
 
 	if transport.IsNilInterface(handler) && c.discard == nil {
 		return nil, ErrNilHandler
+	}
+
+	// A DLQ reader never verifies signatures. A quarantine copy keeps the
+	// ORIGINAL producer's signature headers verbatim, and every signature_*
+	// entry is by definition one that fails verification, so a verifying
+	// reader would quarantine the queue it drains back onto itself. Refused
+	// rather than silently skipped, so nobody believes the check is in force.
+	if c.verifier != nil && c.discard != nil {
+		return nil, fmt.Errorf("%w: RequireSignatures(...) on a DLQ reader", ErrDiscardHandlerAndHandlerBothSet)
 	}
 
 	// A DLQ publisher is mandatory: terminal/poison records MUST quarantine
@@ -839,6 +896,26 @@ func (c *consumerRuntime) handleRecord(ctx context.Context, rec *kgo.Record) (di
 		// Codec decode fault: malformed CloudEvent, can never parse, not
 		// reclassifiable -> always terminal -> DLQ.
 		return c.classify(err, sourceCodec), 0, quarantineCause{kind: dlqCauseCodec, err: err}
+	}
+
+	// Signature verification, ahead of the source check and of BOTH handler
+	// modes, when the consumer requires signatures. It reads the RAW record
+	// headers, not ev: the codec sanitizes values and keeps the last of a
+	// repeated key, and the verifier must judge the exact bytes on the wire.
+	//
+	// It runs before the source check because it is the stronger finding: a
+	// forged record claiming a foreign source is a forgery first. Its verdicts
+	// are structural and go straight to the DLQ; the Classifier never sees
+	// them. New guarantees c.discard is nil whenever a verifier is set.
+	if c.verifier != nil {
+		if verr := c.verifier.Verify(rec.Headers, rec.Value); verr != nil {
+			kind, ok := signatureCauseKind(verr)
+			if !ok {
+				kind = dlqCauseSignatureInvalid // fail closed on a verdict outside the three
+			}
+
+			return dispositionDLQ, 0, quarantineCause{kind: kind, err: verr}
+		}
 	}
 
 	// Source verification, ahead of BOTH handler modes. A record whose
@@ -1534,6 +1611,13 @@ func (c *consumerRuntime) classify(err error, source errSource) disposition {
 		// producing application's ENTIRE catalog stuck behind one record, with
 		// nothing reaching the DLQ where an operator would have seen it.
 		if errors.Is(err, ErrUnhandledEvent) || errors.Is(err, ErrUnexpectedSource) {
+			return dispositionDLQ
+		}
+
+		// The signature verdicts are structural for the same reason. The
+		// runtime gate quarantines them before any handler runs; this is the
+		// defence in depth for a handler that returns one anyway.
+		if _, structural := signatureCauseKind(err); structural {
 			return dispositionDLQ
 		}
 

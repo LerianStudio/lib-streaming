@@ -99,7 +99,7 @@ const (
 	CauseKind = "x-lerian-dlq-cause-kind"
 )
 
-// The four cause kinds stamped on the CauseKind header. Low-cardinality by
+// The cause kinds stamped on the CauseKind header. Low-cardinality by
 // design: an operator filters and alerts on this, then reads the sanitized
 // underlying error from the ErrorMessage header.
 //
@@ -116,7 +116,10 @@ const (
 // mismatch (a foreign write, or a misconfigured allowlist), an unhandled key
 // (this consumer's registrations drifted behind the producer's catalog) and a
 // genuine business rejection were indistinguishable, and they have four
-// different owners and four different fixes.
+// different owners and four different fixes. The three signature kinds split
+// for the same reason: a missing signature is a rollout gap, an unknown key id
+// is key distribution, and an invalid signature is forgery, tampering or a
+// wrong key.
 const (
 	// CauseCodec: the CloudEvents headers would not decode. The record is
 	// poison and can never parse; the producer's wire format is the suspect.
@@ -132,4 +135,15 @@ const (
 	// consumer's On(...) registrations have drifted behind the producer's
 	// catalog.
 	CauseUnhandledKey = "unhandled_key"
+	// CauseSignatureMissing: the consumer requires signatures and the record
+	// carries none. The producer does not sign yet, or the record predates
+	// its signing rollout.
+	CauseSignatureMissing = "signature_missing"
+	// CauseSignatureUnknownKey: the record is signed by a key id the
+	// consumer's keyring does not hold. Key distribution is the suspect.
+	CauseSignatureUnknownKey = "signature_unknown_key"
+	// CauseSignatureInvalid: the signature does not verify — the record was
+	// changed after signing, forged, signed by a key bound to another source,
+	// malformed, or outside an opt-in max skew.
+	CauseSignatureInvalid = "signature_invalid"
 )

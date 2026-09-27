@@ -3,7 +3,9 @@
 package streaming_test
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 
 	streaming "github.com/LerianStudio/lib-streaming/v4"
@@ -79,4 +81,147 @@ func Example_readingADLQ() {
 
 	fmt.Println(dlqTopic)
 	// Output: lerian.streaming.lender.dlq
+}
+
+// onLoanDisbursed is the handler the signing example registers. A handler on a
+// verifying consumer only ever sees records whose signature verified.
+func onLoanDisbursed(context.Context, streaming.Event, []byte) error { return nil }
+
+// Example_envelopeSigning is the README's "Signing and verifying envelopes"
+// wiring, compiled. Like Example_readingADLQ it needs no running cluster: every
+// Build below either returns before contacting a broker or is refused first.
+//
+// It pins the three things a service gets wrong first: the consumer requires
+// signatures with a ring that holds each accepted producer's key, Build refuses
+// a ring that leaves an accepted producer uncovered, and a key signs only for
+// the ce-source it is bound to.
+func Example_envelopeSigning() {
+	ctx := context.Background()
+
+	// In production the secret comes from the service's secret store, never
+	// from source code. At least MinSigningSecretBytes long.
+	lenderKey := streaming.SigningKey{
+		ID:     "lender-2026-09",
+		Source: "lender",
+		Secret: bytes.Repeat([]byte{0x6b}, streaming.MinSigningSecretBytes),
+	}
+
+	ring, err := streaming.NewKeyring(lenderKey)
+	if err != nil {
+		return
+	}
+
+	// Consumer: a lender record that is unsigned, signed by a key id the ring
+	// lacks, or does not verify goes to this consumer's DLQ; onLoanDisbursed
+	// never sees it.
+	c, err := streaming.NewConsumer().
+		Brokers("localhost:9092").
+		Group("loan-projector").
+		Source("loan-projector").
+		Apps("lender").
+		OnFrom("lender", "loan.disbursed", onLoanDisbursed).
+		RequireSignatures(ring).
+		Build(ctx)
+	if err != nil {
+		return
+	}
+
+	defer func() { _ = c.Close() }()
+
+	// Build proves coverage: matcher is accepted but has no key in the ring.
+	_, err = streaming.NewConsumer().
+		Brokers("localhost:9092").
+		Group("loan-projector").
+		Source("loan-projector").
+		Apps("lender", "matcher").
+		OnFrom("lender", "loan.disbursed", onLoanDisbursed).
+		OnFrom("matcher", "loan.disbursed", onLoanDisbursed).
+		RequireSignatures(ring).
+		Build(ctx)
+	fmt.Println(errors.Is(err, streaming.ErrConsumerSignatureKeyMissingForSource))
+
+	// Producer: lender's key cannot sign for matcher. Build refuses it before
+	// any transport adapter is built, so no broker is contacted.
+	catalog, err := streaming.NewCatalog(streaming.EventDefinition{
+		Key:          "loan.disbursed",
+		ResourceType: "loan",
+		EventType:    "disbursed",
+	})
+	if err != nil {
+		return
+	}
+
+	_, err = streaming.NewBuilder().
+		Source("matcher").
+		Catalog(catalog).
+		Routes(streaming.RouteDefinition{
+			Key:         "primary.kafka",
+			Target:      "primary",
+			Destination: streaming.KafkaTopic("lerian.streaming.matcher"),
+			Requirement: streaming.RouteRequired,
+		}).
+		Target(streaming.TargetConfig{
+			Name:    "primary",
+			Kind:    streaming.TransportKafkaLike,
+			Brokers: []string{"localhost:9092"},
+		}).
+		SignEnvelopes(ring, "lender-2026-09").
+		Build(ctx)
+	fmt.Println(errors.Is(err, streaming.ErrInvalidSigningKey))
+	// Output:
+	// true
+	// true
+}
+
+// Example_envelopeSigningOverAMQP signs a fact a service publishes with its own
+// AMQP client and verifies it on the receiving side before the handler runs.
+// The header table is what amqp091's Publishing.Headers and Delivery.Headers
+// hold (amqp.Table is a map[string]any), so no conversion is needed.
+func Example_envelopeSigningOverAMQP() {
+	ring, err := streaming.NewKeyring(streaming.SigningKey{
+		ID:     "lender-2026-09",
+		Source: "lender",
+		Secret: bytes.Repeat([]byte{0x6b}, streaming.MinSigningSecretBytes),
+	})
+	if err != nil {
+		return
+	}
+
+	signer, err := streaming.NewSigner(ring, "lender-2026-09", "lender")
+	if err != nil {
+		return
+	}
+
+	body := []byte(`{"loan_id":"l-1"}`)
+
+	headers := map[string]any{}
+	for _, h := range streaming.BuildCloudEventsHeaders(streaming.Event{
+		EventID:      "0190a8e2-0000-7000-8000-000000000001",
+		TenantID:     "tenant-1",
+		Source:       "lender",
+		ResourceType: "loan",
+		EventType:    "disbursed",
+	}) {
+		headers[h.Key] = h.Value
+	}
+
+	// Publisher side: publishing.Headers = signed.
+	signed, err := signer.Sign(headers, body)
+	if err != nil {
+		return
+	}
+
+	// Receiver side: verify(delivery.Headers, delivery.Body) before handling.
+	verifier, err := streaming.NewVerifier(ring, 0)
+	if err != nil {
+		return
+	}
+
+	fmt.Println(verifier.Verify(signed, body))
+	fmt.Println(errors.Is(verifier.Verify(signed, []byte(`{"loan_id":"l-2"}`)), streaming.ErrSignatureInvalid))
+	fmt.Println(errors.Is(verifier.Verify(headers, body), streaming.ErrSignatureMissing))
+	// Output:
+	// <nil>
+	// true
+	// true
 }

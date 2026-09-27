@@ -56,6 +56,7 @@ It does not replace `github.com/LerianStudio/lib-commons/v7/commons/rabbitmq`, w
 | `internal/config` | `STREAMING_*` environment parsing, defaults, validation |
 | `internal/manifest` | Publisher descriptors, manifest DTOs, stdlib HTTP introspection handler |
 | `internal/cloudevents` | Kafka CloudEvents binary-mode header codec |
+| `internal/envelopesig` | Opt-in envelope signature: keyring, canonical bytes, HMAC-SHA256 signer and verifier |
 | `internal/emitter` | No-op emitter implementation |
 | `internal/producer` | Producer runtime: multi-target dispatch, per-target circuit breakers, publish/outbox/DLQ paths, metrics, tracing, runtime assertions |
 | `internal/transport` | TransportAdapter port and shared message/header types |
@@ -63,7 +64,7 @@ It does not replace `github.com/LerianStudio/lib-commons/v7/commons/rabbitmq`, w
 | `internal/transport/sqs` | SQS adapter built on a caller-supplied `SQSPublisherClient` |
 | `internal/transport/rabbitmq` | RabbitMQ events adapter built on a caller-supplied `RabbitMQPublisher` |
 | `internal/transport/eventbridge` | EventBridge adapter built on a caller-supplied `PutEvents` client |
-| `streamingtest` | Public testing helpers, mock emitter, assertion helpers |
+| `streamingtest` | Public testing helpers, mock emitter, assertion helpers, signed/unsigned/forged record builders |
 
 ### Technical Highlights
 
@@ -212,6 +213,22 @@ streamingtest.AssertEventEmitted(t, mock, "transaction.created")
 streamingtest.AssertTenantID(t, mock, "t-abc")
 ```
 
+A service whose consumer requires signatures tests its ring and its DLQ
+handling with records built the way the wire carries them:
+
+```go
+key := streamingtest.SigningKey(t, "lender-k1", "lender") // deterministic, test-only secret
+ring := streamingtest.Keyring(t, key)
+
+good := streamingtest.SignedRecord(t, topic, key, event) // verifies under ring
+bare := streamingtest.UnsignedRecord(t, topic, event)    // quarantines as signature_missing
+bad := streamingtest.ForgedRecord(t, topic, key, event)  // quarantines as signature_invalid
+```
+
+They go through the producer's own header codec and signer, so a record they
+sign verifies exactly as a published one does. Produce them into kfake, or read
+their headers and value directly.
+
 ### Configuration
 
 All environment variables use the `STREAMING_` prefix. The canonical reference lives in [`.env.reference`](./.env.reference), and `LoadConfig()` returns migration warnings alongside the parsed config.
@@ -309,6 +326,7 @@ arrives first.
 | Dispatch key | `(producing app, "<resourceType>.<eventType>")`. `OnFrom(app, key, fn)` names the app; `On(key, fn)` binds to the sole app and fails the build when there is more than one. Underscores travel verbatim. |
 | Unmatched events | On a **fact** stream: **ignored** (skipped and committed) by default; `UnmatchedPolicy(streaming.UnmatchedError)` quarantines them instead. On a **commands** queue: always **quarantined** with cause kind `unhandled_key`. Not configurable — `UnmatchedPolicy` governs fact streams only. |
 | Source verification | A record whose `ce-source` is not one of the named `Apps`/`Commands` is quarantined with `ErrUnexpectedSource` before any handler runs — in **both** handler modes. `ExpectSources(...)` — or `STREAMING_CONSUMER_EXPECT_SOURCES` — replaces that derived allowlist, must cover every named app, and is the only way to resolve the named-app + `Topics` refusal from the environment. |
+| Signature verification | Opt-in with `RequireSignatures(ring)`. A record that is unsigned, signed by an unknown key id, or fails verification is quarantined with a `signature_*` cause kind, after the codec and before the `ce-source` check, in **both** handler modes. See [Signing and verifying envelopes](#signing-and-verifying-envelopes). |
 | Whole-stream handler | `Handler(h)` receives every record for consumers that select themselves, and gets the same source verification. It still rejects the genuinely dispatch-only knobs: `On`/`OnFrom` (`ErrHandlerAndDispatchBothSet`), `UnmatchedPolicy` (`ErrHandlerAndUnmatchedPolicyBothSet`), and `Commands` (`ErrHandlerAndCommandsBothSet` — with no handler registry there is nothing to ask whether a command key is handled). |
 | Readiness | `Healthy(ctx)` fails with `ErrConsumerPartitionHalted` once a partition has been head-of-line blocked across three consecutive poll cycles. Polling cleanly is not the same as making progress. |
 
@@ -444,7 +462,8 @@ type desk struct{}
 
 func (desk) HandleDiscard(ctx context.Context, r streaming.DiscardRecord) error {
     // r.Event.TenantID — the tenant that owned the poison record
-    // r.CauseKind      — why it died: codec / handler / source_mismatch / unhandled_key
+    // r.CauseKind      — why it died: codec / handler / source_mismatch / unhandled_key,
+    //                    or signature_missing / signature_unknown_key / signature_invalid
     // r.SourceTopic, r.SourcePartition, r.SourceOffset — the route back to it
     // r.PayloadOmitted — whether r.Payload is genuinely absent or the real bytes
     return nil
@@ -496,10 +515,10 @@ a library upgrade into a startup outage. The log line names the topic; the fix i
 the same distinct `ce-source`.
 
 `DiscardHandler` is mutually exclusive with `Handler`, `On`/`OnFrom`,
-`Commands`, `UnmatchedPolicy`, `Apps` and `ExpectSources`, enforced at `Build` in
-either order. `Apps` subscribes to fact topics, never a `.dlq`, and a reader
-never verifies `ce-source`, so an allowlist would be ignored. Name the queue with
-`Topics(...)`.
+`Commands`, `UnmatchedPolicy`, `Apps`, `ExpectSources` and `RequireSignatures`,
+enforced at `Build` in either order. `Apps` subscribes to fact topics, never a
+`.dlq`, and a reader never verifies `ce-source` or signatures, so an allowlist or
+a keyring would be ignored. Name the queue with `Topics(...)`.
 
 The origin triple is the stable natural key for deduping a redelivered or
 replayed quarantine; `ce-id` is not, because the replay path can quarantine the
@@ -521,6 +540,324 @@ payload)` does the same decode standalone and never fails; the header keys and
 cause-kind values are exported as `streaming.DLQHeader*` / `streaming.DLQCause*`,
 and `streaming.TruncatedErrorMessageBytes` tells a cut error message from a whole
 one.
+
+## Signing and verifying envelopes
+
+Signing is opt-in on both sides. A producer with a signing key stamps every
+record it publishes with three CloudEvents extensions: `ce-sigkid` (the key
+id), `ce-sigts` (the signing instant, RFC 3339 UTC) and `ce-sig` (`v1.` plus an
+HMAC-SHA256). A consumer that requires signatures quarantines any record that
+does not verify, before a handler runs. A producer without a key writes
+byte-identical headers, and a consumer that does not require signatures ignores
+the three extensions, so either side can move first without breaking the other.
+
+The signature covers all 13 `ce-*` headers the codec writes (spec version, id,
+source, type, time, subject, tenant, content type, data schema, schema version,
+resource type, event type, system-event flag), the key id, the signing instant
+and the SHA-256 of the body. Changing the payload, the tenant, or the event type
+a consumer dispatches on breaks it. The topic, the record key and the
+`x-lerian-dlq-*` forensic headers are outside it.
+
+### Keys
+
+A key is an id, the `ce-source` it speaks for, and a secret of at least
+`MinSigningSecretBytes` (32) bytes:
+
+```go
+ring, err := streaming.NewKeyring(streaming.SigningKey{
+    ID:     "lender-2026-09", // ^[a-z0-9][a-z0-9._-]{0,63}$
+    Source: "lender",         // the only ce-source this key may sign for
+    Secret: secretFromStore,  // streaming.SigningSecret, from the secret store
+})
+if err != nil {
+    return err // ErrInvalidSigningKey: short secret, bad or duplicate id, bad source
+}
+```
+
+- **Secrets come from the service's secret store**, never from source code or
+  a checked-in file. `SigningSecret` and `Keyring` never render their bytes:
+  `%v`, `%#v`, JSON and slog all print the mask, and no error text carries them.
+- **A key is bound to a source.** A consumer holding lender's and matcher's
+  keys rejects a record that claims `ce-source=lender` but is signed with
+  matcher's key. Without the binding, any producer in the ring could forge any
+  other.
+
+Keys also load from their text form, with the same validation and redaction
+`LoadConfig` and `LoadConsumerConfig` apply, so a service never parses them
+itself. The loaders read their variable whether or not streaming or the
+consumer is enabled, which is what a fluently built producer or consumer needs:
+
+```go
+// Producer: STREAMING_SIGNING_KEY_ID + STREAMING_SIGNING_KEY, bound to Source.
+ring, activeKeyID, err := streaming.LoadSigningKey("lender")
+if err != nil {
+    return err // one of the two set: ErrProducerInvalidConfigField; bad key: ErrInvalidSigningKey
+}
+if ring != nil { // neither set: nil ring, signing off
+    builder = builder.SignEnvelopes(ring, activeKeyID)
+}
+
+// Consumer: STREAMING_CONSUMER_SIGNATURE_KEYS, csv of <kid>@<source>:<base64>.
+keys, err := streaming.LoadVerificationKeys() // unset, blank or only commas: nil, which RequireSignatures refuses at Build
+if err != nil {
+    return err // ErrConsumerInvalidConfigField + ErrInvalidSigningKey, entry named by position
+}
+consumerBuilder = consumerBuilder.RequireSignatures(keys)
+```
+
+`ParseSigningKey(keyID, source, secretBase64)` and
+`ParseVerificationKeys(csv)` take the same values from a string instead, for a
+secret read from a mounted file or a secret-manager call; their errors wrap
+`ErrInvalidSigningKey`.
+
+### Producer
+
+```go
+emitter, err := streaming.NewBuilder().
+    Source("lender").
+    // ...Catalog, Routes, Target as in "Bootstrap a Producer"...
+    SignEnvelopes(ring, "lender-2026-09"). // the ACTIVE key; must be bound to Source
+    Build(ctx)
+```
+
+From the environment, `STREAMING_SIGNING_KEY_ID` and `STREAMING_SIGNING_KEY`
+(standard base64, secret) load into `Config`, and `Builder.SigningFromConfig(cfg)`
+builds a one-key ring bound to `STREAMING_CLOUDEVENTS_SOURCE`. Setting only one
+of the two variables fails `LoadConfig`.
+
+Every publication is signed **at the instant it goes out**:
+
+- each route's direct publish;
+- each outbox relay, so `ce-sigts` is the relay time while `ce-time` stays the
+  emit time. A signature taken at enqueue would age in the outbox and turn a
+  legitimate backlog into rejections;
+- each route-DLQ copy, signed over the payload before the `x-lerian-dlq-*`
+  headers are added.
+
+A route-DLQ copy whose payload had to be omitted for size carries **no**
+signature. Signed over the empty body it would be a valid event carrying the
+real `ce-id`, and moved onto a fact topic it would dedupe away the real event
+when that is replayed.
+
+`Build` fails with `ErrInvalidSigningKey`, before any transport adapter is
+built, for a nil ring, an empty or unknown key id, or a key bound to another
+source. A producer can only vouch for itself.
+
+The same rule holds per record at relay time. An outbox row carries the
+`ce-source` it was persisted under, which is not the producer's current one
+when the service renamed its source with rows still pending, or when a table
+is shared across sources. The relay refuses such a row with
+`ErrSigningSourceMismatch` instead of publishing a record every verifying
+consumer would quarantine as a forgery. That sentinel is deliberately not a
+caller error: the row is fine, the producer relaying it is the wrong one to
+sign it. A wired `IsCallerError` classifier therefore keeps the row retryable
+for its whole retry budget, and every attempt logs at ERROR and increments
+`streaming_outbox_relay_rejected_total{reason="signing_source_mismatch"}`.
+Drain it by relaying from a producer of that source, or with signing off.
+Binaries of one service that sign under different sources therefore each keep
+their own outbox table (see
+[Several binaries, one database](#several-binaries-one-database)).
+
+### Several binaries, one database
+
+When several binaries of one service (an API and a worker, say) each publish
+under their own `ce-source` and sign with a key bound to it, give each binary
+its own outbox table in the shared database and its own dispatcher over it.
+The outbox write still commits in the same transaction as the state, and each
+relay claims only its own binary's rows, with the dispatcher's whole recovery
+loop intact: a row whose publish failed is retried after the retry window, and
+a row a crashed relay left in PROCESSING is reclaimed.
+
+```go
+resolver, err := outboxpg.NewColumnResolver(pg,
+    outboxpg.WithColumnResolverTableName("outbox_events_settlement_worker"),
+    outboxpg.WithColumnResolverTenantColumn("tenant_id"),
+)
+// ...
+outboxRepo, err := outboxpg.NewRepository(pg, resolver, resolver,
+    outboxpg.WithTableName("outbox_events_settlement_worker"),
+    outboxpg.WithTenantColumn("tenant_id"),
+)
+// ...
+emitter, err := streaming.NewBuilder().
+    Source("settlement-worker").
+    // ...catalog, routes, targets, SignEnvelopes...
+    OutboxRepository(outboxRepo).
+    Build(ctx)
+// ...
+if err := emitter.(*streaming.Producer).RegisterOutboxRelay(outboxRegistry); err != nil {
+    return err
+}
+
+dispatcher, err := outbox.NewDispatcher(outboxRepo, outboxRegistry, logger, tracer,
+    outbox.WithRetryClassifier(outbox.RetryClassifierFunc(streaming.IsCallerError)),
+)
+```
+
+On MongoDB the same holds with the repository's `WithCollectionName`. Each table is
+the lib-commons outbox migration under that binary's table name.
+
+Do not share one outbox table between binaries of different sources. Every
+relay claims every row, a signing relay refuses each foreign row with
+`ErrSigningSourceMismatch`, and each refusal spends one of that row's dispatch
+attempts, so a fact can reach INVALID before its own binary ever claims it.
+Scoping each dispatcher to a per-source event type with
+`outbox.WithPriorityEventTypes` does not fix this on lib-commons v7. On
+Postgres, whose repository claims several types in one query, a type-scoped
+dispatcher claims only PENDING rows and never retries a FAILED row or reclaims
+a stuck PROCESSING one, so a single broker blip strands the fact. On MongoDB
+the option only orders claims and the dispatcher still claims every type.
+
+### Consumer
+
+```go
+c, err := streaming.NewConsumer().
+    Brokers(cfg.Brokers...).
+    Group("loan-projector").
+    Source("loan-projector").
+    Apps("lender").
+    OnFrom("lender", "loan.disbursed", onLoanDisbursed).
+    RequireSignatures(ring). // must hold a key for every accepted producer
+    Build(ctx)
+```
+
+That snippet is compiled too: it is `Example_envelopeSigning` in
+`example_test.go`, which also pins the two refusals below.
+
+From the environment, `STREAMING_CONSUMER_REQUIRE_SIGNATURES=true` and
+`STREAMING_CONSUMER_SIGNATURE_KEYS` (secret, a csv of `<kid>@<source>:<base64>`)
+are adopted by `FromConfig`. A fluent `RequireSignatures` ring replaces the env
+keys. Keys supplied without the switch are inert, and `LoadConsumerConfig` warns
+about them.
+
+Verification runs in the consumer runtime, after the CloudEvents codec and
+before the `ce-source` check, in **both** handler modes. It reads the raw record
+headers, so a header repeated to show the verifier one value and the handler
+another fails verification.
+
+| Record | Cause kind | Error |
+| --- | --- | --- |
+| Unsigned: any of `ce-sigkid` / `ce-sigts` / `ce-sig` absent | `signature_missing` | `ErrSignatureMissing` |
+| Signed by a key id the ring does not hold | `signature_unknown_key` | `ErrSignatureUnknownKey` |
+| Does not verify: body or a signed header changed, key bound to another source, a signed header repeated, a malformed value, or older than the optional max skew | `signature_invalid` | `ErrSignatureInvalid` |
+
+Each goes to the consumer's own DLQ. The handler never runs, and the service
+`Classifier` never sees it: the verdict is structural, and no amount of retrying
+makes a bad signature good. A forged record that claims a foreign `ce-source` is
+reported as `signature_invalid`, not `source_mismatch`, because it is a forgery
+first.
+
+`Build` refuses a consumer it cannot prove covered:
+
+- `ErrConsumerSignatureKeysMissing`: signatures required, no keys.
+- `ErrConsumerSignatureKeyMissingForSource`: an accepted producer (`Apps`,
+  `Commands` or `ExpectSources`) has no key in the ring.
+- `ErrDiscardHandlerAndHandlerBothSet`: `RequireSignatures` on a DLQ reader. A
+  quarantine copy keeps the original signature and every `signature_*` entry
+  fails by definition, so a reader never verifies, and it ignores the env switch.
+
+### Other transports (AMQP)
+
+A producer built with `SignEnvelopes` needs nothing more for RabbitMQ:
+`Builder.RabbitMQTarget` publishes through the same signing path as Kafka (the
+direct publish, the outbox relay and the route-DLQ copy), and the adapter copies
+the signature headers into the AMQP table as `[]byte`.
+
+A service that publishes or receives facts with its own AMQP client uses
+`Signer` and `Verifier`. They take a `map[string]any`, which is what amqp091's
+`amqp.Table` is, and apply the same canonical encoding, key binding and verdicts
+as the producer and the Kafka consumer:
+
+```go
+signer, err := streaming.NewSigner(ring, "lender-2026-09", "lender") // ErrInvalidSigningKey on the SignEnvelopes rules
+
+headers := amqp.Table{}
+for _, h := range streaming.BuildCloudEventsHeaders(event) {
+    headers[h.Key] = h.Value
+}
+signed, err := signer.Sign(headers, body) // a new table; headers is untouched
+if err != nil {
+    return err // ErrSigningSourceMismatch: ce-source absent or not the key's source
+}
+err = ch.PublishWithContext(ctx, exchange, key, false, false, amqp.Publishing{Headers: signed, Body: body})
+```
+
+```go
+verifier, err := streaming.NewVerifier(ring, 0) // 0: no age check
+
+for d := range deliveries {
+    if err := verifier.Verify(d.Headers, d.Body); err != nil {
+        // ErrSignatureMissing / ErrSignatureUnknownKey / ErrSignatureInvalid:
+        // quarantine it, never hand it to the handler.
+        continue
+    }
+    handle(d)
+}
+```
+
+- `Sign` drops any previous signature and adds the three headers, so re-signing
+  a republished record never duplicates them. It refuses a table whose
+  `ce-source` is absent or foreign with `ErrSigningSourceMismatch`: a signer
+  vouches only for its own source.
+- A `ce-*` entry may hold `[]byte` or `string`, the same bytes either way. Any
+  other type fails `Sign` with `ErrUnsupportedHeaderValue` and `Verify` with
+  `ErrSignatureInvalid`. Entries outside the signature can hold anything.
+- A nil or zero `Signer` or `Verifier` fails closed: `Sign` with
+  `ErrInvalidSigningKey`, `Verify` with `ErrSignatureInvalid`.
+- Verification before the handler is the receiver's job here. The quarantine,
+  the cause kinds and the `Classifier` bypass described above belong to the
+  Kafka consumer runtime only.
+
+### Replay and age
+
+**No record is rejected for its age by default.** `ce-id` is inside the
+signature, so a replayed record is byte-identical to the original and dedupes
+on the handler's `ce-id` idempotency, while minting a fresh `ce-id` for an old
+payload breaks the signature. **Handlers must dedupe on `ce-id`**; the library
+cannot enforce that for you.
+
+`SignatureMaxSkew(d)` (or `STREAMING_CONSUMER_SIGNATURE_MAX_SKEW_MS`)
+additionally rejects a record signed more than `d` from now, in either
+direction. It is off by default and **unsafe for any consumer that can lag**:
+its legitimate backlog would quarantine as `signature_invalid`.
+
+### Rolling it out
+
+1. Distribute keys: each producer gets its active key, each consumer a ring
+   holding the keys of the producers it accepts.
+2. Turn on signing in the producers.
+3. Wait until every consumer's lag has passed its producers' first signed
+   record.
+4. Turn on `RequireSignatures` in the consumers.
+
+Requiring before step 3 quarantines the unsigned backlog as
+`signature_missing`. Those entries keep the full record and its origin
+coordinates, but replaying one verbatim into the same consumer quarantines it
+again: it has to be republished by a signing producer or handled by a DLQ
+reader.
+
+**Rotating a key** is an overlap: add the new key to every consumer's ring,
+switch the producer's active key, and remove the old key only after consumer
+lag has passed the last record signed with it. A record signed with a key that
+has left the ring quarantines as `signature_unknown_key`.
+
+### Known limits
+
+- **HMAC is symmetric.** Any verifier holding lender's key can forge lender's
+  events toward every other verifier of lender. Give a consumer only the keys of
+  the producers it consumes. Removing that power needs asymmetric signatures;
+  the `v1.` prefix on `ce-sig` leaves room for a second format.
+- **The topic and record key are not signed.** A signed record copied to
+  another topic still verifies; the destination's own rules (the `ce-source`
+  allowlist, a commands queue's strict unmatched-key verdict) still apply.
+- **Headers outside the `ce-*` set are not signed**: `traceparent`, and on
+  RabbitMQ the `X-Tenant-ID` header and the destination's attributes, which the
+  adapter adds to the AMQP table. Read the tenant from `ce-tenantid`, which is
+  signed. A destination attribute named after an optional `ce-*` header the
+  event does not carry (for example `ce-subject` or `ce-systemevent`) reaches
+  the table and fails verification, so do not give an attribute a `ce-` name.
+- **A signature proves who published the record**, not that its payload is
+  valid business data. Handlers validate as before.
 
 ## Multi-Transport Routing
 
@@ -758,9 +1095,12 @@ ERROR log naming the row id call for an operator. Alert on it:
 increase(streaming_outbox_relay_rejected_total{reason="legacy_unroutable"}[15m]) > 0
 ```
 
-The counter's other reason, `version_unsupported`, is a different condition
-with a different cause — an envelope this build cannot read, bound for INVALID
-— so alert on it separately rather than folding the two together.
+The counter's other reasons are different conditions with different causes,
+so alert on each separately rather than folding them together:
+`version_unsupported` is an envelope this build cannot read, bound for
+INVALID; `signing_source_mismatch` is a row a signing producer will not sign
+because it was persisted under another `ce-source` (kept retryable, see
+[Signing and verifying envelopes](#signing-and-verifying-envelopes)).
 
 ### DLQ alerting
 
@@ -776,7 +1116,7 @@ For production routes where quarantine is mandatory, make `DLQ` part of the rout
 
 ### Consumer alerting
 
-Three consumer signals are worth a page. All are counters on the
+These consumer signals are worth a page. All are counters on the
 `streaming_consumer_` prefix.
 
 ```promql
@@ -813,6 +1153,17 @@ sum by (event_key) (increase(streaming_consumer_unmatched_total[15m])) > 0
 increase(streaming_consumer_dlq_total{cause_kind="unhandled_key"}[15m]) > 0
 ```
 
+```promql
+# A record failed signature verification and was quarantined (only on a
+# consumer that requires signatures). Each kind has its own owner:
+# signature_missing — signatures were required before the consumer's lag passed
+# the producers' first signed record, or a producer lost its key;
+# signature_unknown_key — key distribution fell behind a rotation;
+# signature_invalid — tampering, a forged record, or a key bound to the wrong
+# source. Page on any of them.
+sum by (cause_kind) (increase(streaming_consumer_dlq_total{cause_kind=~"signature_.*"}[15m])) > 0
+```
+
 ## Project Structure
 
 ```
@@ -823,6 +1174,7 @@ lib-streaming/
 │   ├── config/             # STREAMING_* config parsing and validation
 │   ├── contract/           # Event, catalog, policy, route, health, sentinels
 │   ├── emitter/            # No-op emitter
+│   ├── envelopesig/        # Opt-in envelope signing and verification
 │   ├── manifest/           # Publisher manifest and HTTP handler
 │   ├── producer/           # Producer runtime, multi-target dispatch
 │   └── transport/          # Transport port + Kafka/SQS/RabbitMQ/EventBridge adapters
