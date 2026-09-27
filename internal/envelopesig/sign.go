@@ -96,13 +96,13 @@ func (s *Signer) CheckSource(source string) error {
 //
 // Replacing a previous signature (rather than appending a second one) is what
 // makes a republish verifiable: a verifier refuses a duplicated signature key.
+//
+// Sign does not check the record's ce-source: the producer builds its own
+// headers and calls CheckSource for a record it did not build.
 func (s *Signer) Sign(headers []transport.Header, body []byte) []transport.Header {
 	if s == nil {
 		return headers
 	}
-
-	signedAt := []byte(s.now().UTC().Format(time.RFC3339Nano))
-	keyID := []byte(s.key.ID)
 
 	out := make([]transport.Header, 0, len(headers)+3)
 
@@ -120,19 +120,104 @@ func (s *Signer) Sign(headers []transport.Header, body []byte) []transport.Heade
 		}
 	}
 
-	fields[idxKeyID] = field{present: true, value: keyID}
-	fields[idxSignedAt] = field{present: true, value: signedAt}
-
-	mac := hmac.New(sha256.New, s.key.Secret)
-	_, _ = mac.Write(canonical(&fields, body))
-
-	signature := signatureVersionPrefix + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	keyID, signedAt, signature := s.seal(&fields, body)
 
 	return append(out,
 		transport.Header{Key: HeaderKeyID, Value: keyID},
 		transport.Header{Key: HeaderSignedAt, Value: signedAt},
-		transport.Header{Key: HeaderSignature, Value: []byte(signature)},
+		transport.Header{Key: HeaderSignature, Value: signature},
 	)
+}
+
+// SignMap is Sign over a header table — the shape an AMQP client's headers
+// take — for a publisher outside the library's producer. It returns a NEW map
+// holding every input entry except a previous signature, plus ce-sigkid,
+// ce-sigts and ce-sig as []byte; the input map is never modified (values are
+// shared, not copied). A signed ce-* header may hold []byte or string, the
+// same bytes either way; any other type fails with
+// contract.ErrUnsupportedHeaderValue. Entries outside the signature may hold
+// anything the transport accepts.
+//
+// Unlike Sign, SignMap applies the source binding itself: a table whose
+// ce-source is absent or is not the key's source fails with
+// contract.ErrSigningSourceMismatch, because the caller built those headers.
+// A nil *Signer fails closed with contract.ErrInvalidSigningKey: outside the
+// producer there is no "signing off" state to fall back to.
+func (s *Signer) SignMap(headers map[string]any, body []byte) (map[string]any, error) {
+	if s == nil {
+		return nil, fmt.Errorf("%w: signer not configured", contract.ErrInvalidSigningKey)
+	}
+
+	out := make(map[string]any, len(headers)+3)
+
+	var fields fieldSet
+
+	for key, value := range headers {
+		if isSignatureHeader(key) {
+			continue
+		}
+
+		out[key] = value
+
+		i, ok := fieldIndex[key]
+		if !ok {
+			continue
+		}
+
+		raw, ok := headerBytes(value)
+		if !ok {
+			return nil, fmt.Errorf("%w: header %s holds a %T", contract.ErrUnsupportedHeaderValue, key, value)
+		}
+
+		fields[i] = field{present: true, value: raw}
+	}
+
+	if !fields[idxSource].present {
+		return nil, fmt.Errorf("%w: record carries no ce-source; active signing key %q is bound to source %q",
+			contract.ErrSigningSourceMismatch, s.key.ID, s.key.Source)
+	}
+
+	if err := s.CheckSource(string(fields[idxSource].value)); err != nil {
+		return nil, err
+	}
+
+	keyID, signedAt, signature := s.seal(&fields, body)
+	out[HeaderKeyID] = keyID
+	out[HeaderSignedAt] = signedAt
+	out[HeaderSignature] = signature
+
+	return out, nil
+}
+
+// seal stamps the key id and the signing instant into fields and returns
+// them with the ce-sig value computed over fields and body.
+func (s *Signer) seal(fields *fieldSet, body []byte) (keyID, signedAt, signature []byte) {
+	keyID = []byte(s.key.ID)
+	signedAt = []byte(s.now().UTC().Format(time.RFC3339Nano))
+
+	fields[idxKeyID] = field{present: true, value: keyID}
+	fields[idxSignedAt] = field{present: true, value: signedAt}
+
+	mac := hmac.New(sha256.New, s.key.Secret)
+	_, _ = mac.Write(canonical(fields, body))
+
+	signature = []byte(signatureVersionPrefix + base64.RawURLEncoding.EncodeToString(mac.Sum(nil)))
+
+	return keyID, signedAt, signature
+}
+
+// headerBytes returns the raw bytes of a header-table value. The library's
+// own adapters write []byte and AMQP clients commonly write string; nothing
+// else can be signed without re-formatting it.
+func headerBytes(value any) ([]byte, bool) {
+	switch v := value.(type) {
+	case []byte:
+		return v, true
+	case string:
+		return []byte(v), true
+	default:
+		return nil, false
+	}
 }
 
 // Strip returns headers without the three signature headers, as a fresh slice;

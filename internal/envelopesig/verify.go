@@ -71,7 +71,7 @@ func NewVerifier(ring *Keyring, maxSkew time.Duration, opts ...Option) (*Verifie
 // expected MAC or key material. A nil Verifier fails closed.
 func (v *Verifier) Verify(headers []kgo.RecordHeader, body []byte) error {
 	if v == nil {
-		return fmt.Errorf("%w: verifier not configured", ErrSignatureInvalid)
+		return errVerifierNotConfigured
 	}
 
 	fields, presented, err := indexRecordHeaders(headers)
@@ -79,12 +79,39 @@ func (v *Verifier) Verify(headers []kgo.RecordHeader, body []byte) error {
 		return err
 	}
 
+	return v.verify(&fields, presented, body)
+}
+
+// VerifyMap is Verify over a header table — the shape an AMQP delivery's
+// headers take — for a consumer outside the library's Kafka runtime. A key
+// occurs once in a map, so the duplicate check has nothing to judge. A signed
+// ce-* header or ce-sig may hold []byte or string, the same bytes either way;
+// any other type (nil included) is ErrSignatureInvalid. Entries outside the
+// signature are ignored whatever they hold. Outcomes are Verify's.
+func (v *Verifier) VerifyMap(headers map[string]any, body []byte) error {
+	if v == nil {
+		return errVerifierNotConfigured
+	}
+
+	fields, presented, err := indexMapHeaders(headers)
+	if err != nil {
+		return err
+	}
+
+	return v.verify(&fields, presented, body)
+}
+
+var errVerifierNotConfigured = fmt.Errorf("%w: verifier not configured", ErrSignatureInvalid)
+
+// verify is the one verification core behind both header forms. presented is
+// nil when ce-sig is absent.
+func (v *Verifier) verify(fields *fieldSet, presented, body []byte) error {
 	if !fields[idxKeyID].present || !fields[idxSignedAt].present || presented == nil {
 		return fmt.Errorf("%w: record carries no complete %s/%s/%s set",
 			ErrSignatureMissing, HeaderKeyID, HeaderSignedAt, HeaderSignature)
 	}
 
-	key, err := v.resolveKey(&fields)
+	key, err := v.resolveKey(fields)
 	if err != nil {
 		return err
 	}
@@ -102,7 +129,7 @@ func (v *Verifier) Verify(headers []kgo.RecordHeader, body []byte) error {
 	}
 
 	mac := hmac.New(sha256.New, key.Secret)
-	_, _ = mac.Write(canonical(&fields, body))
+	_, _ = mac.Write(canonical(fields, body))
 
 	if !hmac.Equal(received, mac.Sum(nil)) {
 		return invalid(kid, claimed, "signature does not match")
@@ -207,6 +234,43 @@ func indexRecordHeaders(headers []kgo.RecordHeader) (fieldSet, []byte, error) {
 		}
 
 		fields[i] = field{present: true, value: h.Value}
+	}
+
+	return fields, presented, nil
+}
+
+// indexMapHeaders is indexRecordHeaders over a header table. A signed or
+// signature entry whose value is not []byte or string is refused rather than
+// re-formatted: the signature covers bytes, and a rendering of any other type
+// is not what the producer signed.
+func indexMapHeaders(headers map[string]any) (fieldSet, []byte, error) {
+	var (
+		fields    fieldSet
+		presented []byte
+	)
+
+	for key, value := range headers {
+		i, signed := fieldIndex[key]
+		if !signed && key != HeaderSignature {
+			continue
+		}
+
+		raw, ok := headerBytes(value)
+		if !ok {
+			return fieldSet{}, nil, fmt.Errorf("%w: header %s holds an unsupported value type %T",
+				ErrSignatureInvalid, key, value)
+		}
+
+		if key == HeaderSignature {
+			presented = raw
+			if presented == nil {
+				presented = []byte{}
+			}
+
+			continue
+		}
+
+		fields[i] = field{present: true, value: raw}
 	}
 
 	return fields, presented, nil

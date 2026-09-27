@@ -1,6 +1,9 @@
 // Package envelopesig is the one definition of lib-streaming's envelope
 // signature: the canonical bytes, the HMAC-SHA256 signer every producer publish
-// path calls, and the verifier the consumer runtime runs before dispatch.
+// path calls, and the verifier the consumer runtime runs before dispatch. The
+// same signer and verifier also take a header table (SignMap, VerifyMap), which
+// backs the public transport-agnostic Signer and Verifier; both header forms
+// feed one canonical encoding.
 //
 // # Wire format (v1)
 //

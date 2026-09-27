@@ -703,6 +703,58 @@ first.
   quarantine copy keeps the original signature and every `signature_*` entry
   fails by definition, so a reader never verifies, and it ignores the env switch.
 
+### Other transports (AMQP)
+
+A producer built with `SignEnvelopes` needs nothing more for RabbitMQ:
+`Builder.RabbitMQTarget` publishes through the same signing path as Kafka (the
+direct publish, the outbox relay and the route-DLQ copy), and the adapter copies
+the signature headers into the AMQP table as `[]byte`.
+
+A service that publishes or receives facts with its own AMQP client uses
+`Signer` and `Verifier`. They take a `map[string]any`, which is what amqp091's
+`amqp.Table` is, and apply the same canonical encoding, key binding and verdicts
+as the producer and the Kafka consumer:
+
+```go
+signer, err := streaming.NewSigner(ring, "lender-2026-09", "lender") // ErrInvalidSigningKey on the SignEnvelopes rules
+
+headers := amqp.Table{}
+for _, h := range streaming.BuildCloudEventsHeaders(event) {
+    headers[h.Key] = h.Value
+}
+signed, err := signer.Sign(headers, body) // a new table; headers is untouched
+if err != nil {
+    return err // ErrSigningSourceMismatch: ce-source absent or not the key's source
+}
+err = ch.PublishWithContext(ctx, exchange, key, false, false, amqp.Publishing{Headers: signed, Body: body})
+```
+
+```go
+verifier, err := streaming.NewVerifier(ring, 0) // 0: no age check
+
+for d := range deliveries {
+    if err := verifier.Verify(d.Headers, d.Body); err != nil {
+        // ErrSignatureMissing / ErrSignatureUnknownKey / ErrSignatureInvalid:
+        // quarantine it, never hand it to the handler.
+        continue
+    }
+    handle(d)
+}
+```
+
+- `Sign` drops any previous signature and adds the three headers, so re-signing
+  a republished record never duplicates them. It refuses a table whose
+  `ce-source` is absent or foreign with `ErrSigningSourceMismatch`: a signer
+  vouches only for its own source.
+- A `ce-*` entry may hold `[]byte` or `string`, the same bytes either way. Any
+  other type fails `Sign` with `ErrUnsupportedHeaderValue` and `Verify` with
+  `ErrSignatureInvalid`. Entries outside the signature can hold anything.
+- A nil or zero `Signer` or `Verifier` fails closed: `Sign` with
+  `ErrInvalidSigningKey`, `Verify` with `ErrSignatureInvalid`.
+- Verification before the handler is the receiver's job here. The quarantine,
+  the cause kinds and the `Classifier` bypass described above belong to the
+  Kafka consumer runtime only.
+
 ### Replay and age
 
 **No record is rejected for its age by default.** `ce-id` is inside the
@@ -745,6 +797,12 @@ has left the ring quarantines as `signature_unknown_key`.
 - **The topic and record key are not signed.** A signed record copied to
   another topic still verifies; the destination's own rules (the `ce-source`
   allowlist, a commands queue's strict unmatched-key verdict) still apply.
+- **Headers outside the `ce-*` set are not signed**: `traceparent`, and on
+  RabbitMQ the `X-Tenant-ID` header and the destination's attributes, which the
+  adapter adds to the AMQP table. Read the tenant from `ce-tenantid`, which is
+  signed. A destination attribute named after an optional `ce-*` header the
+  event does not carry (for example `ce-subject` or `ce-systemevent`) reaches
+  the table and fails verification, so do not give an attribute a `ce-` name.
 - **A signature proves who published the record**, not that its payload is
   valid business data. Handlers validate as before.
 

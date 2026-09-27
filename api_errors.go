@@ -66,6 +66,7 @@ var (
 	ErrInvalidSchemaRegistryConfig        = contract.ErrInvalidSchemaRegistryConfig
 	ErrInvalidSigningKey                  = contract.ErrInvalidSigningKey
 	ErrSigningSourceMismatch              = contract.ErrSigningSourceMismatch
+	ErrUnsupportedHeaderValue             = contract.ErrUnsupportedHeaderValue
 	ErrNilProducer                        = contract.ErrNilProducer
 	ErrCircuitOpen                        = contract.ErrCircuitOpen
 	ErrOutboxNotConfigured                = contract.ErrOutboxNotConfigured

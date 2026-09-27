@@ -74,3 +74,52 @@ func FuzzVerify_NeverPanics(f *testing.F) {
 		}
 	})
 }
+
+// FuzzVerifyMap_NeverPanics drives VerifyMap with arbitrary header tables:
+// odd-numbered records carry string values, even ones []byte, and a record
+// with an empty value carries an int, so every value branch is reached. Same
+// invariants as FuzzVerify_NeverPanics.
+func FuzzVerifyMap_NeverPanics(f *testing.F) {
+	ring := mustKeyring(f, Key{ID: "k1", Source: "ledger", Secret: testSecret(1, 32)})
+	signer := mustSigner(f, ring, "k1", "ledger", WithClock(fixedClock(signedAt)))
+	valid := toRecordHeaders(signer.Sign(headersFor(fullEvent()), testBody))
+
+	f.Add(encodeFuzzHeaders(valid), testBody)
+	f.Add(encodeFuzzHeaders(toRecordHeaders(headersFor(fullEvent()))), testBody)
+	f.Add(encodeFuzzHeaders(withHeader(valid, HeaderSignature, "")), []byte{})
+	f.Add([]byte{}, []byte{})
+
+	verifier := mustVerifier(f, ring, 0)
+
+	f.Fuzz(func(t *testing.T, blob, body []byte) {
+		headers := map[string]any{}
+
+		for i, h := range decodeFuzzHeaders(blob) {
+			switch {
+			case len(h.Value) == 0:
+				headers[h.Key] = i
+			case i%2 == 1:
+				headers[h.Key] = string(h.Value)
+			default:
+				headers[h.Key] = h.Value
+			}
+		}
+
+		err := verifier.VerifyMap(headers, body)
+		if err == nil {
+			return
+		}
+
+		kinds := 0
+
+		for _, kind := range []error{ErrSignatureMissing, ErrSignatureUnknownKey, ErrSignatureInvalid} {
+			if errors.Is(err, kind) {
+				kinds++
+			}
+		}
+
+		if kinds != 1 {
+			t.Fatalf("refusal %q matches %d kinds, want exactly 1", err, kinds)
+		}
+	})
+}

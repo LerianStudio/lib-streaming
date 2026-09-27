@@ -340,7 +340,9 @@ var (
 	// practice this is an outbox row persisted under an earlier or another
 	// source (a renamed source with rows still waiting, a table shared by two
 	// sources). Publishing it signed would hand every verifying consumer a
-	// record it quarantines as a forgery, so the row is refused instead.
+	// record it quarantines as a forgery, so the row is refused instead. The
+	// public transport-agnostic Signer returns it too, for a header table whose
+	// ce-source is absent or foreign.
 	//
 	// DELIBERATELY NOT A CALLER ERROR. The condition is a configuration fault
 	// an operator can fix (relay the row from a producer of its source, or
@@ -352,6 +354,13 @@ var (
 	// on every attempt. The message names sources and the key id, never
 	// secret bytes.
 	ErrSigningSourceMismatch = errors.New("streaming: record source does not match the signing key source")
+
+	// ErrUnsupportedHeaderValue is returned when the transport-agnostic signer
+	// is handed a header table in which a signed ce-* header holds a value
+	// that is neither []byte nor string. The signature covers raw header
+	// bytes and never re-formats a value, so such a header cannot be signed.
+	// Caller-correctable: the caller built the header table.
+	ErrUnsupportedHeaderValue = errors.New("streaming: signed header value is neither []byte nor string")
 
 	// ErrNilProducer is returned when a method is invoked on a nil *Producer.
 	// Parallels circuitbreaker.ErrNilCircuitBreaker. Callers should treat this
@@ -500,6 +509,7 @@ var callerErrorSentinels = []error{
 	ErrInvalidSASLMechanism,
 	ErrInvalidSchemaRegistryConfig,
 	ErrInvalidSigningKey,
+	ErrUnsupportedHeaderValue,
 	ErrInvalidTenantID,
 	ErrInvalidResourceType,
 	ErrInvalidEventType,

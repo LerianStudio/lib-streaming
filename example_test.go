@@ -172,3 +172,56 @@ func Example_envelopeSigning() {
 	// true
 	// true
 }
+
+// Example_envelopeSigningOverAMQP signs a fact a service publishes with its own
+// AMQP client and verifies it on the receiving side before the handler runs.
+// The header table is what amqp091's Publishing.Headers and Delivery.Headers
+// hold (amqp.Table is a map[string]any), so no conversion is needed.
+func Example_envelopeSigningOverAMQP() {
+	ring, err := streaming.NewKeyring(streaming.SigningKey{
+		ID:     "lender-2026-09",
+		Source: "lender",
+		Secret: bytes.Repeat([]byte{0x6b}, streaming.MinSigningSecretBytes),
+	})
+	if err != nil {
+		return
+	}
+
+	signer, err := streaming.NewSigner(ring, "lender-2026-09", "lender")
+	if err != nil {
+		return
+	}
+
+	body := []byte(`{"loan_id":"l-1"}`)
+
+	headers := map[string]any{}
+	for _, h := range streaming.BuildCloudEventsHeaders(streaming.Event{
+		EventID:      "0190a8e2-0000-7000-8000-000000000001",
+		TenantID:     "tenant-1",
+		Source:       "lender",
+		ResourceType: "loan",
+		EventType:    "disbursed",
+	}) {
+		headers[h.Key] = h.Value
+	}
+
+	// Publisher side: publishing.Headers = signed.
+	signed, err := signer.Sign(headers, body)
+	if err != nil {
+		return
+	}
+
+	// Receiver side: verify(delivery.Headers, delivery.Body) before handling.
+	verifier, err := streaming.NewVerifier(ring, 0)
+	if err != nil {
+		return
+	}
+
+	fmt.Println(verifier.Verify(signed, body))
+	fmt.Println(errors.Is(verifier.Verify(signed, []byte(`{"loan_id":"l-2"}`)), streaming.ErrSignatureInvalid))
+	fmt.Println(errors.Is(verifier.Verify(headers, body), streaming.ErrSignatureMissing))
+	// Output:
+	// <nil>
+	// true
+	// true
+}

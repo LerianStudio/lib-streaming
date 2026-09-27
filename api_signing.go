@@ -1,6 +1,8 @@
 package streaming
 
 import (
+	"time"
+
 	"github.com/LerianStudio/lib-streaming/v4/internal/config"
 	"github.com/LerianStudio/lib-streaming/v4/internal/consumer"
 	"github.com/LerianStudio/lib-streaming/v4/internal/envelopesig"
@@ -113,4 +115,89 @@ func ParseSigningKey(keyID, source, secretBase64 string) (*Keyring, error) {
 // ErrInvalidSigningKey. Error texts name the variable, never its value.
 func LoadSigningKey(source string) (ring *Keyring, activeKeyID string, err error) {
 	return config.LoadSigningKeyring(source)
+}
+
+// Signer signs envelopes a service publishes over a transport this library
+// does not carry for it — an AMQP client of its own, for instance — with the
+// same canonical encoding, headers and key binding as the producer, so any
+// Verifier (or a consumer requiring signatures) accepts what it signs. A
+// producer built with Builder.SignEnvelopes needs no Signer: every route it
+// publishes, RabbitMQTarget included, is already signed. Immutable and safe
+// for concurrent use; its rendering never carries key bytes.
+type Signer struct {
+	signer *envelopesig.Signer
+}
+
+// NewSigner returns a Signer for the key activeKeyID in ring, which must be
+// bound to source, the ce-source of every record it will sign. It fails with
+// ErrInvalidSigningKey on the rules Builder.SignEnvelopes applies: a nil ring,
+// an empty, illegal or unknown key id, or a key bound to another source.
+func NewSigner(ring *Keyring, activeKeyID, source string) (*Signer, error) {
+	signer, err := envelopesig.NewSigner(ring, activeKeyID, source)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Signer{signer: signer}, nil
+}
+
+// Sign returns a NEW header table: every entry of headers except a previous
+// signature, plus ce-sigkid, ce-sigts (now) and ce-sig as []byte, computed over
+// the ce-* entries and body. headers is never modified, and an amqp091
+// amqp.Table can be passed and assigned back as is. Build the ce-* entries
+// with BuildCloudEventsHeaders; a ce-* entry may hold []byte or string (the
+// same bytes either way), any other type fails with ErrUnsupportedHeaderValue.
+// Entries outside the signature pass through untouched, whatever they hold.
+//
+// Sign refuses a table whose ce-source is absent or is not the key's source
+// with ErrSigningSourceMismatch: a Signer vouches only for its own source. A
+// nil or zero Signer fails closed with ErrInvalidSigningKey.
+func (s *Signer) Sign(headers map[string]any, body []byte) (map[string]any, error) {
+	var signer *envelopesig.Signer
+	if s != nil {
+		signer = s.signer
+	}
+
+	return signer.SignMap(headers, body)
+}
+
+// Verifier checks envelopes a service receives over a transport other than
+// this library's Kafka consumer — an AMQP delivery, for instance — before its
+// own handler runs, with the same rules ConsumerBuilder.RequireSignatures
+// applies. Immutable and safe for concurrent use; its rendering never carries
+// key bytes.
+type Verifier struct {
+	verifier *envelopesig.Verifier
+}
+
+// NewVerifier returns a Verifier accepting any key in ring. maxSkew 0 turns the
+// age check off, the safe default for a receiver that can lag; a positive
+// maxSkew refuses a record signed further than that from now, in either
+// direction. A nil or empty ring and a negative maxSkew fail with
+// ErrInvalidSigningKey.
+func NewVerifier(ring *Keyring, maxSkew time.Duration) (*Verifier, error) {
+	verifier, err := envelopesig.NewVerifier(ring, maxSkew)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Verifier{verifier: verifier}, nil
+}
+
+// Verify checks the signature on a received header table and body — for an
+// AMQP delivery, Verify(d.Headers, d.Body). It returns nil or an error wrapping
+// exactly one of ErrSignatureMissing (a signature header absent),
+// ErrSignatureUnknownKey (a key id the ring does not hold) or
+// ErrSignatureInvalid (body or a signed header changed, a key bound to another
+// source, a malformed value, a signed entry holding neither []byte nor string,
+// or older than maxSkew). Entries outside the signature are ignored. A nil or
+// zero Verifier fails closed with ErrSignatureInvalid. The error text never
+// carries the expected MAC or key bytes.
+func (v *Verifier) Verify(headers map[string]any, body []byte) error {
+	var verifier *envelopesig.Verifier
+	if v != nil {
+		verifier = v.verifier
+	}
+
+	return verifier.VerifyMap(headers, body)
 }

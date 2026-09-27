@@ -393,7 +393,7 @@
 //     ErrNoRoutesConfigured, ErrNoRequiredRoute, ErrMissingTarget,
 //     ErrMultiTransportRuntimeNotConfigured, ErrInvalidTLSConfig,
 //     ErrPlaintextSASLNotAllowed, ErrInvalidSASLMechanism,
-//     ErrInvalidSigningKey.
+//     ErrInvalidSigningKey, ErrUnsupportedHeaderValue (Signer.Sign).
 //
 //   - Producer config validation (LoadConfig, Builder.Build):
 //     ErrProducerMissingBrokers, ErrMissingSource, ErrInvalidSource,
