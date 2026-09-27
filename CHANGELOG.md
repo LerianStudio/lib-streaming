@@ -12,6 +12,7 @@ Features:
 
 Improvements:
 - Document envelope signing and verification (br-sfn BRSFN-60): a README section covering key custody, what the signature covers, producer and consumer wiring, the DLQ cause kinds, replay without age rejection, the rollout order that keeps an unsigned backlog out of the DLQ, key rotation by overlap and the known HMAC limits; a `signature_*` consumer alert; the signature step in the consumer design contract's guard chain; and a compiled `Example_envelopeSigning`. The whole feature is additive and opt-in, a minor release.
+- Document one outbox table per binary for services whose binaries sign under different sources (br-sfn BRSFN-60): the README section "Several binaries, one database" shows the per-binary table (`WithTableName` / `WithCollectionName`) and its own dispatcher, and explains why a shared table and a claim scoped with `outbox.WithPriorityEventTypes` both lose facts on lib-commons v7. An integration test on a real Postgres outbox and the real dispatcher pins that each relay publishes, retries and reclaims only its own rows.
 
 ---
 

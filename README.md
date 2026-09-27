@@ -654,6 +654,59 @@ sign it. A wired `IsCallerError` classifier therefore keeps the row retryable
 for its whole retry budget, and every attempt logs at ERROR and increments
 `streaming_outbox_relay_rejected_total{reason="signing_source_mismatch"}`.
 Drain it by relaying from a producer of that source, or with signing off.
+Binaries of one service that sign under different sources therefore each keep
+their own outbox table (see
+[Several binaries, one database](#several-binaries-one-database)).
+
+### Several binaries, one database
+
+When several binaries of one service (an API and a worker, say) each publish
+under their own `ce-source` and sign with a key bound to it, give each binary
+its own outbox table in the shared database and its own dispatcher over it.
+The outbox write still commits in the same transaction as the state, and each
+relay claims only its own binary's rows, with the dispatcher's whole recovery
+loop intact: a row whose publish failed is retried after the retry window, and
+a row a crashed relay left in PROCESSING is reclaimed.
+
+```go
+resolver, err := outboxpg.NewColumnResolver(pg,
+    outboxpg.WithColumnResolverTableName("outbox_events_settlement_worker"),
+    outboxpg.WithColumnResolverTenantColumn("tenant_id"),
+)
+// ...
+outboxRepo, err := outboxpg.NewRepository(pg, resolver, resolver,
+    outboxpg.WithTableName("outbox_events_settlement_worker"),
+    outboxpg.WithTenantColumn("tenant_id"),
+)
+// ...
+emitter, err := streaming.NewBuilder().
+    Source("settlement-worker").
+    // ...catalog, routes, targets, SignEnvelopes...
+    OutboxRepository(outboxRepo).
+    Build(ctx)
+// ...
+if err := emitter.(*streaming.Producer).RegisterOutboxRelay(outboxRegistry); err != nil {
+    return err
+}
+
+dispatcher, err := outbox.NewDispatcher(outboxRepo, outboxRegistry, logger, tracer,
+    outbox.WithRetryClassifier(outbox.RetryClassifierFunc(streaming.IsCallerError)),
+)
+```
+
+On MongoDB the same holds with the repository's `WithCollectionName`. Each table is
+the lib-commons outbox migration under that binary's table name.
+
+Do not share one outbox table between binaries of different sources. Every
+relay claims every row, a signing relay refuses each foreign row with
+`ErrSigningSourceMismatch`, and each refusal spends one of that row's dispatch
+attempts, so a fact can reach INVALID before its own binary ever claims it.
+Scoping each dispatcher to a per-source event type with
+`outbox.WithPriorityEventTypes` does not fix this on lib-commons v7. On
+Postgres, whose repository claims several types in one query, a type-scoped
+dispatcher claims only PENDING rows and never retries a FAILED row or reclaims
+a stuck PROCESSING one, so a single broker blip strands the fact. On MongoDB
+the option only orders claims and the dispatcher still claims every type.
 
 ### Consumer
 
