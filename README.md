@@ -582,6 +582,34 @@ if err != nil {
   matcher's key. Without the binding, any producer in the ring could forge any
   other.
 
+Keys also load from their text form, with the same validation and redaction
+`LoadConfig` and `LoadConsumerConfig` apply, so a service never parses them
+itself. The loaders read their variable whether or not streaming or the
+consumer is enabled, which is what a fluently built producer or consumer needs:
+
+```go
+// Producer: STREAMING_SIGNING_KEY_ID + STREAMING_SIGNING_KEY, bound to Source.
+ring, activeKeyID, err := streaming.LoadSigningKey("lender")
+if err != nil {
+    return err // one of the two set: ErrProducerInvalidConfigField; bad key: ErrInvalidSigningKey
+}
+if ring != nil { // neither set: nil ring, signing off
+    builder = builder.SignEnvelopes(ring, activeKeyID)
+}
+
+// Consumer: STREAMING_CONSUMER_SIGNATURE_KEYS, csv of <kid>@<source>:<base64>.
+keys, err := streaming.LoadVerificationKeys() // unset: nil, which RequireSignatures refuses at Build
+if err != nil {
+    return err // ErrConsumerInvalidConfigField + ErrInvalidSigningKey, entry named by position
+}
+consumerBuilder = consumerBuilder.RequireSignatures(keys)
+```
+
+`ParseSigningKey(keyID, source, secretBase64)` and
+`ParseVerificationKeys(csv)` take the same values from a string instead, for a
+secret read from a mounted file or a secret-manager call; their errors wrap
+`ErrInvalidSigningKey`.
+
 ### Producer
 
 ```go

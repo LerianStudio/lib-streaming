@@ -213,3 +213,21 @@ func TestNewKeyring_InvalidIDNeverEchoed(t *testing.T) {
 	require.ErrorIs(t, err, contract.ErrInvalidSigningKey)
 	assert.Contains(t, err.Error(), `"k1"`)
 }
+
+// TestNewKeyring_IllegalSourceNeverEchoed pins that a refused source is not
+// quoted: with the arguments swapped, the source slot holds the secret.
+func TestNewKeyring_IllegalSourceNeverEchoed(t *testing.T) {
+	t.Parallel()
+
+	const pasted = "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXphYmNkZWY="
+
+	_, err := NewKeyring(Key{ID: "k1", Source: pasted, Secret: testSecret(1, MinSecretBytes)})
+	require.ErrorIs(t, err, contract.ErrInvalidSigningKey)
+	require.ErrorIs(t, err, contract.ErrInvalidSource)
+	assert.NotContains(t, err.Error(), pasted[:12])
+	assert.Contains(t, err.Error(), `"k1"`)
+
+	_, err = NewKeyring(Key{ID: "k1", Source: "", Secret: testSecret(1, MinSecretBytes)})
+	require.ErrorIs(t, err, contract.ErrInvalidSigningKey)
+	require.ErrorIs(t, err, contract.ErrMissingSource)
+}

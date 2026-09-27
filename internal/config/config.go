@@ -3,7 +3,6 @@ package config
 import (
 	"context"
 	"crypto/tls"
-	"encoding/base64"
 	"fmt"
 	"os"
 	"strconv"
@@ -22,6 +21,12 @@ import (
 // invariant violations surfaced from Config.validate aggregate under the
 // same component axis as runtime invariants.
 const configAsserterComponent = "streaming"
+
+// The producer signing variables, read by LoadConfig and LoadSigningKeyring.
+const (
+	envSigningKeyID = "STREAMING_SIGNING_KEY_ID"
+	envSigningKey   = "STREAMING_SIGNING_KEY"
+)
 
 // newConfigAsserter constructs an *assert.Asserter for a per-call-site
 // operation. The config package has no caller-supplied logger today —
@@ -282,7 +287,7 @@ func LoadConfig() (Config, []string, error) {
 		SchemaRegistryUsername: commons.GetenvOrDefault("STREAMING_SCHEMA_REGISTRY_USERNAME", ""),
 		SchemaRegistryPassword: commons.GetenvOrDefault("STREAMING_SCHEMA_REGISTRY_PASSWORD", ""),
 
-		SigningKeyID: strings.TrimSpace(os.Getenv("STREAMING_SIGNING_KEY_ID")),
+		SigningKeyID: strings.TrimSpace(os.Getenv(envSigningKeyID)),
 		SigningKey:   signingKey,
 	}
 
@@ -437,28 +442,56 @@ func resolveSASLAllowPlaintext(warnings []string) (bool, []string) {
 	return true, append(warnings, "STREAMING_ALLOW_PLAINTEXT_SASL is deprecated; use STREAMING_SASL_ALLOW_PLAINTEXT")
 }
 
-// loadSigningKey decodes STREAMING_SIGNING_KEY (standard base64, surrounding
-// whitespace ignored, since secret stores often append a newline). Unset yields
-// nil. A value that does not decode fails with ErrInvalidSigningKey when
-// streaming is enabled and is ignored when it is disabled, matching the rule
-// that a disabled config always loads clean. The error never carries the
-// value or the decoder's message, which quotes input offsets.
+// loadSigningKey decodes STREAMING_SIGNING_KEY with envelopesig.DecodeSecret
+// (standard base64, surrounding whitespace ignored). Unset yields nil. A value
+// that does not decode fails with ErrInvalidSigningKey when streaming is
+// enabled and is ignored when it is disabled, matching the rule that a
+// disabled config always loads clean. The error never carries the value.
 func loadSigningKey(enabled bool) (envelopesig.Secret, error) {
-	raw := strings.TrimSpace(os.Getenv("STREAMING_SIGNING_KEY"))
-	if raw == "" {
+	raw := os.Getenv(envSigningKey)
+	if strings.TrimSpace(raw) == "" {
 		return nil, nil
 	}
 
-	decoded, err := base64.StdEncoding.DecodeString(raw)
+	secret, err := envelopesig.DecodeSecret(raw)
 	if err != nil {
 		if !enabled {
 			return nil, nil
 		}
 
-		return nil, fmt.Errorf("%w: STREAMING_SIGNING_KEY is not valid standard base64", contract.ErrInvalidSigningKey)
+		return nil, fmt.Errorf("%s: %w", envSigningKey, err)
 	}
 
-	return envelopesig.Secret(decoded), nil
+	return secret, nil
+}
+
+// LoadSigningKeyring reads STREAMING_SIGNING_KEY_ID and STREAMING_SIGNING_KEY
+// whether or not streaming is enabled and returns the one-key ring binding the
+// secret to source, with the active key id. Neither variable set yields a nil
+// ring and an empty id (signing off). Only one set fails with
+// ErrInvalidConfigField; bad base64, a short secret, an illegal key id or an
+// illegal source fail with ErrInvalidSigningKey. Error texts name the variable
+// and never its value.
+func LoadSigningKeyring(source string) (*envelopesig.Keyring, string, error) {
+	id := strings.TrimSpace(os.Getenv(envSigningKeyID))
+	raw := os.Getenv(envSigningKey)
+
+	hasID, hasKey := id != "", strings.TrimSpace(raw) != ""
+	if err := checkSigningPair(hasID, hasKey); err != nil || !hasID {
+		return nil, "", err
+	}
+
+	secret, err := envelopesig.DecodeSecret(raw)
+	if err != nil {
+		return nil, "", fmt.Errorf("%s: %w", envSigningKey, err)
+	}
+
+	ring, err := envelopesig.NewKeyring(envelopesig.Key{ID: id, Source: source, Secret: secret})
+	if err != nil {
+		return nil, "", err
+	}
+
+	return ring, id, nil
 }
 
 // validateSigning enforces the signing pair: both STREAMING_SIGNING_KEY_ID and
@@ -468,19 +501,26 @@ func loadSigningKey(enabled bool) (envelopesig.Secret, error) {
 // name the id only.
 func (c Config) validateSigning() error {
 	hasID, hasKey := c.SigningKeyID != "", len(c.SigningKey) > 0
-
-	switch {
-	case !hasID && !hasKey:
-		return nil
-	case !hasKey:
-		return fmt.Errorf("%w: STREAMING_SIGNING_KEY_ID is set but STREAMING_SIGNING_KEY is empty", ErrInvalidConfigField)
-	case !hasID:
-		return fmt.Errorf("%w: STREAMING_SIGNING_KEY is set but STREAMING_SIGNING_KEY_ID is empty", ErrInvalidConfigField)
+	if err := checkSigningPair(hasID, hasKey); err != nil || !hasID {
+		return err
 	}
 
 	_, err := envelopesig.NewKeyring(envelopesig.Key{ID: c.SigningKeyID, Source: c.CloudEventsSource, Secret: c.SigningKey})
 
 	return err
+}
+
+// checkSigningPair refuses exactly one of the two signing variables with
+// ErrInvalidConfigField. Both or neither passes.
+func checkSigningPair(hasID, hasKey bool) error {
+	switch {
+	case hasID && !hasKey:
+		return fmt.Errorf("%w: %s is set but %s is empty", ErrInvalidConfigField, envSigningKeyID, envSigningKey)
+	case hasKey && !hasID:
+		return fmt.Errorf("%w: %s is set but %s is empty", ErrInvalidConfigField, envSigningKey, envSigningKeyID)
+	}
+
+	return nil
 }
 
 // appendSchemaRegistryWarnings appends the https-with-credentials

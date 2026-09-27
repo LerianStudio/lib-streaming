@@ -1,6 +1,7 @@
 package envelopesig
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -79,7 +80,7 @@ func NewKeyring(keys ...Key) (*Keyring, error) {
 		}
 
 		if err := contract.ValidateSource(key.Source); err != nil {
-			return nil, fmt.Errorf("%w: key %q: %w", contract.ErrInvalidSigningKey, key.ID, err)
+			return nil, fmt.Errorf("%w: key %q: %w", contract.ErrInvalidSigningKey, key.ID, sourceSentinel(err))
 		}
 
 		if len(key.Secret) < MinSecretBytes {
@@ -95,6 +96,17 @@ func NewKeyring(keys ...Key) (*Keyring, error) {
 	}
 
 	return &Keyring{state: &keyringState{keys: byID}}, nil
+}
+
+// sourceSentinel reduces a ValidateSource failure to its sentinel. The full
+// error quotes the refused value, and with the arguments swapped the source
+// slot holds the secret.
+func sourceSentinel(err error) error {
+	if errors.Is(err, contract.ErrMissingSource) {
+		return contract.ErrMissingSource
+	}
+
+	return contract.ErrInvalidSource
 }
 
 // lookup returns the key for id. Nil-safe.

@@ -2,7 +2,6 @@ package consumer
 
 import (
 	"crypto/tls"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -439,7 +438,7 @@ func LoadConsumerConfig() (ConsumerConfig, []string, error) {
 		return cfg, warnings, nil
 	}
 
-	ring, err := loadSignatureKeys(os.Getenv("STREAMING_CONSUMER_SIGNATURE_KEYS"))
+	ring, err := LoadSignatureKeys()
 	if err != nil {
 		return cfg, warnings, err
 	}
@@ -582,66 +581,26 @@ func (c ConsumerConfig) validateSources() error {
 	return nil
 }
 
-// loadSignatureKeys parses STREAMING_CONSUMER_SIGNATURE_KEYS: a csv of
-// <kid>@<source>:<secret>, the secret standard base64 (none of '@', ':' or ','
-// can appear in a key id, a source or base64, so the split is unambiguous),
-// into the keyring the verifier uses. Unset yields nil. Building the ring
-// here means a bad id, an illegal source, a short secret or a duplicate id
-// fails at load rather than at Build. Every failure wraps both
+// LoadSignatureKeys reads STREAMING_CONSUMER_SIGNATURE_KEYS (a csv of
+// <kid>@<source>:<base64 secret>, parsed by envelopesig.ParseKeyring) into the
+// keyring the verifier uses, whether or not the consumer is enabled.
+// LoadConsumerConfig calls it for an enabled consumer; a service building its
+// consumer fluently calls it directly. A blank variable yields nil, which
+// RequireSignatures refuses at Build. Every failure wraps both
 // ErrInvalidConfigField and ErrInvalidSigningKey and names the entry by
-// position and key id only; the raw value and the decoder's message (which
-// quotes input offsets) never reach the error.
-func loadSignatureKeys(raw string) (*envelopesig.Keyring, error) {
-	entries := splitCSV(raw)
-	if len(entries) == 0 {
+// position and legal key id only; the raw value never reaches the error.
+func LoadSignatureKeys() (*envelopesig.Keyring, error) {
+	raw := os.Getenv("STREAMING_CONSUMER_SIGNATURE_KEYS")
+	if strings.TrimSpace(raw) == "" {
 		return nil, nil //nolint:nilnil // a nil ring is the documented "no keys configured" answer, not an error
 	}
 
-	keys := make([]envelopesig.Key, 0, len(entries))
-
-	for i, entry := range entries {
-		key, err := parseSignatureKey(entry)
-		if err != nil {
-			return nil, fmt.Errorf("%w: %w: STREAMING_CONSUMER_SIGNATURE_KEYS entry %d: %s",
-				ErrInvalidConfigField, contract.ErrInvalidSigningKey, i+1, err.Error())
-		}
-
-		keys = append(keys, key)
-	}
-
-	ring, err := envelopesig.NewKeyring(keys...)
+	ring, err := envelopesig.ParseKeyring(raw)
 	if err != nil {
 		return nil, fmt.Errorf("%w: STREAMING_CONSUMER_SIGNATURE_KEYS: %w", ErrInvalidConfigField, err)
 	}
 
 	return ring, nil
-}
-
-// parseSignatureKey splits one <kid>@<source>:<secret> entry. The id and the
-// source are checked BEFORE anything echoes them: in a misordered entry either
-// position may hold the secret, so an error names the structural fault only
-// until both are known to be a legal id and a legal source.
-func parseSignatureKey(entry string) (envelopesig.Key, error) {
-	id, rest, hasSource := strings.Cut(entry, "@")
-	source, encoded, hasSecret := strings.Cut(rest, ":")
-
-	switch {
-	case !hasSource || !hasSecret:
-		return envelopesig.Key{}, errors.New("want <kid>@<source>:<base64 secret>")
-	case id == "" || source == "" || encoded == "":
-		return envelopesig.Key{}, errors.New("key id, source and secret must all be non-empty")
-	case !envelopesig.ValidKeyID(id):
-		return envelopesig.Key{}, errors.New("key id must be 1-64 characters of [a-z0-9._-], starting with [a-z0-9]")
-	case contract.ValidateSource(source) != nil:
-		return envelopesig.Key{}, fmt.Errorf("key %q: source is not a legal ce-source", id)
-	}
-
-	secret, err := base64.StdEncoding.DecodeString(encoded)
-	if err != nil {
-		return envelopesig.Key{}, fmt.Errorf("key %q: secret is not valid standard base64", id)
-	}
-
-	return envelopesig.Key{ID: id, Source: source, Secret: secret}, nil
 }
 
 // getenvMsOrDefault reads a millisecond-valued env var, falling back to def on
