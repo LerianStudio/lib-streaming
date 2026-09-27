@@ -207,10 +207,9 @@ func (p *Producer) deriveOutboxAggregateID(event Event) (uuid.UUID, error) {
 }
 
 // outboxRowFromEnvelope serializes an OutboxEnvelope into the lib-commons
-// OutboxEvent shape under eventType (the stable StreamingOutboxEventType or a
-// source-qualified one). Used by outbox_writer.go's libCommonsOutboxWriter on
-// the production persist path.
-func outboxRowFromEnvelope(envelope contract.OutboxEnvelope, eventType string) (*outbox.OutboxEvent, error) {
+// OutboxEvent shape with the stable StreamingOutboxEventType. Used by
+// outbox_writer.go's libCommonsOutboxWriter on the production persist path.
+func outboxRowFromEnvelope(envelope contract.OutboxEnvelope) (*outbox.OutboxEvent, error) {
 	if err := envelope.ValidateShape(); err != nil {
 		return nil, err
 	}
@@ -244,7 +243,7 @@ func outboxRowFromEnvelope(envelope contract.OutboxEnvelope, eventType string) (
 
 	return &outbox.OutboxEvent{
 		ID:          rowID,
-		EventType:   eventType,
+		EventType:   StreamingOutboxEventType,
 		AggregateID: envelope.AggregateID,
 		Payload:     payload,
 	}, nil

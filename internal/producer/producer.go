@@ -119,11 +119,6 @@ type Producer struct {
 	// paths. Nil means fallback is disabled.
 	outboxWriter OutboxWriter
 
-	// outboxEventType is the outbox row type this Producer writes through the
-	// built-in adapter and registers its relay for: StreamingOutboxEventType,
-	// or the source-qualified type under WithSourceScopedOutbox.
-	outboxEventType string
-
 	// allowSystemEvents, when true, permits Event.SystemEvent=true through
 	// preflight. When false (the default), any SystemEvent emission is
 	// rejected synchronously with ErrSystemEventsNotAllowed. See

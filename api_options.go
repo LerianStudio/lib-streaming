@@ -53,14 +53,6 @@ func WithOutboxRepository(repo outbox.OutboxRepository) EmitterOption {
 // WithOutboxWriter wires a custom outbox writer boundary.
 func WithOutboxWriter(writer OutboxWriter) EmitterOption { return producer.WithOutboxWriter(writer) }
 
-// WithSourceScopedOutbox writes the producer's outbox rows under
-// OutboxEventTypeForSource(source) and registers its relay for that type only,
-// so several binaries of one service sharing one outbox table each relay only
-// their own rows. Every binary's dispatcher must then claim with
-// outbox.WithPriorityEventTypes(producer.OutboxEventType()). Builder's
-// SourceScopedOutbox is the dedicated setter.
-func WithSourceScopedOutbox() EmitterOption { return producer.WithSourceScopedOutbox() }
-
 // WithTLSConfig sets the TLS configuration for broker connections. The config
 // is cloned; MinVersion defaults to TLS 1.2; InsecureSkipVerify and explicit
 // TLS 1.0/1.1 minimums/maximums are rejected at producer construction.

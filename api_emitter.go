@@ -123,18 +123,6 @@ func (p *Producer) RegisterOutboxRelay(registry *outbox.HandlerRegistry) error {
 	return p.inner.RegisterOutboxRelay(registry)
 }
 
-// OutboxEventType returns the outbox row type this producer writes and relays:
-// StreamingOutboxEventType, or OutboxEventTypeForSource(source) when built with
-// SourceScopedOutbox. Pass it to outbox.WithPriorityEventTypes so the
-// dispatcher claims only this producer's rows. A nil producer returns "".
-func (p *Producer) OutboxEventType() string {
-	if p == nil || p.inner == nil {
-		return ""
-	}
-
-	return p.inner.OutboxEventType()
-}
-
 // Descriptor returns a validated publisher descriptor with ProducerID populated.
 func (p *Producer) Descriptor(base PublisherDescriptor) (PublisherDescriptor, error) {
 	if p == nil || p.inner == nil {

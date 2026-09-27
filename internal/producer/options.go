@@ -56,11 +56,6 @@ type emitterOptions struct {
 	// caller is responsible for constructing and owning the writer.
 	outboxWriter OutboxWriter
 
-	// sourceScopedOutbox, when true, makes the producer write and relay the
-	// source-qualified outbox event type instead of the stable one. See
-	// WithSourceScopedOutbox.
-	sourceScopedOutbox bool
-
 	// tlsConfig, when non-nil, is threaded to kgo.DialTLSConfig so broker
 	// connections run over TLS. Nil means plaintext (the default). See
 	// WithTLSConfig for the full contract.
@@ -211,22 +206,6 @@ func WithOutboxWriter(writer OutboxWriter) EmitterOption {
 		}
 
 		o.outboxWriter = writer
-	}
-}
-
-// WithSourceScopedOutbox makes the Producer write its outbox rows under the
-// source-qualified event type contract.OutboxEventTypeForSource(source) and
-// register its relay for that type only, instead of the stable
-// StreamingOutboxEventType. Several binaries of one service that share one
-// outbox table then each claim only their own rows, provided every binary's
-// dispatcher is scoped with outbox.WithPriorityEventTypes(p.OutboxEventType()).
-//
-// It covers the rows the built-in WithOutboxRepository adapter writes. A
-// custom WithOutboxWriter chooses its own row type and must write
-// OutboxEventType() for the relay to find its rows.
-func WithSourceScopedOutbox() EmitterOption {
-	return func(o *emitterOptions) {
-		o.sourceScopedOutbox = true
 	}
 }
 
