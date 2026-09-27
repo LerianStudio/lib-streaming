@@ -161,6 +161,15 @@ func AppTopic(source string) (string, error) {
 	return contract.AppTopic(source), nil
 }
 
+// OutboxEventTypeForSource returns the source-scoped outbox event type,
+// StreamingOutboxEventType + "." + source, the row type a producer built with
+// SourceScopedOutbox writes and relays. It validates source like AppTopic.
+// A caller-supplied OutboxWriter behind a source-scoped producer writes its
+// rows under this type for the relay to find them.
+func OutboxEventTypeForSource(source string) (string, error) {
+	return contract.OutboxEventTypeForSource(source)
+}
+
 // AppDLQTopic returns the dead-letter topic for an application's stream.
 // Like AppTopic, it validates source and returns an error for a malformed one.
 func AppDLQTopic(source string) (string, error) {

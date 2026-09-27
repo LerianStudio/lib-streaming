@@ -102,6 +102,11 @@ func NewProducerMulti(
 		return nil, err
 	}
 
+	outboxEventType, err := resolveOutboxEventType(resolvedOpts, mpc.Source)
+	if err != nil {
+		return nil, err
+	}
+
 	closeTimeout := resolveCloseTimeout(resolvedOpts.closeTimeout, mpc.CloseTimeout)
 
 	cbCfg := buildCBConfigFromMulti(mpc)
@@ -130,6 +135,7 @@ func NewProducerMulti(
 		partFn:             resolvedOpts.partitionKeyFn,
 		closeTimeout:       closeTimeout,
 		outboxWriter:       resolvedOpts.outboxWriter,
+		outboxEventType:    outboxEventType,
 		stop:               make(chan struct{}),
 		allowSystemEvents:  resolvedOpts.allowSystemEvents,
 		catalog:            resolvedOpts.catalog,
@@ -243,6 +249,30 @@ func NewProducerMulti(
 	p.startCBRecoveryLoop()
 
 	return p, nil
+}
+
+// resolveOutboxEventType picks the outbox row type the Producer writes and
+// relays — the stable StreamingOutboxEventType, or the source-qualified one
+// under WithSourceScopedOutbox — and hands it to the built-in lib-commons
+// adapter, so the rows it writes and the relay that claims them agree by
+// construction. A caller-supplied OutboxWriter picks its own row type.
+func resolveOutboxEventType(opts *emitterOptions, source string) (string, error) {
+	eventType := StreamingOutboxEventType
+
+	if opts.sourceScopedOutbox {
+		scoped, err := contract.OutboxEventTypeForSource(source)
+		if err != nil {
+			return "", err
+		}
+
+		eventType = scoped
+	}
+
+	if writer, ok := opts.outboxWriter.(*libCommonsOutboxWriter); ok && writer != nil {
+		writer.eventType = eventType
+	}
+
+	return eventType, nil
 }
 
 // validateConstruction runs the I/O-free wiring checks NewProducerMulti needs

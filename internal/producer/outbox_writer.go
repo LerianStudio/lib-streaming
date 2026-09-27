@@ -44,6 +44,20 @@ type TransactionalBatchOutboxWriter interface {
 type libCommonsOutboxWriter struct {
 	repo   outbox.OutboxRepository
 	logger obs.Logger
+
+	// eventType is the row type every write persists, set by the Producer at
+	// construction to the type its relay registers. Empty means the stable
+	// StreamingOutboxEventType.
+	eventType string
+}
+
+// rowEventType returns the outbox row type this writer persists.
+func (w *libCommonsOutboxWriter) rowEventType() string {
+	if w.eventType == "" {
+		return StreamingOutboxEventType
+	}
+
+	return w.eventType
 }
 
 // asserterLogger returns the logger bound to this writer instance, falling
@@ -59,8 +73,8 @@ func (w *libCommonsOutboxWriter) asserterLogger() obs.Logger {
 	return log.NewNop()
 }
 
-// Write persists an OutboxEnvelope through the wrapped repository using
-// the stable streaming outbox event type.
+// Write persists an OutboxEnvelope through the wrapped repository under the
+// writer's outbox event type.
 func (w *libCommonsOutboxWriter) Write(ctx context.Context, envelope OutboxEnvelope) error {
 	if w == nil {
 		return ErrOutboxNotConfigured
@@ -71,7 +85,7 @@ func (w *libCommonsOutboxWriter) Write(ctx context.Context, envelope OutboxEnvel
 		return ErrOutboxNotConfigured
 	}
 
-	row, err := outboxRowFromEnvelope(envelope)
+	row, err := outboxRowFromEnvelope(envelope, w.rowEventType())
 	if err != nil {
 		return err
 	}
@@ -98,7 +112,7 @@ func (w *libCommonsOutboxWriter) WriteWithTx(ctx context.Context, tx *sql.Tx, en
 		return fmt.Errorf("%w: nil transaction", ErrOutboxTxUnsupported)
 	}
 
-	row, err := outboxRowFromEnvelope(envelope)
+	row, err := outboxRowFromEnvelope(envelope, w.rowEventType())
 	if err != nil {
 		return err
 	}
@@ -138,7 +152,7 @@ func (w *libCommonsOutboxWriter) WriteBatchWithTx(
 
 	rows := make([]*outbox.OutboxEvent, len(envelopes))
 	for i := range envelopes {
-		row, err := outboxRowFromEnvelope(envelopes[i])
+		row, err := outboxRowFromEnvelope(envelopes[i], w.rowEventType())
 		if err != nil {
 			return fmt.Errorf("streaming: prepare outbox batch envelope %d: %w", i, err)
 		}

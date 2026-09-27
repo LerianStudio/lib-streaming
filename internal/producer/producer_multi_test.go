@@ -383,7 +383,7 @@ func TestNewProducerMulti_OutboxFallbackOnCircuitOpenWritesV2Envelope(t *testing
 	// outbox handler. The handler MUST publish through the target adapter
 	// without going through Emit — i.e. without consulting the CB mirror,
 	// which we leave OPEN below.
-	row, err := outboxRowFromEnvelope(got)
+	row, err := outboxRowFromEnvelope(got, StreamingOutboxEventType)
 	if err != nil {
 		t.Fatalf("outboxRowFromEnvelope() error = %v", err)
 	}
@@ -917,6 +917,6 @@ func (c *captureRouteOutboxWriter) Write(_ context.Context, envelope OutboxEnvel
 // Compile-time assertion: outboxRowFromEnvelope returns the lib-commons
 // row shape consumed by handleOutboxRow.
 var _ = func() *outbox.OutboxEvent {
-	row, _ := outboxRowFromEnvelope(contract.OutboxEnvelope{})
+	row, _ := outboxRowFromEnvelope(contract.OutboxEnvelope{}, StreamingOutboxEventType)
 	return row
 }

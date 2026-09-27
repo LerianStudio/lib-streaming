@@ -259,6 +259,22 @@ func (b *Builder) OutboxRepository(repo outbox.OutboxRepository) *Builder {
 	return b
 }
 
+// SourceScopedOutbox writes this producer's outbox rows under
+// OutboxEventTypeForSource(source) instead of StreamingOutboxEventType and
+// registers its relay for that type only. Use it when several binaries of one
+// service share one outbox table: scope each binary's dispatcher with
+// outbox.WithPriorityEventTypes(producer.OutboxEventType()) and each relays
+// only the facts it wrote. Drain the stable-type rows before turning it on.
+func (b *Builder) SourceScopedOutbox() *Builder {
+	if b == nil {
+		return b
+	}
+
+	b.extraOptions = append(b.extraOptions, WithSourceScopedOutbox())
+
+	return b
+}
+
 // Options appends arbitrary existing producer options. This is the parity
 // escape hatch for options not represented by a dedicated Builder method.
 func (b *Builder) Options(opts ...EmitterOption) *Builder {

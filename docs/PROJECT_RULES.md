@@ -129,7 +129,7 @@ Architectural constraints and design decisions for the `lib-streaming` codebase.
 - Without an outbox writer, circuit-open emits return `ErrCircuitOpen`.
 - `OutboxEnvelope` is the persisted route-aware contract: `Version`, `RouteKey`, `DefinitionKey`, `Target`, `Transport`, `Destination`, `AggregateID`, `Requirement`, `Policy`, and `Event`.
 - `OutboxEnvelope.Validate()` enforces structural integrity (canonical route key, valid transport, matching destination kind, valid policy, well-formed event); `ValidateShape()` is the cheaper trusted-persist variant.
-- All outbox rows use the stable `StreamingOutboxEventType` (`lerian.streaming.publish`).
+- All outbox rows use the stable `StreamingOutboxEventType` (`lerian.streaming.publish`), unless the producer is built with `SourceScopedOutbox`, which writes and relays `OutboxEventTypeForSource(source)` (`lerian.streaming.publish.<source>`) only, so binaries sharing one outbox table each relay their own rows.
 - Per-route dispatch happens via the persisted `OutboxEnvelope.Target` lookup against the registered targets at replay time.
 - `RegisterOutboxRelay(registry)` registers one replay handler and dispatches each envelope through its originating target's adapter, not through `Emit`.
 - Replays must bypass the circuit breaker and must not re-enqueue themselves during sustained broker outages.

@@ -654,6 +654,10 @@ sign it. A wired `IsCallerError` classifier therefore keeps the row retryable
 for its whole retry budget, and every attempt logs at ERROR and increments
 `streaming_outbox_relay_rejected_total{reason="signing_source_mismatch"}`.
 Drain it by relaying from a producer of that source, or with signing off.
+When several binaries of one service share one outbox table, turn on
+`SourceScopedOutbox` so each binary's relay never claims another's rows in
+the first place (see
+[Several binaries sharing one outbox table](#several-binaries-sharing-one-outbox-table)).
 
 ### Consumer
 
@@ -1049,6 +1053,78 @@ INVALID; `signing_source_mismatch` is a row a signing producer will not sign
 because it was persisted under another `ce-source` (kept retryable, see
 [Signing and verifying envelopes](#signing-and-verifying-envelopes)).
 
+### Several binaries sharing one outbox table
+
+By default every producer writes its outbox rows under the one stable type
+`lerian.streaming.publish` and its relay registers that type. When several
+binaries of one service (an API and a worker, say, each with its own
+`ce-source`) share one outbox table, each binary's dispatcher therefore claims
+the others' rows too. It publishes them under their persisted source, or,
+with signing on, refuses them with `ErrSigningSourceMismatch` because its key
+does not speak for that source, and those facts wait on whichever relay
+happens to claim them.
+
+`SourceScopedOutbox()` (or the `WithSourceScopedOutbox()` option) gives each
+producer its own row type, `OutboxEventTypeForSource(source)`, which is
+`lerian.streaming.publish.<source>`. The producer writes every row under it
+(`Emit`, `WithOutboxTx`, `EmitBatch`) and registers its relay for it alone.
+Scope each binary's dispatcher to it:
+
+```go
+emitter, err := streaming.NewBuilder().
+    Source("payments-worker").
+    // ...catalog, routes, targets, signing...
+    OutboxRepository(outboxRepo).
+    SourceScopedOutbox().
+    Build(ctx)
+if err != nil {
+    return err
+}
+
+producer := emitter.(*streaming.Producer)
+if err := producer.RegisterOutboxRelay(outboxRegistry); err != nil {
+    return err
+}
+
+dispatcher, err := outbox.NewDispatcher(
+    outboxRepo,
+    outboxRegistry,
+    logger,
+    tracer,
+    outbox.WithPriorityEventTypes(producer.OutboxEventType()),
+    outbox.WithRetryClassifier(outbox.RetryClassifierFunc(streaming.IsCallerError)),
+)
+```
+
+Rollout rules:
+
+1. **Scope every relay on the table, not some.** A dispatcher without
+   `WithPriorityEventTypes` claims every row, including another binary's
+   source-scoped rows, finds no handler for their type, and fails them until
+   they reach INVALID.
+2. **Drain the stable-type rows first.** A source-scoped producer does not
+   relay `lerian.streaming.publish` rows. Turn the mode on once the table holds
+   no pending stable-type rows, or keep one relay on the stable type until it
+   does.
+3. **A source rename strands pending rows.** Rows written under the old source
+   carry the old type, which no relay claims after the rename. Drain them
+   before renaming.
+4. **A custom `OutboxWriter` picks its own row type.** Behind a source-scoped
+   producer it must write `OutboxEventTypeForSource(envelope.Event.Source)`, or
+   the relay never sees its rows.
+5. **A type-scoped relay only claims PENDING rows (lib-commons v7.0.0 through
+   at least v7.11.0).** A dispatcher given `WithPriorityEventTypes` on a
+   repository that claims several types at once returns right after that
+   claim and never calls `ResetForRetry` or `ResetStuckProcessing`. A row
+   whose publish failed, or one a crash left in PROCESSING, is not retried by
+   that relay. This is a lib-commons gap, not specific to this mode: every
+   type-scoped relay has it. Until lib-commons scopes its retry and stuck-row
+   recovery by type, watch for FAILED and stale PROCESSING rows of your
+   types.
+
+The mode is opt-in. Without it the row type, the relay registration and
+`OutboxEventType()` stay `lerian.streaming.publish`.
+
 ### DLQ alerting
 
 `streaming_dlq_publish_failed_total` increments when the DLQ publish itself fails. The original required-route failure may still return to the caller, but the forensic copy was not preserved. Alert on any increase:
@@ -1182,16 +1258,16 @@ go doc github.com/LerianStudio/lib-streaming
 
 Key public API areas:
 
-- **Builder** — `NewBuilder`, `Source`, `Catalog`, `Routes`, `Target`, `TargetExtra`, `RegisterTransport`, `CBFailureRatio`, `CBMinRequests`, `CBTimeout`, `CloseTimeout`, `Logger`, `MetricsRecorder`, `Tracer`, `CircuitBreakerManager`, `OutboxRepository`, `OutboxWriter`, `TLSConfig`, `SASL`, `AllowPlaintextSASL`, `AllowSystemEvents`, `PartitionKey`, `SQSTarget`, `RabbitMQTarget`, `EventBridgeTarget`, `Build`.
+- **Builder** — `NewBuilder`, `Source`, `Catalog`, `Routes`, `Target`, `TargetExtra`, `RegisterTransport`, `CBFailureRatio`, `CBMinRequests`, `CBTimeout`, `CloseTimeout`, `Logger`, `MetricsRecorder`, `Tracer`, `CircuitBreakerManager`, `OutboxRepository`, `OutboxWriter`, `SourceScopedOutbox`, `TLSConfig`, `SASL`, `AllowPlaintextSASL`, `AllowSystemEvents`, `PartitionKey`, `SQSTarget`, `RabbitMQTarget`, `EventBridgeTarget`, `Build`.
 - **Routes & destinations** — `TargetConfig`, `RouteDefinition`, `RouteTable`, `Destination`, `TransportKind`, `RouteRequirement`, `KafkaTopic`, `SQSQueueURL`, `RabbitMQRoute`, `EventBridgeBus`.
 - **Topic naming** — `AppTopic`, `AppDLQTopic`, `AppCommandsTopic`, `ValidateSource`, `TopicPrefix`, `DLQTopicSuffix`, `CommandsTopicSuffix`, `MaxKafkaTopicNameBytes`.
 - **Consumer dispatch** — `NewConsumer().Source(...)`, `.Apps(...)`, `.Commands(...)`, `.OnFrom(app, "<resourceType>.<eventType>", handler)`, `.On(...)` (single-app shorthand), `.UnmatchedPolicy(...)`, `.ExpectSources(...)`, `HandlerFunc`, `UnmatchedIgnore`, `UnmatchedError`, `ErrUnhandledEvent`, `ErrUnexpectedSource`, `ErrBareOnWithMultipleApps`, `ErrUnknownDispatchApp`, `ErrConsumerMissingSource`, `ErrConsumerPartitionHalted`, `ErrHandlerAndCommandsBothSet`.
 - **Transport port** — `TransportAdapter`, `TransportMessage`, `TransportHeader`, `TransportAdapterOptions`, `TransportAdapterFactory`, `PartitionKeyFunc`, plus the built-in client interfaces (`SQSPublisherClient`, `RabbitMQPublisher`, `EventBridgePutEventsClient`).
-- **Emitters** — `Emitter`, `Producer` (including `Descriptor`, `RegisterOutboxRelay`, `Run`, `RunContext`, `CloseContext`), `NoopEmitter`, and `streamingtest.MockEmitter`.
+- **Emitters** — `Emitter`, `Producer` (including `Descriptor`, `RegisterOutboxRelay`, `OutboxEventType`, `Run`, `RunContext`, `CloseContext`), `NoopEmitter`, and `streamingtest.MockEmitter`.
 - **Catalogs** — `Catalog`, `EventDefinition`, `NewCatalog`, `NewEventDefinition`, `EventClass`, `ClassFact`, `ClassCommand`, and duplicate-contract validation.
 - **Requests** — `EmitRequest`, `NewEmitRequest`, payload rules, tenant/subject metadata.
 - **Delivery Policies** — `DefaultDeliveryPolicy`, `ResolveDeliveryPolicy`, `DirectMode`, `OutboxMode`, `DLQMode`, `DeliveryPolicy`, `DeliveryPolicyOverride`.
-- **Outbox** — `OutboxEnvelope` (with `Validate` / `ValidateShape`), `OutboxWriter`, `WithOutboxTx`, `StreamingOutboxEventType`, transactional writer support, relay registration.
+- **Outbox** — `OutboxEnvelope` (with `Validate` / `ValidateShape`), `OutboxWriter`, `WithOutboxTx`, `StreamingOutboxEventType`, `OutboxEventTypeForSource`, `WithSourceScopedOutbox`, transactional writer support, relay registration.
 - **Manifest** — `BuildManifest`, `NewStreamingHandler`, `HandlerOption`, `WithManifestRoutes`, `NewPublisherDescriptor`, `ManifestDocument`, `ManifestEvent`, `ManifestRoute`, `ManifestVersion`.
 - **Errors** — sentinels, `EmitError`, `MultiEmitError`, `RouteError`, error classes, `HealthError`, and `IsCallerError`.
 

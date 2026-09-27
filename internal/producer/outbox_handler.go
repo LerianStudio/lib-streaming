@@ -15,7 +15,10 @@ import (
 	"github.com/LerianStudio/lib-streaming/v4/internal/transport"
 )
 
-// RegisterOutboxRelay registers the stable streaming outbox relay handler.
+// RegisterOutboxRelay registers the relay handler for this Producer's outbox
+// event type only (see OutboxEventType): the stable StreamingOutboxEventType,
+// or the source-qualified type under WithSourceScopedOutbox. A source-scoped
+// Producer never registers the stable type, so two of them share one registry.
 func (p *Producer) RegisterOutboxRelay(registry *outbox.HandlerRegistry) error {
 	if p == nil {
 		return ErrNilProducer
@@ -25,11 +28,23 @@ func (p *Producer) RegisterOutboxRelay(registry *outbox.HandlerRegistry) error {
 		return ErrNilOutboxRegistry
 	}
 
-	if err := registry.Register(StreamingOutboxEventType, p.handleOutboxRow); err != nil {
-		return fmt.Errorf("streaming: register outbox relay for %q: %w", StreamingOutboxEventType, err)
+	if err := registry.Register(p.outboxEventType, p.handleOutboxRow); err != nil {
+		return fmt.Errorf("streaming: register outbox relay for %q: %w", p.outboxEventType, err)
 	}
 
 	return nil
+}
+
+// OutboxEventType returns the outbox row type this Producer writes and relays.
+// A service passes it to outbox.WithPriorityEventTypes so its dispatcher claims
+// only this Producer's rows. It is StreamingOutboxEventType unless the Producer
+// was built with WithSourceScopedOutbox. A nil Producer returns "".
+func (p *Producer) OutboxEventType() string {
+	if p == nil {
+		return ""
+	}
+
+	return p.outboxEventType
 }
 
 // handleOutboxRow is the outbox-Dispatcher-facing handler. It receives a
@@ -73,17 +88,17 @@ func (p *Producer) handleOutboxRow(ctx context.Context, row *outbox.OutboxEvent)
 		return outbox.ErrOutboxEventRequired
 	}
 
-	if row.EventType != StreamingOutboxEventType {
+	if row.EventType != p.outboxEventType {
 		// Not a streaming row. The Dispatcher shouldn't be calling us —
 		// this means someone registered the handler for an unrelated
 		// event type. Returning nil (not an error) is the conservative
 		// choice: an error would cause the Dispatcher to mark the row
 		// FAILED, which is destructive for a row that wasn't ours in
 		// the first place.
-		p.logger.Log(ctx, obs.LevelWarn, "streaming: outbox row routed to streaming handler but EventType is not the stable relay type",
+		p.logger.Log(ctx, obs.LevelWarn, "streaming: outbox row routed to streaming handler but EventType is not this producer's relay type",
 			"row_id", row.ID.String(),
 			"event_type", row.EventType,
-			"expected_event_type", StreamingOutboxEventType,
+			"expected_event_type", p.outboxEventType,
 		)
 
 		return nil

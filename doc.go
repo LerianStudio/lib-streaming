@@ -626,7 +626,11 @@
 // # Outbox wire format
 //
 // Outbox rows use the stable EventType "lerian.streaming.publish"
-// (StreamingOutboxEventType). The row Payload is a JSON-marshaled
+// (StreamingOutboxEventType), or "lerian.streaming.publish.<source>"
+// (OutboxEventTypeForSource) for a producer built with SourceScopedOutbox, so
+// several binaries sharing one outbox table each relay only their own rows.
+// (*Producer).OutboxEventType names the type a producer writes and relays. The
+// row Payload is a JSON-marshaled
 // OutboxEnvelope whose fields — in canonical order — are Version, RouteKey,
 // DefinitionKey, Target, Transport, Destination, AggregateID, Requirement,
 // Policy, Event. Readers and migration tooling should treat this shape as
