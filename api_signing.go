@@ -75,10 +75,10 @@ func ParseVerificationKeys(csv string) (*Keyring, error) {
 // LoadVerificationKeys reads STREAMING_CONSUMER_SIGNATURE_KEYS into a
 // verification keyring whether or not STREAMING_CONSUMER_ENABLED is set, for a
 // consumer built fluently (without LoadConsumerConfig and FromConfig) or for a
-// verifier outside the Kafka consumer. Parsing is ParseVerificationKeys'. An
-// unset or blank variable returns a nil ring and no error; RequireSignatures(nil)
-// then fails Build with ErrConsumerSignatureKeysMissing, so a chain that needs
-// keys fails closed. A malformed value fails with an error wrapping both
+// verifier outside the Kafka consumer. Parsing is ParseVerificationKeys'. A
+// variable with no entry (unset, blank, or only separators) returns a nil ring
+// and no error; RequireSignatures(nil) then fails Build with
+// ErrConsumerSignatureKeysMissing, so a chain that needs keys fails closed. A malformed value fails with an error wrapping both
 // ErrConsumerInvalidConfigField and ErrInvalidSigningKey, identical to the one
 // LoadConsumerConfig returns for the same value.
 func LoadVerificationKeys() (*Keyring, error) {

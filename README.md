@@ -598,7 +598,7 @@ if ring != nil { // neither set: nil ring, signing off
 }
 
 // Consumer: STREAMING_CONSUMER_SIGNATURE_KEYS, csv of <kid>@<source>:<base64>.
-keys, err := streaming.LoadVerificationKeys() // unset: nil, which RequireSignatures refuses at Build
+keys, err := streaming.LoadVerificationKeys() // unset, blank or only commas: nil, which RequireSignatures refuses at Build
 if err != nil {
     return err // ErrConsumerInvalidConfigField + ErrInvalidSigningKey, entry named by position
 }

@@ -585,13 +585,15 @@ func (c ConsumerConfig) validateSources() error {
 // <kid>@<source>:<base64 secret>, parsed by envelopesig.ParseKeyring) into the
 // keyring the verifier uses, whether or not the consumer is enabled.
 // LoadConsumerConfig calls it for an enabled consumer; a service building its
-// consumer fluently calls it directly. A blank variable yields nil, which
-// RequireSignatures refuses at Build. Every failure wraps both
-// ErrInvalidConfigField and ErrInvalidSigningKey and names the entry by
-// position and legal key id only; the raw value never reaches the error.
+// consumer fluently calls it directly. A variable with no entry — unset,
+// blank, or only separators, the same reading splitCSV gives every other csv
+// variable — yields nil, which RequireSignatures refuses at Build. Every
+// failure wraps both ErrInvalidConfigField and ErrInvalidSigningKey and names
+// the entry by position and legal key id only; the raw value never reaches the
+// error.
 func LoadSignatureKeys() (*envelopesig.Keyring, error) {
 	raw := os.Getenv("STREAMING_CONSUMER_SIGNATURE_KEYS")
-	if strings.TrimSpace(raw) == "" {
+	if len(splitCSV(raw)) == 0 {
 		return nil, nil //nolint:nilnil // a nil ring is the documented "no keys configured" answer, not an error
 	}
 

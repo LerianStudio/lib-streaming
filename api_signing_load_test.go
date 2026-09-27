@@ -104,19 +104,42 @@ func TestLoadVerificationKeys_ReadsWithoutConsumerEnabled(t *testing.T) {
 	assertRendersNoSecret(t, *ring)
 }
 
-func TestLoadVerificationKeys_UnsetIsNil(t *testing.T) {
-	clearSigningEnv(t)
+// TestLoadVerificationKeys_NoEntryIsNil pins that a variable holding no entry
+// — unset, blank, or only separators, as a template of empty key slots
+// renders — means "no keys configured", like every other csv variable the
+// config loaders read. A consumer that requires signatures still fails closed
+// at Build; one that does not keeps booting.
+func TestLoadVerificationKeys_NoEntryIsNil(t *testing.T) {
+	for name, value := range map[string]string{
+		"unset":           "",
+		"blank":           " \n",
+		"only separators": " , ,",
+	} {
+		t.Run(name, func(t *testing.T) {
+			clearSigningEnv(t)
+			t.Setenv("STREAMING_CONSUMER_SIGNATURE_KEYS", value)
 
-	ring, err := streaming.LoadVerificationKeys()
-	require.NoError(t, err)
-	assert.Nil(t, ring)
+			ring, err := streaming.LoadVerificationKeys()
+			require.NoError(t, err)
+			assert.Nil(t, ring)
+
+			t.Setenv("STREAMING_CONSUMER_ENABLED", "true")
+			t.Setenv("STREAMING_CONSUMER_BROKERS", "localhost:9092")
+			t.Setenv("STREAMING_CONSUMER_GROUP", "svc")
+			t.Setenv("STREAMING_CONSUMER_APPS", builderSigningSource)
+			t.Setenv("STREAMING_CLOUDEVENTS_SOURCE", "loan-projector")
+
+			cfg, _, err := streaming.LoadConsumerConfig()
+			require.NoError(t, err)
+			assert.Nil(t, cfg.SignatureKeys)
+		})
+	}
 }
 
 func TestLoadVerificationKeys_MalformedWrapsBothSentinels(t *testing.T) {
 	encoded := builderSigningSecretB64()
 
 	for name, value := range map[string]string{
-		"only separators":        " , ",
 		"secret in the id slot":  encoded + "@" + builderSigningSource + ":" + encoded,
 		"secret not base64":      "k1@" + builderSigningSource + ":%%%" + encoded,
 		"secret under 32 bytes":  "k1@" + builderSigningSource + ":" + base64.StdEncoding.EncodeToString(builderSigningSecret()[:16]),
