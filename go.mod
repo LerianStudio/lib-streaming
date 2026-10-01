@@ -14,10 +14,10 @@ require (
 	github.com/testcontainers/testcontainers-go/modules/mongodb v0.44.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.44.0
 	github.com/testcontainers/testcontainers-go/modules/redpanda v0.44.0
-	github.com/twmb/franz-go v1.21.6
+	github.com/twmb/franz-go v1.22.0
 	github.com/twmb/franz-go/pkg/kadm v1.18.0
 	github.com/twmb/franz-go/pkg/kfake v0.0.0-20260606182254-a0f8f332c495
-	github.com/twmb/franz-go/pkg/kmsg v1.13.1
+	github.com/twmb/franz-go/pkg/kmsg v1.14.0
 	github.com/twmb/franz-go/pkg/sr v1.8.0
 	go.mongodb.org/mongo-driver/v2 v2.9.0
 	go.opentelemetry.io/otel v1.46.0
@@ -75,7 +75,7 @@ require (
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/joho/godotenv v1.5.1 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
-	github.com/klauspost/compress v1.19.2 // indirect
+	github.com/klauspost/compress v1.20.0 // indirect
 	github.com/leodido/go-urn v1.4.0 // indirect
 	github.com/lib/pq v1.12.3 // indirect
 	github.com/lufia/plan9stats v0.0.0-20260330125221-c963978e514e // indirect
@@ -95,7 +95,7 @@ require (
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
-	github.com/pierrec/lz4/v4 v4.1.27 // indirect
+	github.com/pierrec/lz4/v4 v4.1.30 // indirect
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
 	github.com/shirou/gopsutil v3.21.11+incompatible // indirect
 	github.com/shirou/gopsutil/v4 v4.26.6 // indirect
