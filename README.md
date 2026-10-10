@@ -783,7 +783,8 @@ Three consumer signals are worth a page. All are counters on the
 # A partition is head-of-line blocked. reason="dlq_publish_failed" means a
 # record cannot be quarantined at all (check .dlq topic size headroom and ACLs)
 # and NOTHING behind it will ever commit; reason="sustained_transient" means a
-# downstream is down. Healthy() also fails after three consecutive cycles, so
+# downstream is down, and the WARN "streaming consumer: handler error" names the
+# error and offset. Healthy() also fails after three consecutive cycles, so
 # this should coincide with the pod leaving the load balancer.
 increase(streaming_consumer_partition_halted_total[5m]) > 0
 ```

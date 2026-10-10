@@ -11,6 +11,7 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 
 	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/obs"
 )
 
 // healthyRuntime returns a runtime already past its first poll, so Healthy is
@@ -202,5 +203,51 @@ func TestHealthy_AbsenceFromOnePollBatchIsNotProgress(t *testing.T) {
 	err := r.Healthy(context.Background())
 	if !errors.Is(err, ErrPartitionHalted) {
 		t.Fatalf("Healthy() = %v; want ErrPartitionHalted — an absent poll batch is not progress", err)
+	}
+}
+
+// TestHandleWithRetry_LogsTheHandlerErrorBehindAHalt pins that a sustained
+// transient names the error holding the partition back; the halt alert names
+// only its reason, and the record never reaches a DLQ header.
+func TestHandleWithRetry_LogsTheHandlerErrorBehindAHalt(t *testing.T) {
+	t.Parallel()
+
+	handler := &fakeHandler{fn: func(context.Context, contract.Event, []byte) error { return transientErr }}
+	spy := newSpyLogger()
+	r := newTestRuntime(t, newFakeGroupClient(), handler, &fakeDLQ{}, WithClassifier(retryClassifier), WithLogger(spy))
+
+	halted, _ := r.processFetches(context.Background(), fetchOf("t", 0, rec("t", 0, 9, ceHeaders("tenantA", false))))
+
+	if halted[topicPartition{"t", 0}] != haltReasonSustainedTransient {
+		t.Fatalf("halted = %v; want t/0 halted as %s", halted, haltReasonSustainedTransient)
+	}
+
+	assertHandlerErrorLine(t, spy, obs.LevelWarn, map[string]any{
+		"outcome": "halt", "offset": int64(9), "tenant_id": "tenantA", "error": transientErr.Error(),
+	})
+}
+
+// TestHandleWithRetry_ShutdownLogsNoHandlerError pins the other side: an error
+// that lands on shutdown is re-delivered on restart, so it is not a failure to report.
+func TestHandleWithRetry_ShutdownLogsNoHandlerError(t *testing.T) {
+	t.Parallel()
+
+	for name, handlerErr := range map[string]error{"cancellation": context.Canceled, "transient": transientErr} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+
+			handler := &fakeHandler{fn: func(context.Context, contract.Event, []byte) error { return handlerErr }}
+			spy := newSpyLogger()
+			r := newTestRuntime(t, newFakeGroupClient(), handler, &fakeDLQ{}, WithClassifier(retryClassifier), WithLogger(spy))
+
+			r.processFetches(ctx, fetchOf("t", 0, rec("t", 0, 9, ceHeaders("tenantA", false))))
+
+			if got := spy.levelsOf(handlerErrorLine); len(got) != 0 {
+				t.Errorf("%q logged %d time(s) on shutdown; want none", handlerErrorLine, len(got))
+			}
+		})
 	}
 }
