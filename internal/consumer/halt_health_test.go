@@ -245,6 +245,11 @@ func TestHandleWithRetry_ShutdownLogsNoHandlerError(t *testing.T) {
 
 			r.processFetches(ctx, fetchOf("t", 0, rec("t", 0, 9, ceHeaders("tenantA", false))))
 
+			// The handler must have run and errored, or "no line" proves nothing.
+			if calls := handler.callCount(); calls != 1 {
+				t.Fatalf("handler calls = %d; want 1", calls)
+			}
+
 			if got := spy.levelsOf(handlerErrorLine); len(got) != 0 {
 				t.Errorf("%q logged %d time(s) on shutdown; want none", handlerErrorLine, len(got))
 			}
