@@ -145,8 +145,7 @@ func contextWithTenant(ctx context.Context, tenantID string) context.Context {
 }
 
 // sanitize strips secrets/broker-credentials from an error message before it is
-// logged. Payloads and BorrowerCPF never reach a log because only error strings
-// (already broker/transport text) are logged, never rec.Value.
+// logged. Payloads never reach a log: only error strings are logged, never rec.Value.
 func sanitize(err error) error {
 	if err == nil {
 		return nil
@@ -950,24 +949,25 @@ func (c *consumerRuntime) handleWithRetry(ctx context.Context, rec *kgo.Record, 
 		}
 
 		disp := c.classify(err, sourceHandler)
+		if disp == dispositionDLQ {
+			c.logHandlerError(ctx, obs.LevelError, "dlq", rec, ev, attempt+1, err)
+		}
+
 		if disp != dispositionRetry {
 			return disp, attempt, handlerQuarantineCause(err)
 		}
 
-		// Transient handler error. Stop retrying in-loop if the budget or the
-		// aggregate dwell cap is reached, or if shutting down — the partition is
+		// Transient handler error. Stop retrying in-loop if shutting down, or if
+		// the budget or the aggregate dwell cap is reached — the partition is
 		// then seeked back and re-delivered fresh on the next poll.
-		if attempt >= c.cfg.RetryBudget || ctx.Err() != nil {
+		if ctx.Err() != nil {
 			return dispositionRetry, attempt, quarantineCause{}
 		}
 
-		wait := backoff
-		if remaining := time.Until(deadline); remaining < wait {
-			wait = remaining
-		}
+		wait := min(backoff, time.Until(deadline))
+		if attempt >= c.cfg.RetryBudget || wait <= 0 {
+			c.logHandlerError(ctx, obs.LevelWarn, "halt", rec, ev, attempt+1, err)
 
-		if wait <= 0 {
-			// Aggregate dwell cap hit: defer to the cross-poll halt path.
 			return dispositionRetry, attempt, quarantineCause{}
 		}
 
@@ -1430,6 +1430,22 @@ func (c *consumerRuntime) alertHalted(ctx context.Context, halted map[topicParti
 			"reason", reason,
 		)
 	}
+}
+
+// logHandlerError logs the handler error behind a DLQ route or a halt, scrubbed
+// and capped exactly like the DLQ error-message header. The payload never is.
+func (c *consumerRuntime) logHandlerError(ctx context.Context, level int, outcome string, rec *kgo.Record, ev contract.Event, attempts int, err error) {
+	c.logger.Log(ctx, level, "streaming consumer: handler error",
+		"outcome", outcome,
+		"topic", rec.Topic,
+		"partition", int(rec.Partition),
+		"offset", rec.Offset,
+		"event_key", contract.EventKey(ev.ResourceType, ev.EventType),
+		"event_id", ev.EventID,
+		"tenant_id", ev.TenantID,
+		"attempts", attempts,
+		"error", dlqheader.TruncateErrorMessage(contract.SanitizeBrokerURL(err.Error())),
+	)
 }
 
 // recordMetric increments a counter best-effort. A metrics recorder is optional;

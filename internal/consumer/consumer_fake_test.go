@@ -22,16 +22,18 @@ type spyLogger struct {
 
 	mu     sync.Mutex
 	msg    []string
+	levels []int
 	fields [][]log.Field
 }
 
 func newSpyLogger() *spyLogger { return &spyLogger{Logger: log.NewNop()} }
 
-func (s *spyLogger) Log(_ context.Context, _ int, msg string, fields ...any) {
+func (s *spyLogger) Log(_ context.Context, level int, msg string, fields ...any) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.msg = append(s.msg, msg)
+	s.levels = append(s.levels, level)
 	s.fields = append(s.fields, log.Fields(fields...))
 }
 
@@ -52,6 +54,22 @@ func (s *spyLogger) fieldValues(msg, key string) []any {
 			if f.Key == key {
 				out = append(out, f.Value)
 			}
+		}
+	}
+
+	return out
+}
+
+// levelsOf returns the level of every line whose message equals msg.
+func (s *spyLogger) levelsOf(msg string) []int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var out []int
+
+	for i, line := range s.msg {
+		if line == msg {
+			out = append(out, s.levels[i])
 		}
 	}
 

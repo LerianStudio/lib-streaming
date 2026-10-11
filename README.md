@@ -379,8 +379,12 @@ from the validated `ce-tenantid` header, never from the payload, and a handler
 that skips the tenant check has a cross-tenant leak.
 
 **Handler errors must not carry PII.** A terminal handler error travels to the
-DLQ as `x-lerian-dlq-error-message`, with only broker credentials stripped and
-the value capped at 4 KiB — nothing else is redacted. A CPF, account number, or
+DLQ as `x-lerian-dlq-error-message`, and the error behind a DLQ route or a halt
+also reaches the service log as `streaming consumer: handler error` (ERROR
+before the DLQ, WARN on a halt). Both copies strip URL credentials,
+Authorization/Auth values, bare AWS access key IDs, and `key=value` pairs whose
+key the lib-observability sensitive-field list names, then cap the value at
+4 KiB — free text is not redacted. A CPF, account number, or
 name interpolated into a returned error is published onto the DLQ topic
 verbatim, readable by anything with DLQ read access for the topic's whole
 retention window. Return an opaque identifier and look the record up out of
@@ -783,7 +787,8 @@ Three consumer signals are worth a page. All are counters on the
 # A partition is head-of-line blocked. reason="dlq_publish_failed" means a
 # record cannot be quarantined at all (check .dlq topic size headroom and ACLs)
 # and NOTHING behind it will ever commit; reason="sustained_transient" means a
-# downstream is down. Healthy() also fails after three consecutive cycles, so
+# downstream is down, and the WARN "streaming consumer: handler error" names the
+# error and offset. Healthy() also fails after three consecutive cycles, so
 # this should coincide with the pod leaving the load balancer.
 increase(streaming_consumer_partition_halted_total[5m]) > 0
 ```
