@@ -66,7 +66,7 @@ func unmatchedEventKeyLabels(t *testing.T, rm metricdata.ResourceMetrics) map[st
 			for _, dp := range agg.DataPoints {
 				for _, kv := range dp.Attributes.ToSlice() {
 					if string(kv.Key) == "event_key" {
-						labels[kv.Value.Emit()] += dp.Value
+						labels[kv.Value.String()] += dp.Value
 					}
 				}
 			}

@@ -31,12 +31,12 @@ func (c *captureContractLogger) Log(_ context.Context, _ int, msg string, _ ...a
 func (c *captureContractLogger) Enabled(_ int) bool           { return true }
 func (c *captureContractLogger) Sync(_ context.Context) error { return nil }
 
-func (c *captureContractLogger) containsMessage(needle string) bool {
+func (c *captureContractLogger) loggedAssertionFailure() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	for _, msg := range c.entries {
-		if strings.Contains(msg, needle) {
+		if strings.Contains(msg, "ASSERTION FAILED") {
 			return true
 		}
 	}
@@ -58,8 +58,8 @@ func (c *captureContractLogger) containsMessage(needle string) bool {
 //
 // We do NOT call t.Parallel() because the logger swap is a global pointer flip.
 func TestEvent_Topic_FiresNoAssertion(t *testing.T) {
-	cap := newCaptureContractLogger()
-	prev := setContractAsserterLogger(cap)
+	logs := newCaptureContractLogger()
+	prev := setContractAsserterLogger(logs)
 
 	t.Cleanup(func() { setContractAsserterLogger(prev) })
 
@@ -91,7 +91,7 @@ func TestEvent_Topic_FiresNoAssertion(t *testing.T) {
 		_ = bad.Topic()
 	}
 
-	if cap.containsMessage("ASSERTION FAILED") {
+	if logs.loggedAssertionFailure() {
 		t.Fatal("trident fired from Topic(); the hot-path helper MUST stay silent for every input")
 	}
 }

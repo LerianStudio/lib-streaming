@@ -259,7 +259,7 @@ func TestDiscardSeam_IsNotArmedByAHandlersMethodSet(t *testing.T) {
 			t.Fatalf("a normal consumer quarantined %d codec faults; want 1 — the discard path was armed by a method set", dlq.count())
 		}
 
-		if _, kind := dlq.lastCause(); kind != dlqheader.CauseCodec {
+		if kind, _ := dlq.lastCause(); kind != dlqheader.CauseCodec {
 			t.Errorf("cause kind = %q; want %q", kind, dlqheader.CauseCodec)
 		}
 
@@ -285,7 +285,7 @@ func TestDiscardSeam_IsNotArmedByAHandlersMethodSet(t *testing.T) {
 			t.Fatalf("ce-source verification quarantined %d foreign writes; want 1", dlq.count())
 		}
 
-		if _, kind := dlq.lastCause(); kind != dlqheader.CauseSourceMismatch {
+		if kind, _ := dlq.lastCause(); kind != dlqheader.CauseSourceMismatch {
 			t.Errorf("cause kind = %q; want %q", kind, dlqheader.CauseSourceMismatch)
 		}
 	})
@@ -423,7 +423,7 @@ func TestDiscardSeam_ReturnedErrorStillQuarantines(t *testing.T) {
 		t.Fatalf("DLQ count = %d; want 1 — a reader's own error is classified like any other", dlq.count())
 	}
 
-	if _, kind := dlq.lastCause(); kind != dlqheader.CauseHandler {
+	if kind, _ := dlq.lastCause(); kind != dlqheader.CauseHandler {
 		t.Errorf("cause kind = %q; want %q", kind, dlqheader.CauseHandler)
 	}
 }
@@ -630,8 +630,8 @@ func TestPublishDLQ_RequarantineCarriesExactlyOneForensicSet(t *testing.T) {
 				got, contract.AppDLQTopic("lender"))
 		}
 
-		if got, _ := headerValue(second, dlqheader.SourceOffset); got != "99" {
-			t.Errorf("origin offset = %q; want 99", got)
+		if offset, _ := headerValue(second, dlqheader.SourceOffset); offset != "99" {
+			t.Errorf("origin offset = %q; want 99", offset)
 		}
 	})
 

@@ -395,16 +395,6 @@ func builderRoute(topic string) streaming.RouteDefinition {
 	}
 }
 
-func builderRouteSQS(queueURL string) streaming.RouteDefinition {
-	return streaming.RouteDefinition{
-		Key:           "transaction.created.sqs.primary",
-		DefinitionKey: "transaction.created",
-		Target:        "primary",
-		Destination:   streaming.SQSQueueURL(queueURL),
-		Requirement:   streaming.RouteRequired,
-	}
-}
-
 func builderKafkaTarget() streaming.TargetConfig {
 	return streaming.TargetConfig{
 		Name:     "primary",

@@ -53,7 +53,7 @@ func TestNewSchemaRegistryClient_WithBasicAuthReturnsClient(t *testing.T) {
 func TestNewSchemaRegistryClient_FailClosed(t *testing.T) {
 	t.Parallel()
 
-	const password = "sr-hunter2-secret"
+	const password = "sr-hunter2-secret" //nolint:gosec // fake credential fixture: the test asserts it is redacted
 
 	tests := []struct {
 		name string

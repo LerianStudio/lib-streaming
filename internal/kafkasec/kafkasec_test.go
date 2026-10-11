@@ -76,11 +76,11 @@ func TestValidateTLSConfig_Rejections(t *testing.T) {
 		name string
 		cfg  *tls.Config
 	}{
-		{name: "InsecureSkipVerify", cfg: &tls.Config{InsecureSkipVerify: true}}, //nolint:gosec // test verifies rejection
-		{name: "MinVersion TLS1.0", cfg: &tls.Config{MinVersion: tls.VersionTLS10}},
-		{name: "MaxVersion TLS1.1", cfg: &tls.Config{MaxVersion: tls.VersionTLS11}},
-		{name: "Min exceeds Max", cfg: &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS12}},
-		{name: "weak cipher suite", cfg: &tls.Config{CipherSuites: []uint16{tls.TLS_RSA_WITH_AES_128_CBC_SHA}}},
+		{name: "InsecureSkipVerify", cfg: &tls.Config{InsecureSkipVerify: true}},                                //nolint:gosec // test verifies rejection
+		{name: "MinVersion TLS1.0", cfg: &tls.Config{MinVersion: tls.VersionTLS10}},                             //nolint:gosec // test verifies rejection
+		{name: "MaxVersion TLS1.1", cfg: &tls.Config{MaxVersion: tls.VersionTLS11}},                             //nolint:gosec // test verifies rejection
+		{name: "Min exceeds Max", cfg: &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS12}}, //nolint:gosec // test verifies rejection
+		{name: "weak cipher suite", cfg: &tls.Config{CipherSuites: []uint16{tls.TLS_RSA_WITH_AES_128_CBC_SHA}}}, //nolint:gosec // test verifies rejection
 	}
 
 	for _, tt := range tests {

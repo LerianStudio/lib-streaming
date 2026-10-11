@@ -228,7 +228,7 @@ func BenchmarkSanitizeBrokerURL(b *testing.B) {
 	b.Run("with_credentials", func(b *testing.B) {
 		b.ReportAllocs()
 
-		s := "dial sasl://admin:hunter2@broker.example.com:9092 failed: connection refused"
+		s := "dial sasl://admin:hunter2@broker.example.com:9092 failed: connection refused" //nolint:gosec // fake credential fixture: the test asserts it is redacted
 		for b.Loop() {
 			_ = sanitizeBrokerURL(s)
 		}

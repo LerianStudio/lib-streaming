@@ -242,7 +242,7 @@ func TestBuildKgoOpts_WithTLS11MaxVersion_RejectsTLSConfig(t *testing.T) {
 	t.Parallel()
 
 	_, err := buildKgoOpts(validT8Config(), emitterOptions{
-		tlsConfig: &tls.Config{MaxVersion: tls.VersionTLS11},
+		tlsConfig: &tls.Config{MaxVersion: tls.VersionTLS11}, //nolint:gosec // test verifies rejection
 	})
 	if !errors.Is(err, ErrInvalidTLSConfig) {
 		t.Fatalf("buildKgoOpts() error = %v; want ErrInvalidTLSConfig", err)
@@ -253,7 +253,7 @@ func TestBuildKgoOpts_WithWeakTLS12CipherSuite_RejectsTLSConfig(t *testing.T) {
 	t.Parallel()
 
 	_, err := buildKgoOpts(validT8Config(), emitterOptions{
-		tlsConfig: &tls.Config{CipherSuites: []uint16{tls.TLS_RSA_WITH_AES_128_CBC_SHA}},
+		tlsConfig: &tls.Config{CipherSuites: []uint16{tls.TLS_RSA_WITH_AES_128_CBC_SHA}}, //nolint:gosec // test verifies rejection
 	})
 	if !errors.Is(err, ErrInvalidTLSConfig) {
 		t.Fatalf("buildKgoOpts() error = %v; want ErrInvalidTLSConfig", err)
@@ -512,7 +512,7 @@ func TestBuildKgoOpts_WithApprovedTLS12CipherSuite_AcceptsAndPreservesSuite(t *t
 
 			tlsCfg := &tls.Config{
 				MinVersion:   tls.VersionTLS12,
-				CipherSuites: []uint16{tt.suite},
+				CipherSuites: []uint16{tt.suite}, //nolint:gosec // test verifies rejection
 			}
 
 			// Validation path: buildKgoOpts must accept the approved suite.
@@ -546,7 +546,7 @@ func TestBuildKgoOpts_TLSVersionRange_MinExceedsMax_RejectsTLSConfig(t *testing.
 	t.Parallel()
 
 	_, err := buildKgoOpts(validT8Config(), emitterOptions{
-		tlsConfig: &tls.Config{
+		tlsConfig: &tls.Config{ //nolint:gosec // test verifies rejection
 			MinVersion: tls.VersionTLS13,
 			MaxVersion: tls.VersionTLS12,
 		},

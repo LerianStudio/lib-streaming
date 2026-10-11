@@ -60,7 +60,7 @@ func TestLibraryVerdicts_BypassTheServiceClassifier(t *testing.T) {
 				t.Fatalf("DLQ count = %d; want 1 — a structural library verdict must quarantine, never retry", dlq.count())
 			}
 
-			if _, kind := dlq.lastCause(); kind != tt.wantKind {
+			if kind, _ := dlq.lastCause(); kind != tt.wantKind {
 				t.Errorf("cause kind = %q; want %q", kind, tt.wantKind)
 			}
 

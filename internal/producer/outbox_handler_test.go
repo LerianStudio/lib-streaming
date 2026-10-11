@@ -415,12 +415,12 @@ func TestHandleOutboxRow_BypassesCBWhenOpen(t *testing.T) {
 		t.Fatalf("GetOrCreate err = %v", err)
 	}
 
-	fake, ok := cbIface.(*fakeCB)
+	cb, ok := cbIface.(*fakeCB)
 	if !ok {
 		t.Fatalf("GetOrCreate returned %T; want *fakeCB", cbIface)
 	}
 
-	baseline := fake.executeCalls()
+	baseline := cb.executeCalls()
 
 	// Build a valid v0.2.0 envelope around sampleEvent and feed it to the
 	// handler. sampleEvent()'s topic matches the catalog, so preflight will
@@ -471,7 +471,7 @@ func TestHandleOutboxRow_BypassesCBWhenOpen(t *testing.T) {
 	// Assertion 2: cb.Execute was NEVER called. If this grew, it would mean
 	// handleOutboxRow drifted from publishDirect to the Emit → cb.Execute
 	// path and the loop-prevention property is broken.
-	if got := fake.executeCalls(); got != baseline {
+	if got := cb.executeCalls(); got != baseline {
 		t.Errorf("cb.Execute call count = %d; want %d (replay must bypass CB entirely per TRD §C7)", got, baseline)
 	}
 }

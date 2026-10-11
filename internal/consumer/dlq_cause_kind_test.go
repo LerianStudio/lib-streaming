@@ -87,7 +87,7 @@ func TestRouteDLQ_StampsTheCauseKindThatQuarantinedTheRecord(t *testing.T) {
 				t.Fatalf("DLQ count = %d; want 1 (the record must quarantine)", dlq.count())
 			}
 
-			cause, kind := dlq.lastCause()
+			kind, cause := dlq.lastCause()
 
 			if kind != tt.wantKind {
 				t.Errorf("cause kind = %q; want %q", kind, tt.wantKind)

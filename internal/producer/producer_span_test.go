@@ -99,7 +99,7 @@ func requireStreamingEmitSpan(t *testing.T, spans tracetest.SpanStubs) tracetest
 func spanAttrs(s tracetest.SpanStub) map[string]string {
 	out := make(map[string]string, len(s.Attributes))
 	for _, kv := range s.Attributes {
-		out[string(kv.Key)] = kv.Value.Emit()
+		out[string(kv.Key)] = kv.Value.String()
 	}
 
 	return out

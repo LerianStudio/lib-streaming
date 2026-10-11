@@ -128,9 +128,7 @@ func TestAdapter_ConcurrentOperationsAreSafe(t *testing.T) {
 	errCh := make(chan error, 160)
 
 	for i := range 40 {
-
 		wg.Go(func() {
-
 			err := adapter.Publish(context.Background(), transport.TransportMessage{
 				Destination: contract.Destination{Kind: contract.TransportKafkaLike, Name: "topic-a"},
 				TenantID:    "tenant-1",
@@ -146,9 +144,7 @@ func TestAdapter_ConcurrentOperationsAreSafe(t *testing.T) {
 	}
 
 	for i := range 40 {
-
 		wg.Go(func() {
-
 			if i%2 == 0 {
 				adapter.SetPublishError(configuredPublishErr)
 				adapter.SetHealthError(configuredHealthErr)
@@ -167,7 +163,6 @@ func TestAdapter_ConcurrentOperationsAreSafe(t *testing.T) {
 
 	for range 40 {
 		wg.Go(func() {
-
 			_ = adapter.Messages()
 			if err := adapter.Healthy(context.Background()); err != nil && !errors.Is(err, configuredHealthErr) {
 				errCh <- err
@@ -181,7 +176,6 @@ func TestAdapter_ConcurrentOperationsAreSafe(t *testing.T) {
 
 	for range 5 {
 		wg.Go(func() {
-
 			if err := adapter.Close(context.Background()); err != nil && !errors.Is(err, configuredCloseErr) {
 				errCh <- err
 			}

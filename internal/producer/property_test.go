@@ -86,7 +86,7 @@ func propertyEventGenerator(rng *rand.Rand, _ int) reflect.Value {
 // for deterministic, reproducible runs.
 func propertyConfig() *quick.Config {
 	return &quick.Config{
-		Rand: rand.New(rand.NewSource(0)),
+		Rand: rand.New(rand.NewSource(0)), //nolint:gosec // testing/quick requires math/rand; seeded for reproducible runs
 		Values: func(args []reflect.Value, rng *rand.Rand) {
 			args[0] = propertyEventGenerator(rng, 0)
 		},
@@ -302,36 +302,4 @@ func TestProperty_DeriveAggregateID_Deterministic(t *testing.T) {
 			t.Fatalf("iter %d: system event yielded identical UUIDs %v; want non-deterministic", i, a)
 		}
 	}
-}
-
-// itoa is a tiny helper that avoids pulling in strconv for a single
-// stringified integer inside the Topic property. Wrapping strconv.Itoa
-// would work too; the local helper keeps the property file's imports
-// minimal.
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-
-	// Buffer sized for int64 max: 20 digits + sign.
-	buf := [21]byte{}
-	i := len(buf)
-
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + (n % 10))
-		n /= 10
-	}
-
-	if neg {
-		i--
-		buf[i] = '-'
-	}
-
-	return string(buf[i:])
 }

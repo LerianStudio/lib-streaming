@@ -165,7 +165,7 @@ func TestProducer_EmitBatch_CapturesBoundedTraceCarrierAndRelayContinuesOriginTr
 func TestCaptureTraceCarrier_EmptyContextsDoNotPersistMetadata(t *testing.T) {
 	t.Parallel()
 
-	if carrier := captureTraceCarrier(nil); carrier != nil {
+	if carrier := captureTraceCarrier(nil); carrier != nil { //nolint:staticcheck // SA1012: intentional nil ctx to validate the nil-context path
 		t.Fatalf("captureTraceCarrier(nil) = %#v; want nil", carrier)
 	}
 
@@ -196,7 +196,7 @@ func TestProducer_DeriveOutboxAggregateIDHonorsCustomPartitionAndSystemEvents(t 
 	}
 
 	system := Event{SystemEvent: true}
-	if mustAggregateID(p, system) == mustAggregateID(p, system) {
+	if first, second := mustAggregateID(p, system), mustAggregateID(p, system); first == second {
 		t.Fatal("system event aggregate IDs must be random")
 	}
 }

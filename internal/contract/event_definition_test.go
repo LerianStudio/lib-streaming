@@ -189,8 +189,8 @@ func TestEventDefinition_EventKey_SnakeCase(t *testing.T) {
 // pointer flip and concurrent tests would observe whichever logger is
 // current. Mirror event_topic_assert_test.go's discipline.
 func TestEventDefinition_New_RejectsMalformedSchemaVersion(t *testing.T) {
-	cap := newCaptureContractLogger()
-	prev := setContractAsserterLogger(cap)
+	logs := newCaptureContractLogger()
+	prev := setContractAsserterLogger(logs)
 
 	t.Cleanup(func() { setContractAsserterLogger(prev) })
 
@@ -209,7 +209,7 @@ func TestEventDefinition_New_RejectsMalformedSchemaVersion(t *testing.T) {
 		t.Fatalf("NewEventDefinition() error = %v; want errors.Is(ErrInvalidSchemaVersion)", err)
 	}
 
-	if !cap.containsMessage("ASSERTION FAILED") {
+	if !logs.loggedAssertionFailure() {
 		t.Fatal("expected asserter trident to fire on malformed SchemaVersion at NewEventDefinition")
 	}
 }

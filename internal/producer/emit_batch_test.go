@@ -274,7 +274,7 @@ func TestProducer_EmitBatch_LifecycleAndContextGuards(t *testing.T) {
 	catalog, routes := batchCatalogAndRoutes(t)
 
 	p := newBatchTestProducer(t, catalog, routes, &fakeOutboxRepo{})
-	if err := p.EmitBatch(nil, request); !errors.Is(err, ErrOutboxTxUnsupported) {
+	if err := p.EmitBatch(nil, request); !errors.Is(err, ErrOutboxTxUnsupported) { //nolint:staticcheck // SA1012: intentional nil ctx to validate the nil-context path
 		t.Fatalf("EmitBatch(nil context) error = %v; want ErrOutboxTxUnsupported", err)
 	}
 

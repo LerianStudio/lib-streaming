@@ -16,8 +16,8 @@ import (
 // pointer flip and concurrent tests would observe whichever logger is
 // current. Mirror event_topic_assert_test.go's discipline.
 func TestNewCatalog_DuplicateKey_StillReturnsSentinel(t *testing.T) {
-	cap := newCaptureContractLogger()
-	prev := setContractAsserterLogger(cap)
+	logs := newCaptureContractLogger()
+	prev := setContractAsserterLogger(logs)
 
 	t.Cleanup(func() { setContractAsserterLogger(prev) })
 
@@ -46,7 +46,7 @@ func TestNewCatalog_DuplicateKey_StillReturnsSentinel(t *testing.T) {
 		t.Fatalf("NewCatalog() error = %v; want errors.Is(ErrDuplicateEventDefinition)", err)
 	}
 
-	if !cap.containsMessage("ASSERTION FAILED") {
+	if !logs.loggedAssertionFailure() {
 		t.Fatal("expected asserter trident to fire on duplicate catalog Key")
 	}
 }
@@ -56,8 +56,8 @@ func TestNewCatalog_DuplicateKey_StillReturnsSentinel(t *testing.T) {
 // (ResourceType,EventType,SchemaVersion) tuple resolves to a duplicate
 // contract.
 func TestNewCatalog_DuplicateContractTuple_StillReturnsSentinel(t *testing.T) {
-	cap := newCaptureContractLogger()
-	prev := setContractAsserterLogger(cap)
+	logs := newCaptureContractLogger()
+	prev := setContractAsserterLogger(logs)
 
 	t.Cleanup(func() { setContractAsserterLogger(prev) })
 
@@ -84,7 +84,7 @@ func TestNewCatalog_DuplicateContractTuple_StillReturnsSentinel(t *testing.T) {
 		t.Fatalf("NewCatalog() error = %v; want errors.Is(ErrDuplicateEventDefinition)", err)
 	}
 
-	if !cap.containsMessage("ASSERTION FAILED") {
+	if !logs.loggedAssertionFailure() {
 		t.Fatal("expected asserter trident to fire on duplicate catalog contract tuple")
 	}
 }
@@ -93,8 +93,8 @@ func TestNewCatalog_DuplicateContractTuple_StillReturnsSentinel(t *testing.T) {
 // route.go: duplicate route.Key entries continue to return
 // ErrDuplicateRouteDefinition AND fire the asserter trident.
 func TestNewRouteTable_DuplicateKey_StillReturnsSentinel(t *testing.T) {
-	cap := newCaptureContractLogger()
-	prev := setContractAsserterLogger(cap)
+	logs := newCaptureContractLogger()
+	prev := setContractAsserterLogger(logs)
 
 	t.Cleanup(func() { setContractAsserterLogger(prev) })
 
@@ -111,7 +111,7 @@ func TestNewRouteTable_DuplicateKey_StillReturnsSentinel(t *testing.T) {
 		t.Fatalf("NewRouteTable() error = %v; want errors.Is(ErrDuplicateRouteDefinition)", err)
 	}
 
-	if !cap.containsMessage("ASSERTION FAILED") {
+	if !logs.loggedAssertionFailure() {
 		t.Fatal("expected asserter trident to fire on duplicate route Key")
 	}
 }
@@ -148,8 +148,8 @@ func TestNewEventDefinition_MissingFields_StillReturnsSentinel(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cap := newCaptureContractLogger()
-			prev := setContractAsserterLogger(cap)
+			logs := newCaptureContractLogger()
+			prev := setContractAsserterLogger(logs)
 
 			t.Cleanup(func() { setContractAsserterLogger(prev) })
 
@@ -158,7 +158,7 @@ func TestNewEventDefinition_MissingFields_StillReturnsSentinel(t *testing.T) {
 				t.Fatalf("NewEventDefinition() error = %v; want errors.Is(%v)", err, tc.isErr)
 			}
 
-			if !cap.containsMessage("ASSERTION FAILED") {
+			if !logs.loggedAssertionFailure() {
 				t.Fatalf("expected asserter trident to fire on %s", tc.name)
 			}
 		})

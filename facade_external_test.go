@@ -227,7 +227,7 @@ func serveManifestBody(t *testing.T, handler http.Handler) []byte {
 	t.Helper()
 
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/streaming", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/streaming", nil)
 	handler.ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusOK {

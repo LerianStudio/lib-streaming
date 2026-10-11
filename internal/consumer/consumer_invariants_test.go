@@ -32,11 +32,11 @@ func runUntilClosed(t *testing.T, r *consumerRuntime) {
 	}
 }
 
-// transientErr is a handler error the test Classifier reclassifies as transient.
-var transientErr = errors.New("downstream temporarily unavailable")
+// errTransient is a handler error the test Classifier reclassifies as transient.
+var errTransient = errors.New("downstream temporarily unavailable")
 
-// retryClassifier marks transientErr (and only it) as a known downstream blip.
-func retryClassifier(err error) bool { return errors.Is(err, transientErr) }
+// retryClassifier marks errTransient (and only it) as a known downstream blip.
+func retryClassifier(err error) bool { return errors.Is(err, errTransient) }
 
 // Invariant (a) — cross-poll masking (Req 1, cross-poll layer). Drives
 // processFetches PER POLL (deterministic, no loop timing) on the same partition-0
@@ -55,7 +55,7 @@ func TestInvariant_A_CrossPollNoMasking(t *testing.T) {
 		attempts[ev.Subject]++
 		// A@5 fails through poll 1 (sustained); succeeds once re-delivered (poll 2).
 		if ev.Subject == "off5" && attempts["off5"] <= 3 {
-			return transientErr
+			return errTransient
 		}
 
 		return nil
@@ -113,7 +113,7 @@ func TestInvariant_B_WithinBatchStop(t *testing.T) {
 	handler := &fakeHandler{fn: func(_ context.Context, ev cloudevents.Event, _ []byte) error {
 		seen[ev.Subject] = true
 		if ev.Subject == "off5" {
-			return transientErr
+			return errTransient
 		}
 
 		return nil
@@ -158,7 +158,7 @@ func TestInvariant_C_MultiVisitHalt(t *testing.T) {
 	handler := &fakeHandler{fn: func(_ context.Context, ev cloudevents.Event, _ []byte) error {
 		seen[ev.Subject] = true
 		if ev.Subject == "off5" {
-			return transientErr
+			return errTransient
 		}
 
 		return nil
@@ -205,7 +205,7 @@ func TestInvariant_D_FailClosed(t *testing.T) {
 		case "unknown":
 			return unknownErr
 		case "transient":
-			return transientErr
+			return errTransient
 		default:
 			return nil
 		}
@@ -273,7 +273,7 @@ func TestInvariant_E_TransientNeverDLQ(t *testing.T) {
 	t.Parallel()
 
 	handler := &fakeHandler{fn: func(_ context.Context, _ cloudevents.Event, _ []byte) error {
-		return transientErr
+		return errTransient
 	}}
 
 	client := newFakeGroupClient(fetchOf("t", 0, rec("t", 0, 9, ceHeaders("tenantA", false))))
@@ -498,7 +498,7 @@ func TestClassify_BySource(t *testing.T) {
 	}
 
 	c.classifier = retryClassifier
-	if got := c.classify(transientErr, sourceHandler); got != dispositionRetry {
+	if got := c.classify(errTransient, sourceHandler); got != dispositionRetry {
 		t.Errorf("classify(reclassified handler transient) = %v; want dispositionRetry", got)
 	}
 }

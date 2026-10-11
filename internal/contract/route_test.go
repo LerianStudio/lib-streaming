@@ -968,7 +968,7 @@ func TestRouteDefinition_DescriptionIsValidated(t *testing.T) {
 			description: "Set api_key=secret123 on this route.",
 			want:        ErrInvalidRouteDefinition,
 		},
-		{
+		{ //nolint:gosec // fake credential fixture: the test asserts it is redacted
 			name:        "bare AWS access key in description",
 			description: "Owned by team using AKIAIOSFODNN7EXAMPLE for staging.",
 			want:        ErrInvalidRouteDefinition,

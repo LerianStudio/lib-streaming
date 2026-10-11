@@ -32,7 +32,7 @@ func TestStreamingHandler_ReturnsManifestJSON(t *testing.T) {
 	}
 
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/streaming", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/streaming", nil)
 	handler.ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusOK {
@@ -77,7 +77,7 @@ func TestStreamingHandler_HEADReturnsHeadersWithoutBody(t *testing.T) {
 	}
 
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodHead, "/streaming", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodHead, "/streaming", nil)
 	handler.ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusOK {
@@ -120,7 +120,7 @@ func TestStreamingHandler_MethodNotAllowed(t *testing.T) {
 	}
 
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/streaming", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/streaming", nil)
 	handler.ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusMethodNotAllowed {
@@ -162,7 +162,7 @@ func TestStreamingHandler_GoldenManifestJSON(t *testing.T) {
 	}
 
 	recorder := httptest.NewRecorder()
-	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/streaming", nil))
+	handler.ServeHTTP(recorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/streaming", nil))
 
 	var doc map[string]any
 	if err := json.Unmarshal(recorder.Body.Bytes(), &doc); err != nil {
@@ -271,7 +271,7 @@ func TestStreamingHandler_GoldenManifestJSONWithCommand(t *testing.T) {
 	}
 
 	recorder := httptest.NewRecorder()
-	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/streaming", nil))
+	handler.ServeHTTP(recorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/streaming", nil))
 
 	var doc map[string]any
 	if err := json.Unmarshal(recorder.Body.Bytes(), &doc); err != nil {

@@ -215,7 +215,7 @@ func TestPublishRouteOutbox_GuardsTransactionAndWriteFailures(t *testing.T) {
 	writeFailure := errors.New("write failed")
 
 	failing := &Producer{logger: log.NewNop(), outboxWriter: &failingRouteOutboxWriter{err: writeFailure}}
-	if err := failing.publishRouteOutbox(nil, event, "transaction.created", route, policy); !errors.Is(err, writeFailure) {
+	if err := failing.publishRouteOutbox(nil, event, "transaction.created", route, policy); !errors.Is(err, writeFailure) { //nolint:staticcheck // SA1012: intentional nil ctx to validate the nil-context path
 		t.Fatalf("failed write publishRouteOutbox() error = %v; want repository failure", err)
 	}
 

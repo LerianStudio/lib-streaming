@@ -289,8 +289,15 @@ func TestBuildManifest_OrderingDeterministic(t *testing.T) {
 		t.Fatalf("BuildManifest() error = %v", err)
 	}
 
-	body1, _ := json.Marshal(doc1)
-	body2, _ := json.Marshal(doc2)
+	body1, err := json.Marshal(doc1)
+	if err != nil {
+		t.Fatalf("json.Marshal(doc1) error = %v", err)
+	}
+
+	body2, err := json.Marshal(doc2)
+	if err != nil {
+		t.Fatalf("json.Marshal(doc2) error = %v", err)
+	}
 
 	if string(body1) != string(body2) {
 		t.Errorf("BuildManifest() not byte-stable across builds:\n%s\nvs\n%s", body1, body2)

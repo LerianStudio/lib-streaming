@@ -764,7 +764,7 @@ func (m *panickingCBManager) GetOrCreate(_ string, _ circuitbreaker.Config) (cir
 }
 
 func (*panickingCBManager) Execute(_ string, _ func() (any, error)) (any, error) {
-	return nil, nil
+	return nil, nil //nolint:nilnil // no-op stub: the panic test drives only GetState
 }
 
 func (m *panickingCBManager) GetState(_ string) circuitbreaker.State {

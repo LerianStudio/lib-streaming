@@ -75,12 +75,12 @@ func findMetric(rm metricdata.ResourceMetrics, name string) (metricdata.Metrics,
 }
 
 // attrSetToMap converts an attribute.Set into a map[string]string via
-// ToSlice. Values are stringified through attribute.Value.Emit() so
+// ToSlice. Values are stringified through attribute.Value.String() so
 // non-string types (bool, int, float) still serialise.
 func attrSetToMap(set attribute.Set) map[string]string {
 	out := make(map[string]string, set.Len())
 	for _, kv := range set.ToSlice() {
-		out[string(kv.Key)] = kv.Value.Emit()
+		out[string(kv.Key)] = kv.Value.String()
 	}
 
 	return out
@@ -384,10 +384,10 @@ func TestMetrics_Emit_PreflightFailure_RecordsCallerErrorOutcome(t *testing.T) {
 
 	// Duration histogram MUST NOT have received a datapoint — preflight
 	// rejections are not emission attempts.
-	if _, ok := findMetric(rm, metricNameEmitDurationMS); ok {
+	if hist, ok := findMetric(rm, metricNameEmitDurationMS); ok {
 		// Present is acceptable only if count is zero; the SDK reports a
 		// metric even with no observations if the instrument was created.
-		if m, _ := findMetric(rm, metricNameEmitDurationMS); histogramCount(t, m) > 0 {
+		if histogramCount(t, hist) > 0 {
 			t.Errorf("duration histogram recorded for preflight failure; want 0")
 		}
 	}
@@ -795,12 +795,12 @@ func TestMetrics_CBRecoveryLivenessGauge(t *testing.T) {
 
 	rm := snapshot()
 
-	metric, ok := findMetric(rm, metricNameCBRecoveryLiveness)
+	liveness, ok := findMetric(rm, metricNameCBRecoveryLiveness)
 	if !ok {
 		t.Fatalf("metric %q not found", metricNameCBRecoveryLiveness)
 	}
 
-	vals := gaugeInt64Values(t, metric)
+	vals := gaugeInt64Values(t, liveness)
 	if len(vals) == 0 || vals[0] != 1 {
 		t.Fatalf("liveness values = %v; want first value 1", vals)
 	}
@@ -808,14 +808,14 @@ func TestMetrics_CBRecoveryLivenessGauge(t *testing.T) {
 	m.recordCBRecoveryLiveness(context.Background(), false)
 
 	rm = snapshot()
-	metric, _ = findMetric(rm, metricNameCBRecoveryLiveness)
+	liveness, _ = findMetric(rm, metricNameCBRecoveryLiveness)
 
-	vals = gaugeInt64Values(t, metric)
+	vals = gaugeInt64Values(t, liveness)
 	if len(vals) == 0 || vals[0] != 0 {
 		t.Fatalf("liveness values after dead = %v; want first value 0", vals)
 	}
 
-	for _, attrs := range extractAttributeSets(metric) {
+	for _, attrs := range extractAttributeSets(liveness) {
 		if len(attrs) != 0 {
 			t.Fatalf("liveness metric labels = %v; want none", attrs)
 		}
