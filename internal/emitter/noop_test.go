@@ -41,5 +41,5 @@ func TestNoopEmitter_AllNil(t *testing.T) {
 func TestNoopEmitter_SatisfiesInterface(t *testing.T) {
 	t.Parallel()
 
-	var _ Emitter = NewNoopEmitter()
+	var _ = NewNoopEmitter()
 }

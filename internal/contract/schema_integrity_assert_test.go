@@ -65,10 +65,10 @@ func TestDeliveryPolicy_Validate_DirectSkipRequiresOutboxAlways(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			cap := newCaptureContractLogger()
 			prev := setContractAsserterLogger(cap)
+
 			t.Cleanup(func() { setContractAsserterLogger(prev) })
 
 			p := DeliveryPolicy{

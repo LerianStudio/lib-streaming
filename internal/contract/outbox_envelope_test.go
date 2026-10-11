@@ -70,7 +70,6 @@ func TestOutboxEnvelope_Validate_RejectsUnsafeTraceCarrier(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -81,6 +80,7 @@ func TestOutboxEnvelope_Validate_RejectsUnsafeTraceCarrier(t *testing.T) {
 			if !errors.Is(err, ErrInvalidOutboxEnvelope) {
 				t.Fatalf("Validate() error = %v; want ErrInvalidOutboxEnvelope", err)
 			}
+
 			if !errors.Is(err, ErrInvalidTraceCarrier) {
 				t.Fatalf("Validate() error = %v; want ErrInvalidTraceCarrier", err)
 			}
@@ -217,7 +217,6 @@ func TestOutboxEnvelope_Validate_RejectsInvalidShape(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -295,7 +294,6 @@ func TestOutboxEnvelope_ValidateRejectsEmptyEventShape(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -453,39 +451,51 @@ func TestOutboxEnvelope_JSONRoundTrip(t *testing.T) {
 	if decoded.Version != original.Version {
 		t.Errorf("Version = %d; want %d", decoded.Version, original.Version)
 	}
+
 	if decoded.RouteKey != original.RouteKey {
 		t.Errorf("RouteKey = %q; want %q", decoded.RouteKey, original.RouteKey)
 	}
+
 	if decoded.DefinitionKey != original.DefinitionKey {
 		t.Errorf("DefinitionKey = %q; want %q", decoded.DefinitionKey, original.DefinitionKey)
 	}
+
 	if decoded.Target != original.Target {
 		t.Errorf("Target = %q; want %q", decoded.Target, original.Target)
 	}
+
 	if decoded.Transport != original.Transport {
 		t.Errorf("Transport = %q; want %q", decoded.Transport, original.Transport)
 	}
+
 	if decoded.Destination.Kind != original.Destination.Kind {
 		t.Errorf("Destination.Kind = %q; want %q", decoded.Destination.Kind, original.Destination.Kind)
 	}
+
 	if decoded.Destination.Name != original.Destination.Name {
 		t.Errorf("Destination.Name = %q; want %q", decoded.Destination.Name, original.Destination.Name)
 	}
+
 	if decoded.Destination.Attributes["format"] != "json" {
 		t.Errorf("Destination.Attributes[format] = %q; want json", decoded.Destination.Attributes["format"])
 	}
+
 	if decoded.AggregateID != original.AggregateID {
 		t.Errorf("AggregateID = %v; want %v", decoded.AggregateID, original.AggregateID)
 	}
+
 	if decoded.Requirement != original.Requirement {
 		t.Errorf("Requirement = %q; want %q", decoded.Requirement, original.Requirement)
 	}
+
 	if decoded.Policy.Enabled != original.Policy.Enabled {
 		t.Errorf("Policy.Enabled = %v; want %v", decoded.Policy.Enabled, original.Policy.Enabled)
 	}
+
 	if decoded.Event.TenantID != original.Event.TenantID {
 		t.Errorf("Event.TenantID = %q; want %q", decoded.Event.TenantID, original.Event.TenantID)
 	}
+
 	if decoded.Event.ResourceType != original.Event.ResourceType {
 		t.Errorf("Event.ResourceType = %q; want %q", decoded.Event.ResourceType, original.Event.ResourceType)
 	}

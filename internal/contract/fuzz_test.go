@@ -25,6 +25,7 @@ func FuzzSanitizeBrokerURL(f *testing.F) {
 		out := sanitizeBrokerURL(in)
 
 		const marker = "hunter2"
+
 		for _, m := range urlPattern.FindAllString(in, -1) {
 			trimmed, _ := splitTrailingPunctuation(m)
 

@@ -49,9 +49,11 @@ func TestCBListener_PerTargetTransitionsAreIsolated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewProducerMulti() error = %v", err)
 	}
+
 	t.Cleanup(func() { _ = p.Close() })
 
 	rtPrimary := p.targets["primary"]
+
 	rtSecondary := p.targets["secondary"]
 	if rtPrimary == nil || rtSecondary == nil {
 		t.Fatalf("targets not registered: primary=%v secondary=%v", rtPrimary, rtSecondary)
@@ -61,6 +63,7 @@ func TestCBListener_PerTargetTransitionsAreIsolated(t *testing.T) {
 	if got := rtPrimary.state.Load(); got != flagCBClosed {
 		t.Fatalf("primary initial state = %d; want %d", got, flagCBClosed)
 	}
+
 	if got := rtSecondary.state.Load(); got != flagCBClosed {
 		t.Fatalf("secondary initial state = %d; want %d", got, flagCBClosed)
 	}
@@ -71,6 +74,7 @@ func TestCBListener_PerTargetTransitionsAreIsolated(t *testing.T) {
 	if got := rtSecondary.state.Load(); got != flagCBOpen {
 		t.Errorf("secondary state after OPEN = %d; want %d", got, flagCBOpen)
 	}
+
 	if got := rtPrimary.state.Load(); got != flagCBClosed {
 		t.Errorf("primary state after secondary OPEN = %d; want %d (isolation broken)", got, flagCBClosed)
 	}
@@ -81,6 +85,7 @@ func TestCBListener_PerTargetTransitionsAreIsolated(t *testing.T) {
 	if got := rtSecondary.state.Load(); got != flagCBHalfOpen {
 		t.Errorf("secondary state after HALF-OPEN = %d; want %d", got, flagCBHalfOpen)
 	}
+
 	if got := rtPrimary.state.Load(); got != flagCBClosed {
 		t.Errorf("primary state after secondary HALF-OPEN = %d; want %d (isolation broken)", got, flagCBClosed)
 	}
@@ -91,6 +96,7 @@ func TestCBListener_PerTargetTransitionsAreIsolated(t *testing.T) {
 	if got := rtSecondary.state.Load(); got != flagCBClosed {
 		t.Errorf("secondary state after CLOSED = %d; want %d", got, flagCBClosed)
 	}
+
 	if got := rtPrimary.state.Load(); got != flagCBClosed {
 		t.Errorf("primary state remains = %d; want %d", got, flagCBClosed)
 	}
@@ -131,9 +137,11 @@ func TestCBListener_TwoTargetsIndependentTransitions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewProducerMulti() error = %v", err)
 	}
+
 	t.Cleanup(func() { _ = p.Close() })
 
 	rtPrimary := p.targets["primary"]
+
 	rtSecondary := p.targets["secondary"]
 	if rtPrimary == nil || rtSecondary == nil {
 		t.Fatalf("targets not registered")
@@ -198,6 +206,7 @@ func TestCBListener_TwoTargetsIndependentTransitions(t *testing.T) {
 			if got := rtPrimary.state.Load(); got != tc.wantPrimary {
 				t.Errorf("primary state = %d; want %d", got, tc.wantPrimary)
 			}
+
 			if got := rtSecondary.state.Load(); got != tc.wantSecond {
 				t.Errorf("secondary state = %d; want %d", got, tc.wantSecond)
 			}
@@ -238,6 +247,7 @@ func TestCBListener_ForeignServiceNameIgnored(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewProducerMulti() error = %v", err)
 	}
+
 	t.Cleanup(func() { _ = p.Close() })
 
 	rtPrimary := p.targets["primary"]
@@ -254,6 +264,7 @@ func TestCBListener_ForeignServiceNameIgnored(t *testing.T) {
 	if fakeMgr.listenerCount() != 1 {
 		t.Fatalf("listenerCount = %d; want 1", fakeMgr.listenerCount())
 	}
+
 	listener := fakeMgr.listeners[0]
 
 	// Drive with a foreign service name — one that cannot match any of

@@ -38,6 +38,7 @@ func TestEmitMulti_PayloadCap_FiresAssertion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewEventDefinition() error = %v", err)
 	}
+
 	catalog, err := contract.NewCatalog(soleDef)
 	if err != nil {
 		t.Fatalf("NewCatalog() error = %v", err)
@@ -69,6 +70,7 @@ func TestEmitMulti_PayloadCap_FiresAssertion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewProducerMulti() error = %v", err)
 	}
+
 	t.Cleanup(func() { _ = p.Close() })
 
 	req := eventToRequest(sampleEvent())

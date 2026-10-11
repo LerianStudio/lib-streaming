@@ -94,6 +94,7 @@ func TestProducer_EmitPreFlight_PayloadAtExactBoundary(t *testing.T) {
 				if err != nil {
 					t.Errorf("preFlight err = %v; want nil for payload size %d", err, tt.payloadSize)
 				}
+
 				return
 			}
 

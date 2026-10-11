@@ -24,6 +24,7 @@ func newCaptureContractLogger() *captureContractLogger {
 func (c *captureContractLogger) Log(_ context.Context, _ int, msg string, _ ...any) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
 	c.entries = append(c.entries, msg)
 }
 
@@ -33,11 +34,13 @@ func (c *captureContractLogger) Sync(_ context.Context) error { return nil }
 func (c *captureContractLogger) containsMessage(needle string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
 	for _, msg := range c.entries {
 		if strings.Contains(msg, needle) {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -57,6 +60,7 @@ func (c *captureContractLogger) containsMessage(needle string) bool {
 func TestEvent_Topic_FiresNoAssertion(t *testing.T) {
 	cap := newCaptureContractLogger()
 	prev := setContractAsserterLogger(cap)
+
 	t.Cleanup(func() { setContractAsserterLogger(prev) })
 
 	for _, schemaVersion := range []string{"", "1.0.0", "2.3.1", "not-a-version"} {

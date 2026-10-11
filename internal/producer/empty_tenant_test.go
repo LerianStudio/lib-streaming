@@ -38,12 +38,14 @@ func TestProducer_EmitEmptyTenant_DirectPath(t *testing.T) {
 	}
 
 	consumer := newConsumer(t, cluster, "lerian.streaming.test")
+
 	fetchCtx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
 	fetches := consumer.PollFetches(fetchCtx)
 
 	var produced int
+
 	fetches.EachRecord(func(_ *kgo.Record) { produced++ })
 
 	if produced != 1 {

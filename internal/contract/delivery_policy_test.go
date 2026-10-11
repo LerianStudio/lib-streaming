@@ -11,6 +11,7 @@ func TestDeliveryPolicy_DefaultAndNormalize(t *testing.T) {
 	t.Parallel()
 
 	got := (DeliveryPolicy{}).Normalize()
+
 	want := DefaultDeliveryPolicy()
 	if got != want {
 		t.Fatalf("Normalize() = %#v; want %#v", got, want)
@@ -207,6 +208,7 @@ func TestCloneDeliveryPolicyOverrides_DeepCopiesEnabledPointer(t *testing.T) {
 	if dst["foo"].Enabled == nil {
 		t.Fatal("cloneDeliveryPolicyOverrides() Enabled = nil; want non-nil")
 	}
+
 	if !*dst["foo"].Enabled {
 		t.Fatal("cloneDeliveryPolicyOverrides() *Enabled = false; want true before mutation")
 	}
@@ -229,6 +231,7 @@ func TestCloneDeliveryPolicyOverrides_NilAndEmpty(t *testing.T) {
 	if got := cloneDeliveryPolicyOverrides(nil); got != nil {
 		t.Errorf("cloneDeliveryPolicyOverrides(nil) = %v; want nil", got)
 	}
+
 	if got := cloneDeliveryPolicyOverrides(map[string]DeliveryPolicyOverride{}); got != nil {
 		t.Errorf("cloneDeliveryPolicyOverrides(empty map) = %v; want nil (normalized)", got)
 	}

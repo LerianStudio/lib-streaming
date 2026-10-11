@@ -79,6 +79,7 @@ func TestIsCallerError(t *testing.T) {
 	for _, tc := range callerCases {
 		t.Run("caller/"+tc.name, func(t *testing.T) {
 			t.Parallel()
+
 			if !streaming.IsCallerError(tc.err) {
 				t.Errorf("IsCallerError(%v) = false; want true", tc.err)
 			}
@@ -88,6 +89,7 @@ func TestIsCallerError(t *testing.T) {
 	for _, tc := range infraCases {
 		t.Run("infra/"+tc.name, func(t *testing.T) {
 			t.Parallel()
+
 			if streaming.IsCallerError(tc.err) {
 				t.Errorf("IsCallerError(%v) = true; want false", tc.err)
 			}
@@ -133,7 +135,7 @@ func TestEmitError_Unwrap(t *testing.T) {
 		Cause: sentinel,
 	}
 
-	if got := ee.Unwrap(); got != sentinel {
+	if got := ee.Unwrap(); !errors.Is(got, sentinel) {
 		t.Errorf("EmitError.Unwrap() = %v; want %v", got, sentinel)
 	}
 
@@ -153,6 +155,7 @@ func TestEmitError_NilReceiver(t *testing.T) {
 	if got := ee.Error(); got != "<nil>" {
 		t.Errorf("nil.Error() = %q; want \"<nil>\"", got)
 	}
+
 	if got := ee.Unwrap(); got != nil {
 		t.Errorf("nil.Unwrap() = %v; want nil", got)
 	}
@@ -202,12 +205,15 @@ func TestEmitError_AsTarget(t *testing.T) {
 	if target.ResourceType != "account" {
 		t.Errorf("target.ResourceType = %q; want %q", target.ResourceType, "account")
 	}
+
 	if target.EventType != "updated" {
 		t.Errorf("target.EventType = %q; want %q", target.EventType, "updated")
 	}
+
 	if target.TenantID != "t-abc" {
 		t.Errorf("target.TenantID = %q; want %q", target.TenantID, "t-abc")
 	}
+
 	if target.Class != streaming.ClassSerialization {
 		t.Errorf("target.Class = %q; want %q", target.Class, streaming.ClassSerialization)
 	}

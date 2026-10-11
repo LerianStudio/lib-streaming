@@ -20,6 +20,7 @@ func TestCatalog_NewCatalogOrdersDefinitionsDeterministically(t *testing.T) {
 	}
 
 	got := catalog.Definitions()
+
 	wantKeys := []string{"account.created", "transaction.created", "transaction.updated"}
 	if len(got) != len(wantKeys) {
 		t.Fatalf("Definitions() len = %d; want %d", len(got), len(wantKeys))
@@ -48,6 +49,7 @@ func TestCatalog_Lookup(t *testing.T) {
 	if !ok {
 		t.Fatal("Lookup() ok = false; want true")
 	}
+
 	if definition.ResourceType != "transaction" {
 		t.Errorf("Lookup().ResourceType = %q; want transaction", definition.ResourceType)
 	}

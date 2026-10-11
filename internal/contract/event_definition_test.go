@@ -22,12 +22,15 @@ func TestEventDefinition_New_NormalizesDefaults(t *testing.T) {
 	if definition.SchemaVersion != defaultSchemaVersion {
 		t.Errorf("SchemaVersion = %q; want %q", definition.SchemaVersion, defaultSchemaVersion)
 	}
+
 	if definition.DataContentType != defaultDataContentType {
 		t.Errorf("DataContentType = %q; want %q", definition.DataContentType, defaultDataContentType)
 	}
+
 	if definition.DefaultPolicy != DefaultDeliveryPolicy() {
 		t.Errorf("DefaultPolicy = %#v; want %#v", definition.DefaultPolicy, DefaultDeliveryPolicy())
 	}
+
 	if got := definition.EventKey(); got != "transaction.created" {
 		t.Errorf("EventKey() = %q; want %q", got, "transaction.created")
 	}
@@ -115,6 +118,7 @@ func TestEventDefinition_New_RejectsInvalidShape(t *testing.T) {
 			if !errors.Is(err, tt.want) {
 				t.Fatalf("NewEventDefinition() error = %v; want errors.Is(..., %v)", err, tt.want)
 			}
+
 			if !errors.Is(err, ErrInvalidEventDefinition) {
 				t.Fatalf("NewEventDefinition() error = %v; want ErrInvalidEventDefinition", err)
 			}
@@ -187,6 +191,7 @@ func TestEventDefinition_EventKey_SnakeCase(t *testing.T) {
 func TestEventDefinition_New_RejectsMalformedSchemaVersion(t *testing.T) {
 	cap := newCaptureContractLogger()
 	prev := setContractAsserterLogger(cap)
+
 	t.Cleanup(func() { setContractAsserterLogger(prev) })
 
 	_, err := NewEventDefinition(EventDefinition{
@@ -199,6 +204,7 @@ func TestEventDefinition_New_RejectsMalformedSchemaVersion(t *testing.T) {
 	if !errors.Is(err, ErrInvalidEventDefinition) {
 		t.Fatalf("NewEventDefinition() error = %v; want errors.Is(ErrInvalidEventDefinition)", err)
 	}
+
 	if !errors.Is(err, ErrInvalidSchemaVersion) {
 		t.Fatalf("NewEventDefinition() error = %v; want errors.Is(ErrInvalidSchemaVersion)", err)
 	}

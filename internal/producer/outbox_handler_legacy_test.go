@@ -80,9 +80,11 @@ func TestOutboxRelay_LegacyRowLandsOnApplicationTopic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
+
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	p := asProducer(t, emitter)
+
 	registry := outbox.NewHandlerRegistry()
 	if err := p.RegisterOutboxRelay(registry); err != nil {
 		t.Fatalf("RegisterOutboxRelay err = %v", err)
@@ -116,6 +118,7 @@ func TestOutboxRelay_LegacyRowLandsOnApplicationTopic(t *testing.T) {
 	}
 
 	consumer := newConsumer(t, cluster, appTopic)
+
 	fetchCtx, fetchCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer fetchCancel()
 
@@ -178,9 +181,11 @@ func TestOutboxRelay_CurrentRowStillWorks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
+
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	p := asProducer(t, emitter)
+
 	registry := outbox.NewHandlerRegistry()
 	if err := p.RegisterOutboxRelay(registry); err != nil {
 		t.Fatalf("RegisterOutboxRelay err = %v", err)
@@ -214,6 +219,7 @@ func TestOutboxRelay_CurrentRowStillWorks(t *testing.T) {
 	}
 
 	consumer := newConsumer(t, cluster, event.Topic())
+
 	fetchCtx, fetchCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer fetchCancel()
 
@@ -244,9 +250,11 @@ func TestOutboxRelay_UnroutableLegacyRowStaysRetryable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
+
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	p := asProducer(t, emitter)
+
 	registry := outbox.NewHandlerRegistry()
 	if err := p.RegisterOutboxRelay(registry); err != nil {
 		t.Fatalf("RegisterOutboxRelay err = %v", err)
@@ -295,9 +303,11 @@ func TestOutboxRelay_UnknownVersionStillRejected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
+
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	p := asProducer(t, emitter)
+
 	registry := outbox.NewHandlerRegistry()
 	if err := p.RegisterOutboxRelay(registry); err != nil {
 		t.Fatalf("RegisterOutboxRelay err = %v", err)
@@ -347,6 +357,7 @@ func newLegacyRelayRegistry(t *testing.T) *outbox.HandlerRegistry {
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
+
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	registry := outbox.NewHandlerRegistry()
@@ -503,9 +514,11 @@ func TestOutboxRelay_RejectionMetricTargetLabelIsBounded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
+
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	p := asProducer(t, emitter)
+
 	registry := outbox.NewHandlerRegistry()
 	if err := p.RegisterOutboxRelay(registry); err != nil {
 		t.Fatalf("RegisterOutboxRelay err = %v", err)
@@ -572,6 +585,7 @@ func TestOutboxRelay_RejectionMetricKeepsRegisteredTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
+
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	p := asProducer(t, emitter)

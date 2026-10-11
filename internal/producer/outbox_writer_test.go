@@ -37,6 +37,7 @@ func TestOutboxAdapterWritesStableEnvelopeRows(t *testing.T) {
 	if row == nil {
 		t.Fatal("repo.Create was not called")
 	}
+
 	if row.EventType != StreamingOutboxEventType {
 		t.Fatalf("row.EventType = %q; want %q", row.EventType, StreamingOutboxEventType)
 	}
@@ -45,6 +46,7 @@ func TestOutboxAdapterWritesStableEnvelopeRows(t *testing.T) {
 	if err := json.Unmarshal(row.Payload, &got); err != nil {
 		t.Fatalf("json.Unmarshal row.Payload err = %v", err)
 	}
+
 	if got.Destination.Name != event.Topic() {
 		t.Fatalf("envelope.Destination.Name = %q; want %q", got.Destination.Name, event.Topic())
 	}
@@ -65,6 +67,7 @@ func TestOutboxAdapterWriteWithTxUsesRepositoryTransaction(t *testing.T) {
 	if got := repo.createdWithTxCount(); got != 1 {
 		t.Fatalf("createdWithTxCount = %d; want 1", got)
 	}
+
 	if got := repo.createdCount(); got != 0 {
 		t.Fatalf("createdCount = %d; want 0", got)
 	}
@@ -89,6 +92,7 @@ func TestOutboxAdapterRejectsOversizedSerializedEnvelope(t *testing.T) {
 	if err := writer.Write(context.Background(), envelope); !errors.Is(err, ErrPayloadTooLarge) {
 		t.Fatalf("Write err = %v; want ErrPayloadTooLarge", err)
 	}
+
 	if got := repo.createdCount(); got != 0 {
 		t.Fatalf("createdCount = %d; want 0", got)
 	}
@@ -157,7 +161,6 @@ func TestOutboxAdapterWriteBatchWithTxRejectsInvalidWiringAndRows(t *testing.T) 
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -195,6 +198,7 @@ func TestPublishRouteOutbox_GuardsTransactionAndWriteFailures(t *testing.T) {
 
 	capture := &captureRouteOutboxWriter{}
 	p := &Producer{logger: log.NewNop(), outboxWriter: capture}
+
 	wrongTxContext := context.WithValue(context.Background(), txContextKey{}, "not-a-transaction")
 	if err := p.publishRouteOutbox(wrongTxContext, event, "transaction.created", route, policy); !errors.Is(err, ErrOutboxTxUnsupported) {
 		t.Fatalf("wrong transaction publishRouteOutbox() error = %v; want ErrOutboxTxUnsupported", err)
@@ -209,12 +213,14 @@ func TestPublishRouteOutbox_GuardsTransactionAndWriteFailures(t *testing.T) {
 	}
 
 	writeFailure := errors.New("write failed")
+
 	failing := &Producer{logger: log.NewNop(), outboxWriter: &failingRouteOutboxWriter{err: writeFailure}}
 	if err := failing.publishRouteOutbox(nil, event, "transaction.created", route, policy); !errors.Is(err, writeFailure) {
 		t.Fatalf("failed write publishRouteOutbox() error = %v; want repository failure", err)
 	}
 
 	invalidRoute := route
+
 	invalidRoute.Key = ""
 	if err := p.publishRouteOutbox(context.Background(), event, "transaction.created", invalidRoute, policy); !errors.Is(err, contract.ErrInvalidOutboxEnvelope) {
 		t.Fatalf("invalid envelope publishRouteOutbox() error = %v; want ErrInvalidOutboxEnvelope", err)

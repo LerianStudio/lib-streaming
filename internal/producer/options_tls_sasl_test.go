@@ -58,21 +58,26 @@ func TestWithTLSConfig_StoresOption(t *testing.T) {
 	if opts.tlsConfig == nil {
 		t.Fatal("WithTLSConfig did not set opts.tlsConfig")
 	}
+
 	if opts.tlsConfig == tlsCfg {
 		t.Error("WithTLSConfig stored caller-owned pointer; want cloned config")
 	}
+
 	if opts.tlsConfig.ServerName != "tls-plumbing-test" {
 		t.Errorf("ServerName = %q; want tls-plumbing-test", opts.tlsConfig.ServerName)
 	}
+
 	if opts.tlsConfig.MinVersion != tls.VersionTLS12 {
 		t.Errorf("MinVersion = %x; want TLS 1.2 default", opts.tlsConfig.MinVersion)
 	}
 
 	tlsCfg.ServerName = "mutated-after-option"
 	tlsCfg.MinVersion = tls.VersionTLS10
+
 	if opts.tlsConfig.ServerName != "tls-plumbing-test" {
 		t.Errorf("stored ServerName mutated to %q; want tls-plumbing-test", opts.tlsConfig.ServerName)
 	}
+
 	if opts.tlsConfig.MinVersion != tls.VersionTLS12 {
 		t.Errorf("stored MinVersion mutated to %x; want TLS 1.2", opts.tlsConfig.MinVersion)
 	}
@@ -107,6 +112,7 @@ func TestWithSASL_StoresOption(t *testing.T) {
 	if opts.saslMechanism == nil {
 		t.Fatal("WithSASL did not set opts.saslMechanism")
 	}
+
 	if got := opts.saslMechanism.Name(); got != "PLAIN" {
 		t.Errorf("mechanism Name = %q; want PLAIN", got)
 	}
@@ -129,6 +135,7 @@ func TestWithSASL_TypedNilPassesThrough(t *testing.T) {
 	t.Parallel()
 
 	var mech *typedNilSASLMechanism
+
 	opts := &emitterOptions{}
 	WithSASL(mech)(opts)
 
@@ -152,16 +159,19 @@ func TestBuildKgoOpts_WithTypedNilSASL_TreatsAsNoSASL(t *testing.T) {
 	t.Parallel()
 
 	cfg := validT8Config()
+
 	baseline, err := buildKgoOpts(cfg, emitterOptions{})
 	if err != nil {
 		t.Fatalf("buildKgoOpts(baseline) error = %v", err)
 	}
 
 	var mech *typedNilSASLMechanism
+
 	got, err := buildKgoOpts(cfg, emitterOptions{saslMechanism: mech})
 	if err != nil {
 		t.Fatalf("buildKgoOpts(typed nil SASL) error = %v; want nil", err)
 	}
+
 	if len(got) != len(baseline) {
 		t.Errorf("typed nil SASL opts = %d; baseline = %d; want equal", len(got), len(baseline))
 	}
@@ -215,7 +225,6 @@ func TestBuildKgoOpts_WithTLS10OrTLS11_RejectsTLSConfig(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -402,6 +411,7 @@ func TestWithTLSConfig_DeepClonesCipherSuites(t *testing.T) {
 	if opts.tlsConfig == nil {
 		t.Fatal("WithTLSConfig did not store config")
 	}
+
 	if len(opts.tlsConfig.CipherSuites) != 1 || opts.tlsConfig.CipherSuites[0] != approved {
 		t.Fatalf("stored CipherSuites = %#x; want [%#x]", opts.tlsConfig.CipherSuites, approved)
 	}
@@ -497,7 +507,6 @@ func TestBuildKgoOpts_WithApprovedTLS12CipherSuite_AcceptsAndPreservesSuite(t *t
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -519,6 +528,7 @@ func TestBuildKgoOpts_WithApprovedTLS12CipherSuite_AcceptsAndPreservesSuite(t *t
 			if opts.tlsConfig == nil {
 				t.Fatal("WithTLSConfig did not store config")
 			}
+
 			if got := opts.tlsConfig.CipherSuites; len(got) != 1 || got[0] != tt.suite {
 				t.Errorf("stored CipherSuites = %#x; want [%#x]", got, tt.suite)
 			}
@@ -562,7 +572,6 @@ func TestBuildKgoOpts_TLSVersionRange_ValidMaxVersions_Accepted(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 

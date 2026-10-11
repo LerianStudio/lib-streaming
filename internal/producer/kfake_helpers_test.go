@@ -113,6 +113,7 @@ func injectProduceError(cluster *kfake.Cluster, sourceTopic string, errCode int1
 		topicNames := resolveRequestTopicNames(cluster, produceReq)
 
 		matched := false
+
 		for _, name := range topicNames {
 			if name == sourceTopic {
 				matched = true

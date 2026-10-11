@@ -120,6 +120,7 @@ func BenchmarkEmit_HappyPath(b *testing.B) {
 	if err != nil {
 		b.Fatalf("NewProducer err = %v", err)
 	}
+
 	b.Cleanup(func() { _ = p.Close() })
 
 	ctx := context.Background()
@@ -148,6 +149,7 @@ func BenchmarkEmit_CircuitOpenOutbox(b *testing.B) {
 	if err != nil {
 		b.Fatalf("NewProducer err = %v", err)
 	}
+
 	b.Cleanup(func() { _ = p.Close() })
 
 	// Force the primary target's CB mirror OPEN so every Emit takes the
@@ -180,6 +182,7 @@ func BenchmarkEmit_DLQRoute(b *testing.B) {
 	if err != nil {
 		b.Fatalf("NewProducer err = %v", err)
 	}
+
 	b.Cleanup(func() { _ = p.Close() })
 
 	ctx := context.Background()
@@ -224,6 +227,7 @@ func BenchmarkClassifyError(b *testing.B) {
 func BenchmarkSanitizeBrokerURL(b *testing.B) {
 	b.Run("with_credentials", func(b *testing.B) {
 		b.ReportAllocs()
+
 		s := "dial sasl://admin:hunter2@broker.example.com:9092 failed: connection refused"
 		for b.Loop() {
 			_ = sanitizeBrokerURL(s)
@@ -232,6 +236,7 @@ func BenchmarkSanitizeBrokerURL(b *testing.B) {
 
 	b.Run("no_credentials", func(b *testing.B) {
 		b.ReportAllocs()
+
 		s := "ordinary error with no credentials and no URL shape"
 		for b.Loop() {
 			_ = sanitizeBrokerURL(s)
@@ -326,6 +331,7 @@ func BenchmarkPreFlight(b *testing.B) {
 func BenchmarkEvent_Topic(b *testing.B) {
 	b.Run("v1_default", func(b *testing.B) {
 		b.ReportAllocs()
+
 		event := Event{
 			ResourceType:  "transaction",
 			EventType:     "created",
@@ -338,6 +344,7 @@ func BenchmarkEvent_Topic(b *testing.B) {
 
 	b.Run("v2_semver", func(b *testing.B) {
 		b.ReportAllocs()
+
 		event := Event{
 			ResourceType:  "transaction",
 			EventType:     "created",
@@ -350,6 +357,7 @@ func BenchmarkEvent_Topic(b *testing.B) {
 
 	b.Run("empty_version", func(b *testing.B) {
 		b.ReportAllocs()
+
 		event := Event{
 			ResourceType: "transaction",
 			EventType:    "created",
@@ -446,7 +454,7 @@ func multiTargetFanoutSetup(tb testing.TB, routeCount int) (*Producer, EmitReque
 	cat := multiTargetFanoutCatalog(tb)
 
 	specs := make([]TargetSpec, 0, routeCount)
-	for i := 0; i < routeCount; i++ {
+	for i := range routeCount {
 		specs = append(specs, TargetSpec{
 			Name:    fmt.Sprintf("target-%d", i),
 			Kind:    TransportKafkaLike,
@@ -455,7 +463,7 @@ func multiTargetFanoutSetup(tb testing.TB, routeCount int) (*Producer, EmitReque
 	}
 
 	defs := make([]contract.RouteDefinition, 0, routeCount)
-	for i := 0; i < routeCount; i++ {
+	for i := range routeCount {
 		defs = append(defs, contract.RouteDefinition{
 			Key:           fmt.Sprintf("fanout.event.kafka.target-%d", i),
 			DefinitionKey: "fanout.event",

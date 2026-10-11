@@ -18,6 +18,7 @@ import (
 func TestNewCatalog_DuplicateKey_StillReturnsSentinel(t *testing.T) {
 	cap := newCaptureContractLogger()
 	prev := setContractAsserterLogger(cap)
+
 	t.Cleanup(func() { setContractAsserterLogger(prev) })
 
 	defA, err := NewEventDefinition(EventDefinition{
@@ -57,6 +58,7 @@ func TestNewCatalog_DuplicateKey_StillReturnsSentinel(t *testing.T) {
 func TestNewCatalog_DuplicateContractTuple_StillReturnsSentinel(t *testing.T) {
 	cap := newCaptureContractLogger()
 	prev := setContractAsserterLogger(cap)
+
 	t.Cleanup(func() { setContractAsserterLogger(prev) })
 
 	defA, err := NewEventDefinition(EventDefinition{
@@ -67,6 +69,7 @@ func TestNewCatalog_DuplicateContractTuple_StillReturnsSentinel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewEventDefinition(A) error = %v", err)
 	}
+
 	defB, err := NewEventDefinition(EventDefinition{
 		Key:          "transaction.created.b", // distinct Key
 		ResourceType: "transaction",           // same contract tuple
@@ -92,6 +95,7 @@ func TestNewCatalog_DuplicateContractTuple_StillReturnsSentinel(t *testing.T) {
 func TestNewRouteTable_DuplicateKey_StillReturnsSentinel(t *testing.T) {
 	cap := newCaptureContractLogger()
 	prev := setContractAsserterLogger(cap)
+
 	t.Cleanup(func() { setContractAsserterLogger(prev) })
 
 	dup := RouteDefinition{
@@ -143,10 +147,10 @@ func TestNewEventDefinition_MissingFields_StillReturnsSentinel(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			cap := newCaptureContractLogger()
 			prev := setContractAsserterLogger(cap)
+
 			t.Cleanup(func() { setContractAsserterLogger(prev) })
 
 			_, err := NewEventDefinition(tc.def)

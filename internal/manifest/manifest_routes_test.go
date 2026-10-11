@@ -109,21 +109,27 @@ func TestBuildManifest_KafkaRoute(t *testing.T) {
 	if r.Key != "transaction.created.kafka.primary" {
 		t.Errorf("Key = %q; want transaction.created.kafka.primary", r.Key)
 	}
+
 	if r.DefinitionKey != "transaction.created" {
 		t.Errorf("DefinitionKey = %q; want transaction.created", r.DefinitionKey)
 	}
+
 	if r.Target != "primary" {
 		t.Errorf("Target = %q; want primary", r.Target)
 	}
+
 	if r.Transport != contract.TransportKafkaLike {
 		t.Errorf("Transport = %q; want kafka", r.Transport)
 	}
+
 	if r.Destination != "lerian.streaming.transaction.created" {
 		t.Errorf("Destination = %q; want lerian.streaming.transaction.created", r.Destination)
 	}
+
 	if !r.Required {
 		t.Errorf("Required = false; want true (default requirement)")
 	}
+
 	if r.DLQConfigured {
 		t.Errorf("DLQConfigured = true; want false (no route-level DLQ)")
 	}
@@ -132,6 +138,7 @@ func TestBuildManifest_KafkaRoute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Marshal() error = %v", err)
 	}
+
 	if !strings.Contains(string(body), "\"routes\"") {
 		t.Errorf("routed manifest JSON missing \"routes\" key: %s", string(body))
 	}
@@ -141,6 +148,7 @@ func TestBuildManifest_AllTransportsRendered(t *testing.T) {
 	t.Parallel()
 
 	def := definitionFixture(t)
+
 	def2, err := contract.NewEventDefinition(contract.EventDefinition{
 		Key:           "ledger.posted",
 		ResourceType:  "ledger",
@@ -228,12 +236,15 @@ func TestBuildManifest_AllTransportsRendered(t *testing.T) {
 		if got.Transport != tc.wantTransport {
 			t.Errorf("%s Transport = %q; want %q", tc.key, got.Transport, tc.wantTransport)
 		}
+
 		if got.Destination != tc.wantDestination {
 			t.Errorf("%s Destination = %q; want %q", tc.key, got.Destination, tc.wantDestination)
 		}
+
 		if got.Required != tc.wantRequired {
 			t.Errorf("%s Required = %v; want %v", tc.key, got.Required, tc.wantRequired)
 		}
+
 		if got.DLQConfigured != tc.wantDLQ {
 			t.Errorf("%s DLQConfigured = %v; want %v", tc.key, got.DLQConfigured, tc.wantDLQ)
 		}
@@ -244,6 +255,7 @@ func TestBuildManifest_OrderingDeterministic(t *testing.T) {
 	t.Parallel()
 
 	def := definitionFixture(t)
+
 	cat, err := contract.NewCatalog(def)
 	if err != nil {
 		t.Fatalf("NewCatalog() error = %v", err)
@@ -271,6 +283,7 @@ func TestBuildManifest_OrderingDeterministic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildManifest() error = %v", err)
 	}
+
 	doc2, err := BuildManifest(descriptorFixture(), cat, routes)
 	if err != nil {
 		t.Fatalf("BuildManifest() error = %v", err)

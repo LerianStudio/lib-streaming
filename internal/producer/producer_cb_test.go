@@ -55,6 +55,7 @@ func (f *fakeCB) executeCalls() int64 {
 func (f *fakeCB) State() circuitbreaker.State {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+
 	return f.state
 }
 
@@ -126,6 +127,7 @@ func (f *fakeCBManager) GetOrCreate(name string, _ circuitbreaker.Config) (circu
 
 	b := &fakeCB{state: circuitbreaker.StateClosed}
 	f.breakers[name] = b
+
 	return b, nil
 }
 
@@ -133,6 +135,7 @@ func (f *fakeCBManager) Execute(name string, fn func() (any, error)) (any, error
 	f.mu.Lock()
 	breaker, ok := f.breakers[name]
 	f.mu.Unlock()
+
 	if !ok {
 		return nil, errors.New("fakeCBManager.Execute breaker not found")
 	}
@@ -156,11 +159,14 @@ func (f *fakeCBManager) GetState(name string) circuitbreaker.State {
 	f.mu.Lock()
 	b, ok := f.breakers[name]
 	f.mu.Unlock()
+
 	if !ok {
 		return circuitbreaker.StateUnknown
 	}
+
 	b.mu.Lock()
 	defer b.mu.Unlock()
+
 	return b.state
 }
 
@@ -176,6 +182,7 @@ func (f *fakeCBManager) Reset(name string) {
 	f.mu.Lock()
 	b, ok := f.breakers[name]
 	f.mu.Unlock()
+
 	if ok {
 		b.mu.Lock()
 		b.state = circuitbreaker.StateClosed
@@ -187,8 +194,10 @@ func (f *fakeCBManager) RegisterStateChangeListener(listener circuitbreaker.Stat
 	if listener == nil {
 		return
 	}
+
 	f.mu.Lock()
 	defer f.mu.Unlock()
+
 	f.listeners = append(f.listeners, listener)
 }
 
@@ -225,6 +234,7 @@ func (f *fakeCBManager) ForceTransition(name string, to circuitbreaker.State) {
 func (f *fakeCBManager) listenerCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+
 	return len(f.listeners)
 }
 
@@ -270,6 +280,7 @@ func TestProducer_Emit_CircuitClosed_PublishesToBroker(t *testing.T) {
 	fetches := consumer.PollFetches(fetchCtx)
 
 	var gotRec *kgo.Record
+
 	fetches.EachRecord(func(r *kgo.Record) {
 		if gotRec == nil {
 			gotRec = r
@@ -329,6 +340,7 @@ func TestProducer_Emit_CircuitOpen_ReturnsErrCircuitOpen(t *testing.T) {
 	fetches := consumer.PollFetches(fetchCtx)
 
 	var count int
+
 	fetches.EachRecord(func(_ *kgo.Record) { count++ })
 
 	if count != 0 {
@@ -419,6 +431,7 @@ func TestProducer_CBStateListener_IgnoresOtherServices(t *testing.T) {
 
 	// And flipping OUR service still works.
 	fakeMgr.ForceTransition(p.targets["primary"].cbServiceName, circuitbreaker.StateOpen)
+
 	if got := p.targetState("primary"); got != flagCBOpen {
 		t.Errorf("primary target state after own OPEN = %d; want %d", got, flagCBOpen)
 	}
@@ -549,9 +562,12 @@ func TestProducer_CBListener_SubMillisecond(t *testing.T) {
 	)
 
 	under := 0
-	for i := 0; i < samples; i++ {
+
+	for range samples {
 		start := time.Now()
+
 		listener.OnStateChange(context.Background(), primaryService, circuitbreaker.StateClosed, circuitbreaker.StateOpen)
+
 		if time.Since(start) < threshold {
 			under++
 		}
@@ -587,7 +603,7 @@ func TestProducer_PreFlight_DoesNotFeedCB(t *testing.T) {
 
 	// Emit far more than CBMinRequests (10) of the bad event — if pre-flight
 	// fed the breaker, a ratio > 0.5 would trip it OPEN.
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		err := emitter.Emit(context.Background(), bad)
 		if !errors.Is(err, ErrNotJSON) {
 			t.Fatalf("iter %d Emit err = %v; want ErrNotJSON", i, err)
@@ -659,10 +675,12 @@ func TestProducer_WithoutCallerManager_BuildsOwnManager(t *testing.T) {
 
 	// Primary target's CB service name follows the canonical pattern.
 	wantPrimaryName := targetCBServiceName(p.producerID, "primary")
+
 	rt, ok := p.targets["primary"]
 	if !ok || rt == nil {
 		t.Fatal("primary target not registered")
 	}
+
 	if rt.cbServiceName != wantPrimaryName {
 		t.Errorf("primary cbServiceName = %q; want %q", rt.cbServiceName, wantPrimaryName)
 	}
@@ -718,7 +736,7 @@ func TestProducer_Emit_CB_RaceWithListener(t *testing.T) {
 			circuitbreaker.StateClosed,
 		}
 
-		for i := 0; i < stateTransitions; i++ {
+		for i := range stateTransitions {
 			select {
 			case <-stopTransitions:
 				return
@@ -733,17 +751,19 @@ func TestProducer_Emit_CB_RaceWithListener(t *testing.T) {
 	// or ErrCircuitOpen (OPEN) or nil via HALF-OPEN — all acceptable. The
 	// assertion is the absence of race/panic.
 	var emitCount atomic.Int64
+
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	for i := 0; i < emitGoroutines; i++ {
+	for range emitGoroutines {
 		go func() {
 			defer wg.Done()
 
 			// Each goroutine issues a handful of emits; we don't care about
 			// the return value beyond "no panic".
-			for j := 0; j < 5; j++ {
+			for range 5 {
 				_ = emitter.Emit(ctx, sampleRequest())
+
 				emitCount.Add(1)
 			}
 		}()

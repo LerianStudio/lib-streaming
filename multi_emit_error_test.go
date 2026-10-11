@@ -17,9 +17,11 @@ func TestMultiEmitError_NilSafeError(t *testing.T) {
 	if got := err.Error(); got != "<nil>" {
 		t.Fatalf("MultiEmitError(nil).Error() = %q; want <nil>", got)
 	}
+
 	if got := err.Unwrap(); got != nil {
 		t.Fatalf("MultiEmitError(nil).Unwrap() = %v; want nil", got)
 	}
+
 	if err.HasRequiredFailures() {
 		t.Fatal("MultiEmitError(nil).HasRequiredFailures() = true; want false")
 	}
@@ -32,6 +34,7 @@ func TestRouteError_NilSafeError(t *testing.T) {
 	if got := err.Error(); got != "<nil>" {
 		t.Fatalf("RouteError(nil).Error() = %q; want <nil>", got)
 	}
+
 	if got := err.Unwrap(); got != nil {
 		t.Fatalf("RouteError(nil).Unwrap() = %v; want nil", got)
 	}
@@ -55,12 +58,14 @@ func TestMultiEmitError_UnwrapJoinsRequiredCauses(t *testing.T) {
 	if !errors.Is(multi, cause1) {
 		t.Fatal("errors.Is(multi, cause1) = false; want true")
 	}
+
 	if !errors.Is(multi, cause2) {
 		t.Fatal("errors.Is(multi, cause2) = false; want true")
 	}
 
 	// Optional-only causes must NOT be reachable through Unwrap.
 	optionalCause := errors.New("optional cause")
+
 	multiOpt := &streaming.MultiEmitError{
 		DefinitionKey: "transaction.created",
 		Optional: []streaming.RouteError{
@@ -86,6 +91,7 @@ func TestMultiEmitError_ErrorIsDeterministicAndSanitized(t *testing.T) {
 	// is the metrics + span layer (see emit_multi.go:584-591), not
 	// the aggregate error string.
 	const optionalLeakMarker = "OPTIONAL-CAUSE-MARKER-DO-NOT-LEAK-c0ffee42"
+
 	optionalCause := errors.New(optionalLeakMarker + ": optional broker timed out")
 
 	multi := &streaming.MultiEmitError{
@@ -101,6 +107,7 @@ func TestMultiEmitError_ErrorIsDeterministicAndSanitized(t *testing.T) {
 	}
 
 	first := multi.Error()
+
 	second := multi.Error()
 	if first != second {
 		t.Fatalf("Error() not deterministic:\nfirst  = %q\nsecond = %q", first, second)
@@ -109,6 +116,7 @@ func TestMultiEmitError_ErrorIsDeterministicAndSanitized(t *testing.T) {
 	if strings.Contains(first, "topsecret") {
 		t.Fatalf("Error() leaked credentials: %q", first)
 	}
+
 	if strings.Contains(first, "tenant-99") {
 		t.Fatalf("Error() leaked tenant id: %q", first)
 	}
@@ -120,6 +128,7 @@ func TestMultiEmitError_ErrorIsDeterministicAndSanitized(t *testing.T) {
 	if strings.Contains(first, optionalLeakMarker) {
 		t.Fatalf("Error() leaked Optional-route cause: marker %q present in %q", optionalLeakMarker, first)
 	}
+
 	if strings.Contains(first, "ro.kafka.shadow") {
 		t.Fatalf("Error() leaked Optional-route key: %q", first)
 	}
@@ -194,6 +203,7 @@ func TestIsCallerError_NilAndPlainErrors(t *testing.T) {
 	if !streaming.IsCallerError(streaming.ErrInvalidTenantID) {
 		t.Fatal("IsCallerError(ErrInvalidTenantID) = false; want true")
 	}
+
 	if streaming.IsCallerError(streaming.ErrCircuitOpen) {
 		t.Fatal("IsCallerError(ErrCircuitOpen) = true; want false")
 	}

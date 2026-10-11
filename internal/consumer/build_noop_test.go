@@ -272,6 +272,7 @@ func TestConsumerOptions(t *testing.T) {
 	t.Parallel()
 
 	var sawCodec bool
+
 	codec := func([]kgo.RecordHeader) (contract.Event, error) {
 		sawCodec = true
 		return contract.Event{}, nil

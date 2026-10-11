@@ -87,6 +87,7 @@ func TestProducer_EmitPreFlight_SystemEventWithOpt_Accepted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
+
 	t.Cleanup(func() { _ = systemEmitter.Close() })
 
 	event := EmitRequest{DefinitionKey: "transaction.created", Payload: json.RawMessage(`{}`)}
@@ -314,7 +315,6 @@ func TestIsCallerError_HeaderSentinels(t *testing.T) {
 	}
 
 	for _, s := range sentinels {
-		s := s
 		t.Run(s.Error(), func(t *testing.T) {
 			t.Parallel()
 
@@ -473,6 +473,7 @@ func TestProducer_Emit_CircuitOpen_OutboxFailure_MetricsOutboxFailed(t *testing.
 	_, attrSets := sumInt64DataPoints(t, m)
 
 	var found bool
+
 	for _, attrs := range attrSets {
 		if attrs["outcome"] == outcomeOutboxFailed && attrs["topic"] == topic {
 			found = true

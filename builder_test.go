@@ -38,6 +38,7 @@ func TestBuilder_OptionsThreadPartitionKeyToProducer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
+
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -63,6 +64,7 @@ func TestBuilder_OptionsThreadPartitionKeyToProducer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("consumer init error = %v", err)
 	}
+
 	t.Cleanup(consumer.Close)
 
 	fetchCtx, fetchCancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -74,14 +76,17 @@ func TestBuilder_OptionsThreadPartitionKeyToProducer(t *testing.T) {
 	}
 
 	var got *kgo.Record
+
 	fetches.EachRecord(func(record *kgo.Record) {
 		if got == nil {
 			got = record
 		}
 	})
+
 	if got == nil {
 		t.Fatal("no record fetched")
 	}
+
 	if string(got.Key) != fixedKey {
 		t.Fatalf("record key = %q; want %q", got.Key, fixedKey)
 	}
@@ -103,9 +108,11 @@ func TestBuilder_DedicatedOptionMethodsBuildWithoutValidationFailure(t *testing.
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
+
 	if emitter == nil {
 		t.Fatal("Build() emitter = nil; want emitter")
 	}
+
 	if err := emitter.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
@@ -167,6 +174,7 @@ func TestBuilder_CloseTimeoutPreservesFluentCallOrder(t *testing.T) {
 	customKind := streaming.TransportCustom
 	makeBuilder := func() *streaming.Builder {
 		catalog := builderCatalog(t)
+
 		return streaming.NewBuilder().
 			Source("svc-close-timeout-test").
 			Catalog(catalog).
@@ -213,7 +221,6 @@ func TestBuilder_CloseTimeoutPreservesFluentCallOrder(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -223,6 +230,7 @@ func TestBuilder_CloseTimeoutPreservesFluentCallOrder(t *testing.T) {
 			}
 
 			start := time.Now()
+
 			if closeErr := emitter.Close(); closeErr != nil {
 				// Close MAY return a context-cancelled-style error from
 				// the blocking adapter; that is the documented behavior
@@ -230,12 +238,14 @@ func TestBuilder_CloseTimeoutPreservesFluentCallOrder(t *testing.T) {
 				// the wall-clock window here.
 				t.Logf("Close() returned (expected) err = %v", closeErr)
 			}
+
 			elapsed := time.Since(start)
 
 			// Observable: Close completes within (resolved timeout +
 			// tolerance) and not significantly faster than the resolved
 			// timeout (which would indicate Close didn't actually wait).
 			lower := tt.want - 2*time.Millisecond
+
 			upper := tt.want + tolerance
 			if elapsed < lower || elapsed > upper {
 				t.Errorf("Close() elapsed = %v; want in [%v, %v] (resolved timeout = %v)", elapsed, lower, upper, tt.want)
@@ -248,6 +258,7 @@ func TestBuilder_BuildNilBuilder(t *testing.T) {
 	t.Parallel()
 
 	var builder *streaming.Builder
+
 	_, err := builder.Build(context.Background())
 	if !errors.Is(err, streaming.ErrInvalidRouteDefinition) {
 		t.Fatalf("Build() error = %v; want streaming.ErrInvalidRouteDefinition", err)
@@ -283,9 +294,11 @@ func TestBuilder_SASLWithAllowPlaintextSASLSucceeds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build() error = %v; want nil", err)
 	}
+
 	if emitter == nil {
 		t.Fatal("Build() emitter = nil; want emitter")
 	}
+
 	if err := emitter.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
@@ -417,6 +430,7 @@ func builderKfakeTarget(t *testing.T) (streaming.TargetConfig, *kfake.Cluster) {
 	if err != nil {
 		t.Fatalf("kfake.NewCluster() error = %v", err)
 	}
+
 	t.Cleanup(cluster.Close)
 
 	target := builderKafkaTarget()

@@ -73,7 +73,6 @@ func TestAdapter_NilReceiverReturnsSentinel(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -101,12 +100,14 @@ func TestAdapter_PublishRejectsInvalidDestinationShape(t *testing.T) {
 	if err != nil {
 		t.Fatalf("kfake.NewCluster() error = %v", err)
 	}
+
 	t.Cleanup(cluster.Close)
 
 	client, err := kgo.NewClient(kgo.SeedBrokers(cluster.ListenAddrs()...))
 	if err != nil {
 		t.Fatalf("kgo.NewClient() error = %v", err)
 	}
+
 	t.Cleanup(client.Close)
 
 	adapter, err := NewAdapterFromClient(client)
@@ -137,7 +138,6 @@ func TestAdapter_PublishRejectsInvalidDestinationShape(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -159,18 +159,21 @@ func TestAdapter_PublishMapsMessageToKafkaRecord(t *testing.T) {
 	if err != nil {
 		t.Fatalf("kfake.NewCluster() error = %v", err)
 	}
+
 	t.Cleanup(cluster.Close)
 
 	client, err := kgo.NewClient(kgo.SeedBrokers(cluster.ListenAddrs()...))
 	if err != nil {
 		t.Fatalf("kgo.NewClient() error = %v", err)
 	}
+
 	t.Cleanup(client.Close)
 
 	adapter, err := NewAdapterFromClient(client)
 	if err != nil {
 		t.Fatalf("NewAdapterFromClient() error = %v", err)
 	}
+
 	message := transport.TransportMessage{
 		Destination: contract.Destination{Kind: contract.TransportKafkaLike, Name: "adapter.topic"},
 		Key:         "record-key",
@@ -183,6 +186,7 @@ func TestAdapter_PublishMapsMessageToKafkaRecord(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+
 	if err := adapter.Publish(ctx, message); err != nil {
 		t.Fatalf("Publish() error = %v", err)
 	}
@@ -197,33 +201,41 @@ func TestAdapter_PublishMapsMessageToKafkaRecord(t *testing.T) {
 	if err != nil {
 		t.Fatalf("consumer init error = %v", err)
 	}
+
 	t.Cleanup(consumer.Close)
 
 	fetchCtx, fetchCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer fetchCancel()
+
 	fetches := consumer.PollFetches(fetchCtx)
 	if err := fetches.Err(); err != nil {
 		t.Fatalf("PollFetches() error = %v", err)
 	}
 
 	var got *kgo.Record
+
 	fetches.EachRecord(func(record *kgo.Record) {
 		if got == nil {
 			got = record
 		}
 	})
+
 	if got == nil {
 		t.Fatal("no record fetched")
 	}
+
 	if got.Topic != "adapter.topic" {
 		t.Fatalf("record topic = %q; want adapter.topic", got.Topic)
 	}
+
 	if string(got.Key) != "record-key" {
 		t.Fatalf("record key = %q; want record-key", got.Key)
 	}
+
 	if string(got.Value) != string(message.Payload) {
 		t.Fatalf("record value = %q; want %q", got.Value, message.Payload)
 	}
+
 	if len(got.Headers) != 2 || got.Headers[0].Key != "h1" || string(got.Headers[0].Value) != "v1" || got.Headers[1].Key != "h2" || string(got.Headers[1].Value) != "v2" {
 		t.Fatalf("record headers = %#v; want h1/h2", got.Headers)
 	}
@@ -236,12 +248,14 @@ func TestAdapter_PublishHonorsCanceledContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("kfake.NewCluster() error = %v", err)
 	}
+
 	t.Cleanup(cluster.Close)
 
 	client, err := kgo.NewClient(kgo.SeedBrokers(cluster.ListenAddrs()...))
 	if err != nil {
 		t.Fatalf("kgo.NewClient() error = %v", err)
 	}
+
 	t.Cleanup(client.Close)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -287,7 +301,6 @@ func TestAdapter_Classify(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 

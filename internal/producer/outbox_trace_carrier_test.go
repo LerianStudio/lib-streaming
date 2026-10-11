@@ -23,6 +23,7 @@ import (
 
 func TestProducer_EmitBatch_CapturesBoundedTraceCarrierAndRelayContinuesOriginTrace(t *testing.T) {
 	previous := otel.GetTextMapPropagator()
+
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
 		propagation.TraceContext{},
 		propagation.Baggage{},
@@ -44,6 +45,7 @@ func TestProducer_EmitBatch_CapturesBoundedTraceCarrierAndRelayContinuesOriginTr
 	if err != nil {
 		t.Fatalf("baggage.NewMember() error = %v", err)
 	}
+
 	bag, err := baggage.New(member)
 	if err != nil {
 		t.Fatalf("baggage.New() error = %v", err)
@@ -52,12 +54,14 @@ func TestProducer_EmitBatch_CapturesBoundedTraceCarrierAndRelayContinuesOriginTr
 	originCtx := baggage.ContextWithBaggage(trace.ContextWithSpanContext(context.Background(), origin), bag)
 	repo := &fakeOutboxRepo{}
 	adapter := fake.NewAdapter(TransportKafkaLike)
+
 	catalog, err := NewCatalog(EventDefinition{
 		Key: "transaction.created", ResourceType: "transaction", EventType: "created",
 	})
 	if err != nil {
 		t.Fatalf("NewCatalog() error = %v", err)
 	}
+
 	routes, err := contract.NewRouteTable(multiTestRoute(
 		"transaction.created.kafka.primary",
 		"transaction.created",
@@ -83,6 +87,7 @@ func TestProducer_EmitBatch_CapturesBoundedTraceCarrierAndRelayContinuesOriginTr
 	if err != nil {
 		t.Fatalf("NewProducerMulti() error = %v", err)
 	}
+
 	t.Cleanup(func() { _ = p.Close() })
 
 	err = p.EmitBatch(WithOutboxTx(originCtx, &sql.Tx{}), []EmitRequest{{
@@ -107,26 +112,33 @@ func TestProducer_EmitBatch_CapturesBoundedTraceCarrierAndRelayContinuesOriginTr
 	if got := len(envelope.TraceCarrier); got != 2 {
 		t.Fatalf("TraceCarrier entries = %d; want 2: %#v", got, envelope.TraceCarrier)
 	}
+
 	if got, want := envelope.TraceCarrier[TraceParentHeader], "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"; got != want {
 		t.Fatalf("traceparent = %q; want %q", got, want)
 	}
+
 	if got, want := envelope.TraceCarrier[TraceStateHeader], "vendor=value"; got != want {
 		t.Fatalf("tracestate = %q; want %q", got, want)
 	}
+
 	if strings.Contains(string(rows[0].Payload), "baggage") || strings.Contains(string(rows[0].Payload), "secret@example.com") {
 		t.Fatalf("persisted wire contains baggage/PII: %s", rows[0].Payload)
 	}
 
 	dispatcherCtx := trace.ContextWithSpanContext(context.Background(), dispatcher)
+
 	adapter.SetPublishError(errors.New("broker unavailable"))
+
 	if err := p.handleOutboxRow(dispatcherCtx, rows[0]); err == nil {
 		t.Fatal("first handleOutboxRow() error = nil; want redelivery-triggering failure")
 	}
+
 	if got := len(adapter.Messages()); got != 0 {
 		t.Fatalf("messages after failed delivery = %d; want 0", got)
 	}
 
 	adapter.SetPublishError(nil)
+
 	if err := p.handleOutboxRow(dispatcherCtx, rows[0]); err != nil {
 		t.Fatalf("redelivered handleOutboxRow() error = %v", err)
 	}
@@ -135,13 +147,16 @@ func TestProducer_EmitBatch_CapturesBoundedTraceCarrierAndRelayContinuesOriginTr
 	if len(messages) != 1 {
 		t.Fatalf("relayed messages = %d; want 1", len(messages))
 	}
+
 	headerValues := make(map[string]string, len(messages[0].Headers))
 	for _, header := range messages[0].Headers {
 		headerValues[header.Key] = string(header.Value)
 	}
+
 	if got, want := headerValues[TraceParentHeader], envelope.TraceCarrier[TraceParentHeader]; got != want {
 		t.Fatalf("relayed traceparent = %q; want origin %q", got, want)
 	}
+
 	if got := headerValues[TraceParentHeader]; strings.Contains(got, dispatcher.SpanID().String()) {
 		t.Fatalf("relayed traceparent continued dispatcher span: %q", got)
 	}
@@ -203,6 +218,7 @@ func TestOutboxWriter_PersistsExactTraceCarrierWire(t *testing.T) {
 	if err != nil {
 		t.Fatalf("json.Marshal() error = %v", err)
 	}
+
 	if err := writer.Write(context.Background(), envelope); err != nil {
 		t.Fatalf("Write() error = %v", err)
 	}
@@ -211,6 +227,7 @@ func TestOutboxWriter_PersistsExactTraceCarrierWire(t *testing.T) {
 	if row == nil {
 		t.Fatal("repo.Create() was not called")
 	}
+
 	if string(row.Payload) != string(want) {
 		t.Fatalf("persisted payload = %s; want exact wire %s", row.Payload, want)
 	}
@@ -223,10 +240,12 @@ func mustSpanContext(t *testing.T, traceID, spanID, state string) trace.SpanCont
 	if err != nil {
 		t.Fatalf("TraceIDFromHex() error = %v", err)
 	}
+
 	parsedSpanID, err := trace.SpanIDFromHex(spanID)
 	if err != nil {
 		t.Fatalf("SpanIDFromHex() error = %v", err)
 	}
+
 	parsedState, err := trace.ParseTraceState(state)
 	if err != nil {
 		t.Fatalf("ParseTraceState() error = %v", err)

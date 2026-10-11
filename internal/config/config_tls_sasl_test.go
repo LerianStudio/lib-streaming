@@ -124,6 +124,7 @@ func TestLoadConfig_DeprecatedAllowPlaintextAliasWarns(t *testing.T) {
 	}
 
 	found := false
+
 	for _, w := range warnings {
 		if strings.Contains(w, "STREAMING_ALLOW_PLAINTEXT_SASL") && strings.Contains(w, "STREAMING_SASL_ALLOW_PLAINTEXT") {
 			found = true

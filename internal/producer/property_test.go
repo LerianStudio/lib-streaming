@@ -127,30 +127,39 @@ func TestProperty_CloudEvents_BuildParse_Roundtrip(t *testing.T) {
 		if parsed.EventID != event.EventID {
 			return false
 		}
+
 		if parsed.Source != event.Source {
 			return false
 		}
+
 		if parsed.ResourceType != event.ResourceType {
 			return false
 		}
+
 		if parsed.EventType != event.EventType {
 			return false
 		}
+
 		if parsed.TenantID != event.TenantID {
 			return false
 		}
+
 		if parsed.SchemaVersion != event.SchemaVersion {
 			return false
 		}
+
 		if !parsed.Timestamp.Equal(event.Timestamp) {
 			return false
 		}
+
 		if parsed.Subject != event.Subject {
 			return false
 		}
+
 		if parsed.DataContentType != event.DataContentType {
 			return false
 		}
+
 		if parsed.SystemEvent != event.SystemEvent {
 			return false
 		}

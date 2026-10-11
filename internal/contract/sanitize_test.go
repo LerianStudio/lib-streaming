@@ -235,12 +235,14 @@ func TestSanitizeBrokerURL(t *testing.T) {
 
 			if len(tt.mustContainAny) > 0 {
 				found := false
+
 				for _, s := range tt.mustContainAny {
 					if strings.Contains(out, s) {
 						found = true
 						break
 					}
 				}
+
 				if !found {
 					t.Errorf("sanitizeBrokerURL(%q) = %q; expected at least one of %v", tt.in, out, tt.mustContainAny)
 				}

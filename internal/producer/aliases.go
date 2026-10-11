@@ -154,7 +154,7 @@ func NewHealthError(state HealthState, cause error) *HealthError {
 // cloudevents.BuildTransportHeaders directly so we no longer pay the
 // kgo→transport conversion per Emit.
 //
-//nolint:unused // referenced from _test.go files (property_test, benchmark_test).
+
 func buildCloudEventsHeaders(event Event) []kgo.RecordHeader {
 	return cloudevents.BuildHeaders(event)
 }

@@ -44,6 +44,7 @@ func TestEmitMulti_PerTransportPayloadCap_RejectsForRequiredSQSRoute(t *testing.
 	if err != nil {
 		t.Fatalf("NewEventDefinition() error = %v", err)
 	}
+
 	catalog, err := contract.NewCatalog(soleDef)
 	if err != nil {
 		t.Fatalf("NewCatalog() error = %v", err)
@@ -75,6 +76,7 @@ func TestEmitMulti_PerTransportPayloadCap_RejectsForRequiredSQSRoute(t *testing.
 	if err != nil {
 		t.Fatalf("NewProducerMulti() error = %v", err)
 	}
+
 	t.Cleanup(func() { _ = p.Close() })
 
 	req := eventToRequest(sampleEvent())
@@ -128,6 +130,7 @@ func TestEmitMulti_PerTransportPayloadCap_AllowsKafkaSizedForKafkaRoute(t *testi
 	if err != nil {
 		t.Fatalf("NewProducerMulti() error = %v", err)
 	}
+
 	t.Cleanup(func() { _ = p.Close() })
 
 	req := eventToRequest(sampleEvent())
@@ -190,6 +193,7 @@ func TestEmitMulti_PerTransportPayloadCap_OptionalRouteDoesNotRejectSync(t *test
 	if err != nil {
 		t.Fatalf("NewProducerMulti() error = %v", err)
 	}
+
 	t.Cleanup(func() { _ = p.Close() })
 
 	req := eventToRequest(sampleEvent())
@@ -213,6 +217,7 @@ func makeJSONPayload(approximateSize int) json.RawMessage {
 	if approximateSize <= overhead {
 		approximateSize = overhead + 1
 	}
+
 	value := strings.Repeat("a", approximateSize-overhead)
 
 	return json.RawMessage(`{"data":"` + value + `"}`)

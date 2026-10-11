@@ -241,6 +241,7 @@ func TestInvariant_D_FailClosed(t *testing.T) {
 
 	// The reclassified transient seeked back (partition 2), never DLQ'd.
 	foundP2Seek := false
+
 	for _, s := range client.seeks {
 		if _, ok := s["t"][2]; ok {
 			foundP2Seek = true

@@ -38,15 +38,19 @@ func TestStreamingHandler_ReturnsManifestJSON(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d; want %d", recorder.Code, http.StatusOK)
 	}
+
 	if got := recorder.Header().Get("Content-Type"); got != "application/json" {
 		t.Errorf("Content-Type = %q; want application/json", got)
 	}
+
 	if got := recorder.Header().Get("X-Content-Type-Options"); got != "nosniff" {
 		t.Errorf("X-Content-Type-Options = %q; want nosniff", got)
 	}
+
 	if got := recorder.Header().Get("X-Frame-Options"); got != "DENY" {
 		t.Errorf("X-Frame-Options = %q; want DENY", got)
 	}
+
 	if got := recorder.Header().Get("Cache-Control"); got != "no-store" {
 		t.Errorf("Cache-Control = %q; want no-store", got)
 	}
@@ -55,6 +59,7 @@ func TestStreamingHandler_ReturnsManifestJSON(t *testing.T) {
 	if err := json.NewDecoder(recorder.Body).Decode(&manifest); err != nil {
 		t.Fatalf("Decode() error = %v", err)
 	}
+
 	if len(manifest.Events) != 1 || manifest.Events[0].Key != "transaction.created" {
 		t.Fatalf("manifest events = %#v; want transaction.created", manifest.Events)
 	}
@@ -78,6 +83,7 @@ func TestStreamingHandler_HEADReturnsHeadersWithoutBody(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d; want %d", recorder.Code, http.StatusOK)
 	}
+
 	if recorder.Body.Len() != 0 {
 		t.Fatalf("body length = %d; want 0", recorder.Body.Len())
 	}

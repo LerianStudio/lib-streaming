@@ -230,6 +230,7 @@ func (f *fakeGroupClient) committedWatermarks() map[topicPartition]int64 {
 	defer f.mu.Unlock()
 
 	out := make(map[topicPartition]int64)
+
 	for _, batch := range f.commits {
 		for _, rec := range batch {
 			tp := topicPartition{topic: rec.Topic, partition: rec.Partition}
@@ -321,12 +322,14 @@ type fakeHandler struct {
 
 func (h *fakeHandler) Handle(ctx context.Context, ev contract.Event, payload []byte) error {
 	h.mu.Lock()
+
 	h.calls++
 	if tid, ok := ctx.Value(tenantContextKey{}).(string); ok {
 		h.tenant = append(h.tenant, tid)
 	} else {
 		h.tenant = append(h.tenant, "")
 	}
+
 	fn := h.fn
 	h.mu.Unlock()
 

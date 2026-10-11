@@ -185,6 +185,7 @@ func TestProducer_CredentialSanitization(t *testing.T) {
 // kfake cfg returns a concrete *Producer.
 func TestProducer_New_RealProducer_AsProducer(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
+
 	catalog, err := NewCatalog(EventDefinition{
 		Key:          "transaction.created",
 		ResourceType: "transaction",
@@ -209,6 +210,7 @@ func TestProducer_New_RealProducer_AsProducer(t *testing.T) {
 	if len(p.targets) == 0 {
 		t.Error("targets map is empty; want at least one target")
 	}
+
 	if p.catalog.Len() != 1 {
 		t.Errorf("catalog len = %d; want 1", p.catalog.Len())
 	}
@@ -290,6 +292,7 @@ func TestProducer_New_WithPartitionKeyOverride(t *testing.T) {
 	cfg, cluster := kfakeConfig(t)
 
 	fixed := "FIXED-PART-KEY"
+
 	emitter, err := New(context.Background(), cfg,
 		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithPartitionKey(func(_ Event) string { return fixed }),

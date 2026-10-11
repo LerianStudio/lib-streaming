@@ -25,39 +25,51 @@ func TestLoadConfig_Defaults(t *testing.T) {
 	if cfg.Enabled {
 		t.Errorf("default Enabled = true; want false")
 	}
+
 	if len(cfg.Brokers) != 0 {
 		t.Errorf("default Brokers = %v; want empty", cfg.Brokers)
 	}
+
 	if cfg.Compression != "lz4" {
 		t.Errorf("default Compression = %q; want lz4", cfg.Compression)
 	}
+
 	if cfg.RequiredAcks != "all" {
 		t.Errorf("default RequiredAcks = %q; want all", cfg.RequiredAcks)
 	}
+
 	if cfg.BatchLingerMs != 5 {
 		t.Errorf("default BatchLingerMs = %d; want 5", cfg.BatchLingerMs)
 	}
+
 	if cfg.BatchMaxBytes != 1_048_576 {
 		t.Errorf("default BatchMaxBytes = %d; want 1048576", cfg.BatchMaxBytes)
 	}
+
 	if cfg.MaxBufferedRecords != 10_000 {
 		t.Errorf("default MaxBufferedRecords = %d; want 10000", cfg.MaxBufferedRecords)
 	}
+
 	if cfg.RecordRetries != 10 {
 		t.Errorf("default RecordRetries = %d; want 10", cfg.RecordRetries)
 	}
+
 	if cfg.RecordDeliveryTimeout != 30*time.Second {
 		t.Errorf("default RecordDeliveryTimeout = %v; want 30s", cfg.RecordDeliveryTimeout)
 	}
+
 	if cfg.CloseTimeout != 30*time.Second {
 		t.Errorf("default CloseTimeout = %v; want 30s", cfg.CloseTimeout)
 	}
+
 	if cfg.CBFailureRatio != 0.5 {
 		t.Errorf("default CBFailureRatio = %v; want 0.5", cfg.CBFailureRatio)
 	}
+
 	if cfg.CBMinRequests != 10 {
 		t.Errorf("default CBMinRequests = %d; want 10", cfg.CBMinRequests)
 	}
+
 	if cfg.CBTimeout != 30*time.Second {
 		t.Errorf("default CBTimeout = %v; want 30s", cfg.CBTimeout)
 	}
@@ -136,6 +148,7 @@ func TestLoadConfig_DisabledSkipsValidation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig() with disabled returned unexpected error: %v", err)
 	}
+
 	if cfg.Enabled {
 		t.Errorf("cfg.Enabled = true; want false")
 	}
@@ -153,10 +166,12 @@ func TestLoadConfig_ValidCSVBrokers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig() err = %v", err)
 	}
+
 	want := []string{"broker1:9092", "broker2:9092", "broker3:9092"}
 	if len(cfg.Brokers) != len(want) {
 		t.Fatalf("len(Brokers) = %d; want %d", len(cfg.Brokers), len(want))
 	}
+
 	for i, w := range want {
 		if cfg.Brokers[i] != w {
 			t.Errorf("Brokers[%d] = %q; want %q", i, cfg.Brokers[i], w)
@@ -178,6 +193,7 @@ func TestLoadConfig_AllValidCompressionCodecs(t *testing.T) {
 			if err != nil {
 				t.Fatalf("LoadConfig(%s) err = %v", codec, err)
 			}
+
 			if cfg.Compression != codec {
 				t.Errorf("cfg.Compression = %q; want %q", cfg.Compression, codec)
 			}
@@ -199,6 +215,7 @@ func TestLoadConfig_AllValidAcks(t *testing.T) {
 			if err != nil {
 				t.Fatalf("LoadConfig(%s) err = %v", acks, err)
 			}
+
 			if cfg.RequiredAcks != acks {
 				t.Errorf("cfg.RequiredAcks = %q; want %q", cfg.RequiredAcks, acks)
 			}
@@ -219,6 +236,7 @@ func TestLoadConfig_CBFailureRatioOverride(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig() err = %v", err)
 	}
+
 	if cfg.CBFailureRatio != 0.25 {
 		t.Errorf("CBFailureRatio = %v; want 0.25", cfg.CBFailureRatio)
 	}
@@ -275,6 +293,7 @@ func TestLoadConfig_MalformedNumericEnvUsesDefaultWhenDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig() err = %v", err)
 	}
+
 	if cfg.CBFailureRatio != defaultCBFailureRatio || cfg.BatchLingerMs != defaultBatchLingerMs {
 		t.Fatalf("disabled malformed numeric defaults = ratio %v linger %d", cfg.CBFailureRatio, cfg.BatchLingerMs)
 	}
@@ -299,9 +318,11 @@ func TestLoadConfig_EventPolicies(t *testing.T) {
 	if tx.Enabled == nil || *tx.Enabled {
 		t.Fatalf("transaction.created enabled override = %v; want false", tx.Enabled)
 	}
+
 	if tx.Outbox != OutboxModeAlways {
 		t.Errorf("transaction.created outbox = %q; want %q", tx.Outbox, OutboxModeAlways)
 	}
+
 	if tx.DLQ != DLQModeNever {
 		t.Errorf("transaction.created dlq = %q; want %q", tx.DLQ, DLQModeNever)
 	}
@@ -310,6 +331,7 @@ func TestLoadConfig_EventPolicies(t *testing.T) {
 	if account.Direct != DirectModeSkip {
 		t.Errorf("account.updated direct = %q; want %q", account.Direct, DirectModeSkip)
 	}
+
 	if account.Outbox != OutboxModeAlways {
 		t.Errorf("account.updated outbox = %q; want %q", account.Outbox, OutboxModeAlways)
 	}
@@ -349,10 +371,12 @@ func TestParseEventPolicies_RejectsExcessiveEntries(t *testing.T) {
 	// for the entry-count guard — the parser must reject before touching
 	// per-entry attributes.
 	var b strings.Builder
+
 	for i := 0; i <= maxEventPolicyEntries; i++ {
 		if i > 0 {
 			b.WriteByte(',')
 		}
+
 		b.WriteString("a.enabled=true")
 	}
 
@@ -360,6 +384,7 @@ func TestParseEventPolicies_RejectsExcessiveEntries(t *testing.T) {
 	if !errors.Is(err, ErrInvalidDeliveryPolicy) {
 		t.Fatalf("parseEventPolicies() err = %v; want ErrInvalidDeliveryPolicy", err)
 	}
+
 	if !strings.Contains(err.Error(), "entries") {
 		t.Errorf("err message missing 'entries' hint: %v", err)
 	}
@@ -378,6 +403,7 @@ func TestParseEventPolicies_RejectsLongKey(t *testing.T) {
 	if !errors.Is(err, ErrInvalidDeliveryPolicy) {
 		t.Fatalf("parseEventPolicies() err = %v; want ErrInvalidDeliveryPolicy", err)
 	}
+
 	if !strings.Contains(err.Error(), "bytes") {
 		t.Errorf("err message missing 'bytes' hint: %v", err)
 	}
@@ -392,9 +418,11 @@ func TestLoadConfig_DisabledSkipsInvalidEventPolicies(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig() with disabled returned unexpected error: %v", err)
 	}
+
 	if cfg.Enabled {
 		t.Error("cfg.Enabled = true; want false")
 	}
+
 	if len(cfg.PolicyOverrides) != 0 {
 		t.Errorf("len(PolicyOverrides) = %d; want 0 for invalid disabled policy env", len(cfg.PolicyOverrides))
 	}

@@ -4,7 +4,6 @@ package contract
 
 import (
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -192,7 +191,7 @@ func TestLegacyUnroutableSentinelIsNotACallerError(t *testing.T) {
 		"ErrLegacyOutboxRowUnroutable must never be classified caller-correctable")
 
 	for _, sentinel := range callerErrorSentinels {
-		assert.False(t, errors.Is(ErrLegacyOutboxRowUnroutable, sentinel),
+		assert.NotErrorIs(t, ErrLegacyOutboxRowUnroutable, sentinel,
 			"ErrLegacyOutboxRowUnroutable must not alias a caller-error sentinel")
 	}
 }

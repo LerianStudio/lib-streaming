@@ -40,7 +40,6 @@ func TestSASLRequiresTLS(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -85,7 +84,6 @@ func TestValidateTLSConfig_Rejections(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -125,6 +123,7 @@ func TestCloneTLSConfigWithDefaults_DefaultsAndDeepCopy(t *testing.T) {
 	if cloned.MinVersion != tls.VersionTLS12 {
 		t.Errorf("MinVersion = %#x; want TLS 1.2 default", cloned.MinVersion)
 	}
+
 	if &caller.CipherSuites[0] == &cloned.CipherSuites[0] {
 		t.Fatal("CipherSuites slice aliased between caller and clone")
 	}
@@ -157,6 +156,7 @@ func TestCloneTLSConfigWithDefaults_ClonesCAPools(t *testing.T) {
 
 	// Mutating the caller's pool must not alter the clone's trust set.
 	caller.RootCAs.AddCert(selfSignedCert(t))
+
 	if caller.RootCAs.Equal(cloned.RootCAs) {
 		t.Error("after caller added a cert, clone RootCAs equals caller's; the pool was aliased")
 	}

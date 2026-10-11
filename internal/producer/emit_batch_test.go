@@ -57,9 +57,11 @@ func TestProducer_EmitBatch_PersistsAllRoutesInDeterministicOrder(t *testing.T) 
 	if err != nil {
 		t.Fatalf("NewProducerMulti() error = %v", err)
 	}
+
 	t.Cleanup(func() { _ = p.Close() })
 
 	ctx := WithOutboxTx(context.Background(), &sql.Tx{})
+
 	err = p.EmitBatch(ctx, []EmitRequest{
 		{DefinitionKey: "transaction.created", TenantID: "tenant-1", Subject: "tx-1", Payload: json.RawMessage(`{"sequence":1}`)},
 		{DefinitionKey: "order.submitted", TenantID: "tenant-1", Subject: "order-1", Payload: json.RawMessage(`{"sequence":2}`)},
@@ -72,12 +74,15 @@ func TestProducer_EmitBatch_PersistsAllRoutesInDeterministicOrder(t *testing.T) 
 	if calls != 1 {
 		t.Fatalf("CreateManyWithTx calls = %d; want 1", calls)
 	}
+
 	if got := len(rows); got != 3 {
 		t.Fatalf("persisted rows = %d; want 3", got)
 	}
+
 	if got := repo.createdWithTxCount(); got != 0 {
 		t.Fatalf("per-event CreateWithTx calls = %d; want 0", got)
 	}
+
 	if got := repo.createdCount(); got != 0 {
 		t.Fatalf("per-event Create calls = %d; want 0", got)
 	}
@@ -141,6 +146,7 @@ func TestProducer_EmitBatch_RejectsWholeBatchBeforePersistence(t *testing.T) {
 	if calls != 0 || len(rows) != 0 {
 		t.Fatalf("batch repository observed calls=%d rows=%d; want 0/0", calls, len(rows))
 	}
+
 	if repo.createdWithTxCount() != 0 || repo.createdCount() != 0 {
 		t.Fatal("invalid batch fell back to per-event persistence")
 	}
@@ -185,15 +191,16 @@ func TestProducer_EmitBatch_RejectsMissingTransactionalOutboxWiring(t *testing.T
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
 			p := newBatchTestProducer(t, catalog, routes, nil, tt.options...)
+
 			err := p.EmitBatch(tt.ctx, request)
 			if !errors.Is(err, tt.want) {
 				t.Fatalf("EmitBatch() error = %v; want errors.Is(..., %v)", err, tt.want)
 			}
+
 			if tt.writer != nil && (tt.writer.writes != 0 || tt.writer.txWrites != 0) {
 				t.Fatalf("unsupported batch writer received per-event fallback writes=%d txWrites=%d; want 0/0", tt.writer.writes, tt.writer.txWrites)
 			}
@@ -206,12 +213,14 @@ func TestProducer_EmitBatch_RejectsDisabledEventWithoutPersistence(t *testing.T)
 
 	disabled := DefaultDeliveryPolicy()
 	disabled.Enabled = false
+
 	catalog, err := NewCatalog(EventDefinition{
 		Key: "transaction.created", ResourceType: "transaction", EventType: "created", DefaultPolicy: disabled,
 	})
 	if err != nil {
 		t.Fatalf("NewCatalog() error = %v", err)
 	}
+
 	routes, err := contract.NewRouteTable(multiTestRoute(
 		"transaction.created.kafka.primary",
 		"transaction.created",
@@ -222,6 +231,7 @@ func TestProducer_EmitBatch_RejectsDisabledEventWithoutPersistence(t *testing.T)
 	if err != nil {
 		t.Fatalf("NewRouteTable() error = %v", err)
 	}
+
 	repo := &fakeOutboxRepo{}
 	p := newBatchTestProducer(t, catalog, routes, repo)
 
@@ -262,6 +272,7 @@ func TestProducer_EmitBatch_LifecycleAndContextGuards(t *testing.T) {
 	}
 
 	catalog, routes := batchCatalogAndRoutes(t)
+
 	p := newBatchTestProducer(t, catalog, routes, &fakeOutboxRepo{})
 	if err := p.EmitBatch(nil, request); !errors.Is(err, ErrOutboxTxUnsupported) {
 		t.Fatalf("EmitBatch(nil context) error = %v; want ErrOutboxTxUnsupported", err)
@@ -280,6 +291,7 @@ func TestProducer_EmitBatch_RejectsRoutePayloadOverTransportCap(t *testing.T) {
 	t.Parallel()
 
 	event := Event{Payload: make(json.RawMessage, contract.MaxPayloadBytesForKind(contract.TransportSQS)+1)}
+
 	err := enforceBatchRoutePayloadCap(event, []contract.RouteDefinition{{
 		Destination: contract.Destination{Kind: contract.TransportSQS},
 	}})
@@ -312,16 +324,19 @@ func TestProducer_EmitBatch_RejectsUnknownDefinitionAndDisabledRoute(t *testing.
 		contract.RouteRequired,
 	)
 	disabledRoute.Policy.Enabled = &disabled
+
 	disabledRoutes, err := contract.NewRouteTable(disabledRoute)
 	if err != nil {
 		t.Fatalf("NewRouteTable() error = %v", err)
 	}
+
 	disabledCatalog, err := NewCatalog(EventDefinition{
 		Key: "transaction.created", ResourceType: "transaction", EventType: "created",
 	})
 	if err != nil {
 		t.Fatalf("NewCatalog() error = %v", err)
 	}
+
 	disabledProducer := newBatchTestProducer(t, disabledCatalog, disabledRoutes, repo)
 
 	err = disabledProducer.EmitBatch(WithOutboxTx(context.Background(), &sql.Tx{}), []EmitRequest{{
@@ -378,6 +393,7 @@ func newBatchTestProducer(
 	if repo != nil {
 		options = append(options, WithOutboxRepository(repo))
 	}
+
 	options = append(options, extraOptions...)
 
 	p, err := NewProducerMulti(
@@ -395,6 +411,7 @@ func newBatchTestProducer(
 	if err != nil {
 		t.Fatalf("NewProducerMulti() error = %v", err)
 	}
+
 	t.Cleanup(func() { _ = p.Close() })
 
 	return p

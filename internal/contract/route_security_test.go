@@ -60,7 +60,6 @@ func TestDestinationValidate_RejectsSecuritySensitiveTopology(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -81,7 +80,6 @@ func TestDestinationValidate_RejectsIncompleteSQSQueuePath(t *testing.T) {
 	}
 
 	for _, raw := range tests {
-		raw := raw
 		t.Run(raw, func(t *testing.T) {
 			err := (Destination{Kind: TransportSQS, Address: raw}).Validate()
 			if !errors.Is(err, ErrInvalidDestination) {
@@ -100,7 +98,6 @@ func TestValidateSQSQueueURLShape_RejectsCredentialMaterial(t *testing.T) {
 	}
 
 	for _, raw := range tests {
-		raw := raw
 		t.Run(raw, func(t *testing.T) {
 			if err := ValidateSQSQueueURLShape(raw); !errors.Is(err, ErrInvalidDestination) {
 				t.Fatalf("ValidateSQSQueueURLShape() error = %v; want ErrInvalidDestination", err)
@@ -111,6 +108,7 @@ func TestValidateSQSQueueURLShape_RejectsCredentialMaterial(t *testing.T) {
 
 func TestResolveAndValidateSQSQueueURL_RetriesAndPreservesCause(t *testing.T) {
 	old := resolveSQSQueueURLOnce
+
 	t.Cleanup(func() { resolveSQSQueueURLOnce = old })
 
 	attempts := 0
@@ -127,6 +125,7 @@ func TestResolveAndValidateSQSQueueURL_RetriesAndPreservesCause(t *testing.T) {
 	if err := (Destination{Kind: TransportSQS, Address: "https://sqs.us-east-1.amazonaws.com/123/q"}).Validate(); err != nil {
 		t.Fatalf("Validate() after transient resolver failures error = %v; want nil", err)
 	}
+
 	if attempts != 3 {
 		t.Fatalf("resolver attempts = %d; want 3", attempts)
 	}
@@ -142,9 +141,11 @@ func TestResolveAndValidateSQSQueueURL_RetriesAndPreservesCause(t *testing.T) {
 	if !errors.Is(err, ErrInvalidDestination) {
 		t.Fatalf("Validate() error = %v; want ErrInvalidDestination", err)
 	}
+
 	if !errors.Is(err, transient) {
 		t.Fatalf("Validate() error = %v; want resolver cause preserved", err)
 	}
+
 	if attempts != sqsDNSValidationAttempts {
 		t.Fatalf("resolver attempts = %d; want %d", attempts, sqsDNSValidationAttempts)
 	}
@@ -152,6 +153,7 @@ func TestResolveAndValidateSQSQueueURL_RetriesAndPreservesCause(t *testing.T) {
 
 func TestNewRouteTable_DeduplicatesSQSResolverPerQueueURL(t *testing.T) {
 	old := resolveSQSQueueURLOnce
+
 	t.Cleanup(func() { resolveSQSQueueURLOnce = old })
 
 	attempts := 0
@@ -161,6 +163,7 @@ func TestNewRouteTable_DeduplicatesSQSResolverPerQueueURL(t *testing.T) {
 	}
 
 	destination := Destination{Kind: TransportSQS, Address: "https://sqs.us-east-1.amazonaws.com/123/q"}
+
 	_, err := NewRouteTable(
 		RouteDefinition{Key: "transaction.created.sqs.primary", DefinitionKey: "transaction.created", Target: "primary", Destination: destination},
 		RouteDefinition{Key: "transaction.updated.sqs.primary", DefinitionKey: "transaction.updated", Target: "primary", Destination: destination},
@@ -168,6 +171,7 @@ func TestNewRouteTable_DeduplicatesSQSResolverPerQueueURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRouteTable() error = %v", err)
 	}
+
 	if attempts != 1 {
 		t.Fatalf("resolver attempts = %d; want 1 for duplicate queue URL", attempts)
 	}

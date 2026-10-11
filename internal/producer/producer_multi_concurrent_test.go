@@ -86,12 +86,13 @@ func TestProducerMulti_ConcurrentEmitDuringClose(t *testing.T) {
 
 	wg.Add(numEmitters)
 
-	for i := 0; i < numEmitters; i++ {
+	for range numEmitters {
 		go func() {
 			defer wg.Done()
 
-			for j := 0; j < emitsPerWorker; j++ {
+			for range emitsPerWorker {
 				emitErr := p.Emit(ctx, eventToRequest(sampleEvent()))
+
 				if closed.Load() {
 					emitsAfterC.Add(1)
 				}
@@ -130,6 +131,7 @@ func TestProducerMulti_ConcurrentEmitDuringClose(t *testing.T) {
 	time.Sleep(jitter)
 
 	closed.Store(true)
+
 	if err := p.Close(); err != nil {
 		t.Errorf("Close() error = %v; want nil", err)
 	}

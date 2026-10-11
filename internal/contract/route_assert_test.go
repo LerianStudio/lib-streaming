@@ -25,6 +25,7 @@ import (
 func TestNewRouteDefinition_DLQKindMismatch_StillReturnsSentinel(t *testing.T) {
 	cap := newCaptureContractLogger()
 	prev := setContractAsserterLogger(cap)
+
 	t.Cleanup(func() { setContractAsserterLogger(prev) })
 
 	kafkaDLQ := Destination{Kind: TransportKafkaLike, Name: "tx.dlq"}
