@@ -35,11 +35,3 @@ func TestNoopEmitter_AllNil(t *testing.T) {
 		t.Errorf("second Close() = %v; want nil", err)
 	}
 }
-
-// TestNoopEmitter_SatisfiesInterface is a compile-time proof that NoopEmitter
-// is assignable to Emitter.
-func TestNoopEmitter_SatisfiesInterface(t *testing.T) {
-	t.Parallel()
-
-	var _ = NewNoopEmitter()
-}

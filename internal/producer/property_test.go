@@ -11,6 +11,7 @@ import (
 	"testing/quick"
 	"time"
 
+	"github.com/LerianStudio/lib-streaming/v4/internal/cloudevents"
 	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
 )
 
@@ -95,7 +96,7 @@ func propertyConfig() *quick.Config {
 
 // TestProperty_CloudEvents_BuildParse_Roundtrip asserts that for any Event
 // satisfying the preFlight preconditions, the round-trip through
-// buildCloudEventsHeaders and ParseCloudEventsHeaders recovers the
+// cloudevents.BuildHeaders and ParseCloudEventsHeaders recovers the
 // required + optional fields.
 //
 // Timestamps are compared via time.Equal() because RFC3339Nano
@@ -116,7 +117,7 @@ func TestProperty_CloudEvents_BuildParse_Roundtrip(t *testing.T) {
 			return true // filtered; property doesn't apply
 		}
 
-		headers := buildCloudEventsHeaders(event)
+		headers := cloudevents.BuildHeaders(event)
 
 		parsed, err := ParseCloudEventsHeaders(headers)
 		if err != nil {

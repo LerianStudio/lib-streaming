@@ -14,6 +14,7 @@ import (
 	"github.com/twmb/franz-go/pkg/kfake"
 
 	"github.com/LerianStudio/lib-observability/v4/log"
+	"github.com/LerianStudio/lib-streaming/v4/internal/cloudevents"
 	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
 	"github.com/LerianStudio/lib-streaming/v4/internal/transport/fake"
 	"github.com/LerianStudio/lib-streaming/v4/internal/transport/kafka"
@@ -256,7 +257,7 @@ func BenchmarkBuildCloudEventsHeaders(b *testing.B) {
 	event.Subject = "aggregate-1"
 
 	for b.Loop() {
-		_ = buildCloudEventsHeaders(event)
+		_ = cloudevents.BuildHeaders(event)
 	}
 }
 
@@ -279,7 +280,7 @@ func BenchmarkApplyDefaults(b *testing.B) {
 
 // BenchmarkParseCloudEventsHeaders measures header-map parsing for a
 // realistic header set. Uses the header slice produced by
-// buildCloudEventsHeaders so it mirrors the exact on-wire shape.
+// cloudevents.BuildHeaders so it mirrors the exact on-wire shape.
 func BenchmarkParseCloudEventsHeaders(b *testing.B) {
 	b.ReportAllocs()
 
@@ -287,7 +288,7 @@ func BenchmarkParseCloudEventsHeaders(b *testing.B) {
 	(&event).ApplyDefaults()
 	event.DataSchema = "https://schemas.lerian.test/tx.json"
 
-	headers := buildCloudEventsHeaders(event)
+	headers := cloudevents.BuildHeaders(event)
 
 	for b.Loop() {
 		if _, err := ParseCloudEventsHeaders(headers); err != nil {
