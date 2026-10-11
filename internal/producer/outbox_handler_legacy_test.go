@@ -33,10 +33,10 @@ import (
 // Every other field name and value is identical to a version-2 row: the json
 // tags in outbox_envelope.go and route.go have not changed since v2.1.0, and
 // Event carries no tags at all in either major.
-func legacyEnvelopeJSON(tb testing.TB, source, resourceType, eventType string, aggregateID string) []byte {
+func legacyEnvelopeJSON(tb testing.TB, source, aggregateID string) []byte {
 	tb.Helper()
 
-	legacyTopic := source + "." + resourceType + "." + eventType
+	legacyTopic := source + ".transaction.created"
 
 	raw := `{
 	  "version": 1,
@@ -50,8 +50,8 @@ func legacyEnvelopeJSON(tb testing.TB, source, resourceType, eventType string, a
 	  "policy": {"enabled": true, "direct": "direct", "outbox": "fallback_on_circuit_open", "dlq": "on_routable_failure"},
 	  "event": {
 	    "TenantID": "t-abc",
-	    "ResourceType": "` + resourceType + `",
-	    "EventType": "` + eventType + `",
+	    "ResourceType": "transaction",
+	    "EventType": "created",
 	    "Source": "` + source + `",
 	    "Subject": "tx-legacy-1",
 	    "SchemaVersion": "1.0.0",
@@ -94,7 +94,7 @@ func TestOutboxRelay_LegacyRowLandsOnApplicationTopic(t *testing.T) {
 	// application topic is "lerian.streaming.test" while the row names the
 	// v2-era "test.transaction.created".
 	aggregateID := newTestUUIDv7(t)
-	payload := legacyEnvelopeJSON(t, "test", "transaction", "created", aggregateID.String())
+	payload := legacyEnvelopeJSON(t, "test", aggregateID.String())
 
 	const legacyTopic = "test.transaction.created"
 
@@ -194,7 +194,7 @@ func TestOutboxRelay_CurrentRowStillWorks(t *testing.T) {
 	event := sampleEvent()
 	event.ApplyDefaults()
 
-	envelope := testOutboxEnvelope(event, event.Topic(), "transaction.created", DefaultDeliveryPolicy(), newTestUUIDv7(t))
+	envelope := testOutboxEnvelope(event, DefaultDeliveryPolicy(), newTestUUIDv7(t))
 	if envelope.Version != contract.OutboxEnvelopeVersion {
 		t.Fatalf("fixture version = %d, want the current written version %d", envelope.Version, contract.OutboxEnvelopeVersion)
 	}
@@ -262,7 +262,7 @@ func TestOutboxRelay_UnroutableLegacyRowStaysRetryable(t *testing.T) {
 
 	aggregateID := newTestUUIDv7(t)
 	// Legal under v2's lossy sanitizer, rejected outright by ValidateSource.
-	payload := legacyEnvelopeJSON(t, "//lerian.midaz/transaction-service", "transaction", "created", aggregateID.String())
+	payload := legacyEnvelopeJSON(t, "//lerian.midaz/transaction-service", aggregateID.String())
 
 	row := &outbox.OutboxEvent{
 		ID:          newTestUUIDv7(t),
@@ -316,7 +316,7 @@ func TestOutboxRelay_UnknownVersionStillRejected(t *testing.T) {
 	for _, version := range []string{"0", "3", "99"} {
 		t.Run("version="+version, func(t *testing.T) {
 			aggregateID := newTestUUIDv7(t)
-			payload := legacyEnvelopeJSON(t, "test", "transaction", "created", aggregateID.String())
+			payload := legacyEnvelopeJSON(t, "test", aggregateID.String())
 			payload = []byte(strings.Replace(string(payload), `"version": 1`, `"version": `+version, 1))
 
 			row := &outbox.OutboxEvent{
@@ -412,7 +412,7 @@ func handleLegacyRow(t *testing.T, registry *outbox.HandlerRegistry, payload []b
 func TestOutboxRelay_LegacyRowWithInvalidSourceFailingPreflightStaysRetryable(t *testing.T) {
 	registry := newLegacyRelayRegistry(t)
 
-	payload := legacyEnvelopeJSON(t, "//lerian.midaz/transaction-service", "transaction", "created", newTestUUIDv7(t).String())
+	payload := legacyEnvelopeJSON(t, "//lerian.midaz/transaction-service", newTestUUIDv7(t).String())
 	payload = rewriteLegacyFixture(t, payload,
 		`"destination": {"kind": "kafka", "name": "//lerian.midaz/transaction-service.transaction.created"}`,
 		`"destination": {"kind": "eventbridge", "name": "lerian-bus"}`)
@@ -471,7 +471,7 @@ func TestOutboxRelay_LegacyRowFailingNonSourcePreflightIsInvalid(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			payload := legacyEnvelopeJSON(t, "test", "transaction", "created", newTestUUIDv7(t).String())
+			payload := legacyEnvelopeJSON(t, "test", newTestUUIDv7(t).String())
 			payload = rewriteLegacyFixture(t, payload, tc.old, tc.repl)
 
 			err := handleLegacyRow(t, registry, payload)
@@ -529,7 +529,7 @@ func TestOutboxRelay_RejectionMetricTargetLabelIsBounded(t *testing.T) {
 	const attackerTarget = "attacker-controlled-target-value-0xdeadbeef"
 
 	aggregateID := newTestUUIDv7(t)
-	payload := legacyEnvelopeJSON(t, "test", "transaction", "created", aggregateID.String())
+	payload := legacyEnvelopeJSON(t, "test", aggregateID.String())
 	payload = []byte(strings.Replace(string(payload), `"version": 1`, `"version": 77`, 1))
 	payload = []byte(strings.Replace(string(payload), `"target": "primary"`, `"target": "`+attackerTarget+`"`, 1))
 
@@ -601,7 +601,7 @@ func TestOutboxRelay_RejectionMetricKeepsRegisteredTarget(t *testing.T) {
 	// Legacy row on the registered target, with a source that cannot be
 	// re-derived -> legacy_unroutable.
 	aggregateID := newTestUUIDv7(t)
-	payload := legacyEnvelopeJSON(t, "//lerian.midaz/transaction-service", "transaction", "created", aggregateID.String())
+	payload := legacyEnvelopeJSON(t, "//lerian.midaz/transaction-service", aggregateID.String())
 
 	row := &outbox.OutboxEvent{
 		ID:          newTestUUIDv7(t),

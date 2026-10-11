@@ -471,7 +471,12 @@ func newTestRuntimeCfg(t testingTB, mutate func(*ConsumerConfig), client GroupCl
 		t.Fatalf("New: %v", err)
 	}
 
-	return r.(*consumerRuntime)
+	rt, ok := r.(*consumerRuntime)
+	if !ok {
+		t.Fatalf("New returned %T; want *consumerRuntime", r)
+	}
+
+	return rt
 }
 
 // testingTB is the subset of *testing.T the helpers use (keeps the import light).

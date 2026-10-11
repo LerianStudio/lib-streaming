@@ -27,7 +27,7 @@ func TestOutboxAdapterWritesStableEnvelopeRows(t *testing.T) {
 
 	event := sampleEvent()
 	event.ApplyDefaults()
-	envelope := testOutboxEnvelope(event, event.Topic(), "transaction.created", DefaultDeliveryPolicy(), uuid.New())
+	envelope := testOutboxEnvelope(event, DefaultDeliveryPolicy(), uuid.New())
 
 	if err := writer.Write(context.Background(), envelope); err != nil {
 		t.Fatalf("Write err = %v", err)
@@ -58,7 +58,7 @@ func TestOutboxAdapterWriteWithTxUsesRepositoryTransaction(t *testing.T) {
 
 	event := sampleEvent()
 	event.ApplyDefaults()
-	envelope := testOutboxEnvelope(event, event.Topic(), "transaction.created", DefaultDeliveryPolicy(), uuid.New())
+	envelope := testOutboxEnvelope(event, DefaultDeliveryPolicy(), uuid.New())
 
 	if err := writer.WriteWithTx(context.Background(), &sql.Tx{}, envelope); err != nil {
 		t.Fatalf("WriteWithTx err = %v", err)
@@ -87,7 +87,7 @@ func TestOutboxAdapterRejectsOversizedSerializedEnvelope(t *testing.T) {
 	event := sampleEvent()
 	event.Payload = json.RawMessage(`"` + strings.Repeat("x", maxPayloadBytes-1) + `"`)
 	event.ApplyDefaults()
-	envelope := testOutboxEnvelope(event, event.Topic(), "transaction.created", DefaultDeliveryPolicy(), uuid.New())
+	envelope := testOutboxEnvelope(event, DefaultDeliveryPolicy(), uuid.New())
 
 	if err := writer.Write(context.Background(), envelope); !errors.Is(err, ErrPayloadTooLarge) {
 		t.Fatalf("Write err = %v; want ErrPayloadTooLarge", err)
@@ -103,7 +103,7 @@ func TestOutboxAdapterWriteBatchWithTxRejectsInvalidWiringAndRows(t *testing.T) 
 
 	event := sampleEvent()
 	event.ApplyDefaults()
-	validEnvelope := testOutboxEnvelope(event, event.Topic(), "transaction.created", DefaultDeliveryPolicy(), uuid.New())
+	validEnvelope := testOutboxEnvelope(event, DefaultDeliveryPolicy(), uuid.New())
 	repositoryFailure := errors.New("repository unavailable")
 
 	tests := []struct {

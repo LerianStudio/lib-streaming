@@ -257,7 +257,7 @@ func TestProducer_EmitPreFlight_RejectsMalformedSource(t *testing.T) {
 			e.Source = src
 			(&e).ApplyDefaults()
 
-			err := p.preFlightWithPayload(context.Background(), e, true)
+			err := p.preFlightWithPayload(context.Background(), e)
 			if !errors.Is(err, ErrInvalidSource) {
 				t.Errorf("preFlight(Source=%q) err = %v; want errors.Is(ErrInvalidSource)", src, err)
 			}
@@ -353,7 +353,7 @@ func TestProducer_HandleOutboxRow_RunsPreFlight_OversizePayload(t *testing.T) {
 	event := sampleEvent()
 	event.Payload = json.RawMessage(`"` + strings.Repeat("x", maxPayloadBytes+1) + `"`)
 	event.ApplyDefaults()
-	envelope := testOutboxEnvelope(event, event.Topic(), "transaction.created", DefaultDeliveryPolicy(), uuid.New())
+	envelope := testOutboxEnvelope(event, DefaultDeliveryPolicy(), uuid.New())
 
 	payload, err := json.Marshal(envelope)
 	if err != nil {
@@ -401,7 +401,7 @@ func TestProducer_HandleOutboxRow_RunsPreFlight_SystemEventWithoutOpt(t *testing
 	event.SystemEvent = true
 	event.TenantID = ""
 	event.ApplyDefaults()
-	envelope := testOutboxEnvelope(event, event.Topic(), "transaction.created", DefaultDeliveryPolicy(), uuid.New())
+	envelope := testOutboxEnvelope(event, DefaultDeliveryPolicy(), uuid.New())
 
 	payload, err := json.Marshal(envelope)
 	if err != nil {

@@ -27,8 +27,7 @@ func TestEmitMulti_PerTransportPayloadCap_RejectsForRequiredSQSRoute(t *testing.
 	ctx := context.Background()
 
 	// 500 KiB — fits in Kafka's 1 MiB cap, exceeds SQS's 256 KiB cap.
-	payloadSize := 500 * 1024
-	payload := makeJSONPayload(payloadSize)
+	payload := jsonPayload500KiB()
 
 	primary := fake.NewAdapter(contract.TransportSQS)
 
@@ -108,8 +107,7 @@ func TestEmitMulti_PerTransportPayloadCap_AllowsKafkaSizedForKafkaRoute(t *testi
 	catalog := sampleCatalog(t)
 
 	// 500 KiB on a Kafka-only route — fits Kafka's 1 MiB cap.
-	payloadSize := 500 * 1024
-	payload := makeJSONPayload(payloadSize)
+	payload := jsonPayload500KiB()
 
 	primary := fake.NewAdapter(TransportKafkaLike)
 
@@ -160,8 +158,7 @@ func TestEmitMulti_PerTransportPayloadCap_OptionalRouteDoesNotRejectSync(t *test
 	catalog := sampleCatalog(t)
 
 	// 500 KiB — exceeds SQS cap. Optional route should NOT block emit.
-	payloadSize := 500 * 1024
-	payload := makeJSONPayload(payloadSize)
+	payload := jsonPayload500KiB()
 
 	primary := fake.NewAdapter(TransportKafkaLike)
 	shadow := fake.NewAdapter(contract.TransportSQS)
@@ -207,18 +204,10 @@ func TestEmitMulti_PerTransportPayloadCap_OptionalRouteDoesNotRejectSync(t *test
 	}
 }
 
-// makeJSONPayload returns a JSON-valid payload of approximately
-// approximateSize bytes. Uses a single key with a long string value so
-// json.Valid passes. The exact size is approximateSize plus the wrapping
-// JSON characters.
-func makeJSONPayload(approximateSize int) json.RawMessage {
-	// Reserve room for: {"data":"..."} = 11 chars overhead.
-	const overhead = 11
-	if approximateSize <= overhead {
-		approximateSize = overhead + 1
-	}
+// jsonPayload500KiB returns a 500 KiB JSON payload: it fits Kafka's 1 MiB
+// cap but exceeds SQS's 256 KiB one.
+func jsonPayload500KiB() json.RawMessage {
+	const wrapper = `{"data":""}`
 
-	value := strings.Repeat("a", approximateSize-overhead)
-
-	return json.RawMessage(`{"data":"` + value + `"}`)
+	return json.RawMessage(`{"data":"` + strings.Repeat("a", 500*1024-len(wrapper)) + `"}`)
 }

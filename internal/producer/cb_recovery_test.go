@@ -407,7 +407,7 @@ func TestStartCBRecoveryLoop_NoOpWhenNoTargets(t *testing.T) {
 	calls := int64(0)
 
 	fakeMgr.getStateCallsByService.Range(func(_, v any) bool {
-		calls += v.(*atomic.Int64).Load()
+		calls += v.(*atomic.Int64).Load() //nolint:forcetypeassert // the fake stores only *atomic.Int64 in this map
 		return true
 	})
 

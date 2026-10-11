@@ -56,7 +56,7 @@ func TestProducer_RegisterOutboxRelay_RelaysStableEnvelope(t *testing.T) {
 
 	event := sampleEvent()
 	event.ApplyDefaults()
-	envelope := testOutboxEnvelope(event, event.Topic(), "transaction.created", DefaultDeliveryPolicy(), newTestUUIDv7(t))
+	envelope := testOutboxEnvelope(event, DefaultDeliveryPolicy(), newTestUUIDv7(t))
 
 	payload, err := json.Marshal(envelope)
 	if err != nil {
@@ -125,7 +125,7 @@ func TestProducer_OutboxHandler_PublishDirectFailure_SurfacesError(t *testing.T)
 
 	event := sampleEvent()
 	event.ApplyDefaults()
-	envelope := testOutboxEnvelope(event, event.Topic(), "transaction.created", DefaultDeliveryPolicy(), newTestUUIDv7(t))
+	envelope := testOutboxEnvelope(event, DefaultDeliveryPolicy(), newTestUUIDv7(t))
 
 	payload, err := json.Marshal(envelope)
 	if err != nil {
@@ -187,7 +187,7 @@ func TestProducer_HandleOutboxRow_DestinationAttributesReachAdapter(t *testing.T
 
 	event := sampleEvent()
 	event.ApplyDefaults()
-	envelope := testOutboxEnvelope(event, event.Topic(), "transaction.created", DefaultDeliveryPolicy(), newTestUUIDv7(t))
+	envelope := testOutboxEnvelope(event, DefaultDeliveryPolicy(), newTestUUIDv7(t))
 	envelope.Destination.Attributes = map[string]string{"eventbridge.resources": "arn:aws:events:us-east-1:123:rule/replay"}
 
 	payload, err := json.Marshal(envelope)
@@ -262,7 +262,7 @@ func TestProducer_OutboxHandler_UnknownTargetReturnsError(t *testing.T) {
 	p := asProducer(t, emitter)
 	event := sampleEvent()
 	event.ApplyDefaults()
-	envelope := testOutboxEnvelope(event, event.Topic(), "transaction.created", DefaultDeliveryPolicy(), newTestUUIDv7(t))
+	envelope := testOutboxEnvelope(event, DefaultDeliveryPolicy(), newTestUUIDv7(t))
 	envelope.Target = "retired-target"
 
 	payload, err := json.Marshal(envelope)
@@ -427,7 +427,7 @@ func TestHandleOutboxRow_BypassesCBWhenOpen(t *testing.T) {
 	// accept it.
 	event := sampleEvent()
 	event.ApplyDefaults()
-	envelope := testOutboxEnvelope(event, event.Topic(), "transaction.created", DefaultDeliveryPolicy(), newTestUUIDv7(t))
+	envelope := testOutboxEnvelope(event, DefaultDeliveryPolicy(), newTestUUIDv7(t))
 
 	payload, err := json.Marshal(envelope)
 	if err != nil {

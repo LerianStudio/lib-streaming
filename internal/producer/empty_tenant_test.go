@@ -74,7 +74,7 @@ func TestProducer_EmitEmptyTenant_PreFlight(t *testing.T) {
 	e.SystemEvent = false
 	(&e).ApplyDefaults()
 
-	if err := p.preFlightWithPayload(context.Background(), e, true); err != nil {
+	if err := p.preFlightWithPayload(context.Background(), e); err != nil {
 		t.Errorf("preFlight empty tenant err = %v; want nil", err)
 	}
 }

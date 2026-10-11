@@ -208,7 +208,7 @@ func TestOutboxWriter_PersistsExactTraceCarrierWire(t *testing.T) {
 	writer := &libCommonsOutboxWriter{repo: repo}
 	event := sampleEvent()
 	event.ApplyDefaults()
-	envelope := testOutboxEnvelope(event, event.Topic(), "transaction.created", DefaultDeliveryPolicy(), newTestUUIDv7(t))
+	envelope := testOutboxEnvelope(event, DefaultDeliveryPolicy(), newTestUUIDv7(t))
 	envelope.TraceCarrier = TraceCarrier{
 		TraceParentHeader: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
 		TraceStateHeader:  "vendor=value",

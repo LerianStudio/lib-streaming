@@ -25,8 +25,7 @@ func TestEmitMulti_PayloadCap_FiresAssertion(t *testing.T) {
 	logger := newCaptureLogger()
 	ctx := context.Background()
 
-	// 500 KiB — fits Kafka's 1 MiB but exceeds SQS's 256 KiB cap.
-	payload := makeJSONPayload(500 * 1024)
+	payload := jsonPayload500KiB()
 
 	primary := fake.NewAdapter(contract.TransportSQS)
 
@@ -108,7 +107,7 @@ func TestPreFlight_PayloadCap_FiresAssertion(t *testing.T) {
 		Payload: []byte(strings.Repeat("a", maxPayloadBytes+1)),
 	}
 
-	err := p.preFlightWithPayload(context.Background(), event, true)
+	err := p.preFlightWithPayload(context.Background(), event)
 	if !errors.Is(err, ErrPayloadTooLarge) {
 		t.Fatalf("preFlightWithPayload err = %v; want ErrPayloadTooLarge", err)
 	}

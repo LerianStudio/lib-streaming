@@ -102,7 +102,7 @@ func (f *fakeCBManager) getStateCallsFor(name string) int64 {
 		return 0
 	}
 
-	return v.(*atomic.Int64).Load()
+	return v.(*atomic.Int64).Load() //nolint:forcetypeassert // the fake stores only *atomic.Int64 in this map
 }
 
 // transitionOnGetState configures GetState to synchronously drive a state
@@ -147,10 +147,10 @@ func (f *fakeCBManager) GetState(name string) circuitbreaker.State {
 	// Counter increment goes first — even unknown-service queries count
 	// for cb_recovery_test.go's "poke fired for every target" assertions.
 	counter, _ := f.getStateCallsByService.LoadOrStore(name, &atomic.Int64{})
-	calls := counter.(*atomic.Int64).Add(1)
+	calls := counter.(*atomic.Int64).Add(1) //nolint:forcetypeassert // the fake stores only *atomic.Int64 in this map
 
 	if transitionValue, ok := f.getStateTransitions.Load(name); ok {
-		transition := transitionValue.(*fakeGetStateTransition)
+		transition := transitionValue.(*fakeGetStateTransition) //nolint:forcetypeassert // the fake stores only *fakeGetStateTransition in this map
 		if calls >= transition.afterCalls && transition.fired.CompareAndSwap(false, true) {
 			f.ForceTransition(name, transition.to)
 		}

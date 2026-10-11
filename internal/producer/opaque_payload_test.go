@@ -99,7 +99,7 @@ func TestProducer_PreFlight_ContentTypeAwareJSON(t *testing.T) {
 			event.DataContentType = tt.dataContentType
 			event.Payload = json.RawMessage(xmlPayload)
 
-			err := p.preFlightWithPayload(context.Background(), event, true)
+			err := p.preFlightWithPayload(context.Background(), event)
 			if tt.wantErr == nil {
 				if err != nil {
 					t.Fatalf("preFlight err = %v; want nil", err)
@@ -136,7 +136,7 @@ func TestProducer_PreFlight_OversizedNonJSON_StillTooLarge(t *testing.T) {
 	// Non-JSON bytes, one over the cap.
 	event.Payload = json.RawMessage(strings.Repeat("x", maxPayloadBytes+1))
 
-	err = p.preFlightWithPayload(context.Background(), event, true)
+	err = p.preFlightWithPayload(context.Background(), event)
 	if !errors.Is(err, ErrPayloadTooLarge) {
 		t.Fatalf("preFlight err = %v; want ErrPayloadTooLarge", err)
 	}

@@ -36,8 +36,8 @@ import (
 
 // kfakeBenchConfig is the *testing.B twin of kfakeConfig. Same kfake cluster
 // shape and Config defaults, but accepts testing.TB so the helper serves
-// benchmarks. The returned cluster is registered for teardown via b.Cleanup.
-func kfakeBenchConfig(tb testing.TB) (Config, *kfake.Cluster) {
+// benchmarks. The cluster is closed via tb.Cleanup.
+func kfakeBenchConfig(tb testing.TB) Config {
 	tb.Helper()
 
 	cluster, err := kfake.NewCluster(
@@ -68,7 +68,7 @@ func kfakeBenchConfig(tb testing.TB) (Config, *kfake.Cluster) {
 		CBTimeout:             5 * time.Second,
 		CloseTimeout:          5 * time.Second,
 		CloudEventsSource:     "bench",
-	}, cluster
+	}
 }
 
 // kfakeBenchDLQConfig adds the DLQ topic alongside the source so DLQ-routed
@@ -114,7 +114,7 @@ func kfakeBenchDLQConfig(tb testing.TB) (Config, *kfake.Cluster) {
 func BenchmarkEmit_HappyPath(b *testing.B) {
 	b.ReportAllocs()
 
-	cfg, _ := kfakeBenchConfig(b)
+	cfg := kfakeBenchConfig(b)
 
 	p, err := NewProducer(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(b)))
 	if err != nil {
@@ -139,7 +139,7 @@ func BenchmarkEmit_HappyPath(b *testing.B) {
 func BenchmarkEmit_CircuitOpenOutbox(b *testing.B) {
 	b.ReportAllocs()
 
-	cfg, _ := kfakeBenchConfig(b)
+	cfg := kfakeBenchConfig(b)
 	repo := &fakeOutboxRepo{}
 
 	p, err := NewProducer(context.Background(), cfg,
@@ -318,7 +318,7 @@ func BenchmarkPreFlight(b *testing.B) {
 	ctx := context.Background()
 
 	for b.Loop() {
-		if err := p.preFlightWithPayload(ctx, event, true); err != nil {
+		if err := p.preFlightWithPayload(ctx, event); err != nil {
 			b.Fatalf("preFlight err = %v", err)
 		}
 	}

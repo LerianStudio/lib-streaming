@@ -72,13 +72,11 @@ func eventToRequest(event Event) EmitRequest {
 	}
 }
 
-func testOutboxEnvelope(event Event, _topic, definitionKey string, policy DeliveryPolicy, aggregateID uuid.UUID) OutboxEnvelope {
-	_ = _topic // retained for caller-site readability; envelope derives the destination from the event topic
-
+func testOutboxEnvelope(event Event, policy DeliveryPolicy, aggregateID uuid.UUID) OutboxEnvelope {
 	return OutboxEnvelope{
 		Version:       outboxEnvelopeVersion,
 		RouteKey:      "primary.kafka",
-		DefinitionKey: definitionKey,
+		DefinitionKey: "transaction.created",
 		Target:        "primary",
 		Transport:     TransportKafkaLike,
 		Destination:   Destination{Kind: TransportKafkaLike, Name: event.Topic()},
