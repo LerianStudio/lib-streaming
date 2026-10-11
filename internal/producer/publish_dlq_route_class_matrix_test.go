@@ -224,19 +224,18 @@ func TestPublishRouteDLQ_ClassMatrix(t *testing.T) {
 				t.Errorf("MultiEmitError.Required[0].Class = %q; want %q", got, tc.want.errorClass)
 			}
 
-			dlqMessages := adapter.DLQMessages()
+			wantDLQ := 0
 			if tc.want.dlqDelivered {
-				if len(dlqMessages) != 1 {
-					t.Errorf("DLQ messages = %d; want 1 for class %q (DLQ-routable)", len(dlqMessages), tc.class)
-				} else {
-					if dest := dlqMessages[0].Destination; dest.Name != sourceTopic+".dlq" {
-						t.Errorf("DLQ destination = %q; want %s.dlq", dest.Name, sourceTopic)
-					}
-				}
-			} else {
-				if len(dlqMessages) != 0 {
-					t.Errorf("DLQ messages = %d; want 0 for class %q (non-DLQ-routable)", len(dlqMessages), tc.class)
-				}
+				wantDLQ = 1
+			}
+
+			dlqMessages := adapter.DLQMessages()
+			if len(dlqMessages) != wantDLQ {
+				t.Fatalf("DLQ messages = %d; want %d for class %q", len(dlqMessages), wantDLQ, tc.class)
+			}
+
+			if wantDLQ == 1 && dlqMessages[0].Destination.Name != sourceTopic+".dlq" {
+				t.Errorf("DLQ destination = %q; want %s.dlq", dlqMessages[0].Destination.Name, sourceTopic)
 			}
 		})
 	}

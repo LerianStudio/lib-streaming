@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"maps"
 	"strings"
 	"testing"
 
@@ -55,40 +56,7 @@ func TestProducer_EmitBatch_CapturesBoundedTraceCarrierAndRelayContinuesOriginTr
 	repo := &fakeOutboxRepo{}
 	adapter := fake.NewAdapter(TransportKafkaLike)
 
-	catalog, err := NewCatalog(EventDefinition{
-		Key: "transaction.created", ResourceType: "transaction", EventType: "created",
-	})
-	if err != nil {
-		t.Fatalf("NewCatalog() error = %v", err)
-	}
-
-	routes, err := contract.NewRouteTable(multiTestRoute(
-		"transaction.created.kafka.primary",
-		"transaction.created",
-		"primary",
-		"topic.transactions",
-		contract.RouteRequired,
-	))
-	if err != nil {
-		t.Fatalf("NewRouteTable() error = %v", err)
-	}
-
-	p, err := NewProducerMulti(
-		context.Background(),
-		MultiProducerConfig{Source: "svc-trace-batch"},
-		nil,
-		[]TargetSpec{{Name: "primary", Kind: TransportKafkaLike, Adapter: adapter}},
-		routes,
-		catalog,
-		WithLogger(log.NewNop()),
-		WithCatalog(catalog),
-		WithOutboxRepository(repo),
-	)
-	if err != nil {
-		t.Fatalf("NewProducerMulti() error = %v", err)
-	}
-
-	t.Cleanup(func() { _ = p.Close() })
+	p := newTraceBatchProducer(t, adapter, repo)
 
 	err = p.EmitBatch(WithOutboxTx(originCtx, &sql.Tx{}), []EmitRequest{{
 		DefinitionKey: "transaction.created",
@@ -109,16 +77,12 @@ func TestProducer_EmitBatch_CapturesBoundedTraceCarrierAndRelayContinuesOriginTr
 		t.Fatalf("json.Unmarshal() error = %v", err)
 	}
 
-	if got := len(envelope.TraceCarrier); got != 2 {
-		t.Fatalf("TraceCarrier entries = %d; want 2: %#v", got, envelope.TraceCarrier)
+	wantCarrier := TraceCarrier{
+		TraceParentHeader: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+		TraceStateHeader:  "vendor=value",
 	}
-
-	if got, want := envelope.TraceCarrier[TraceParentHeader], "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"; got != want {
-		t.Fatalf("traceparent = %q; want %q", got, want)
-	}
-
-	if got, want := envelope.TraceCarrier[TraceStateHeader], "vendor=value"; got != want {
-		t.Fatalf("tracestate = %q; want %q", got, want)
+	if !maps.Equal(envelope.TraceCarrier, wantCarrier) {
+		t.Fatalf("TraceCarrier = %#v; want %#v", envelope.TraceCarrier, wantCarrier)
 	}
 
 	if strings.Contains(string(rows[0].Payload), "baggage") || strings.Contains(string(rows[0].Payload), "secret@example.com") {
@@ -160,6 +124,49 @@ func TestProducer_EmitBatch_CapturesBoundedTraceCarrierAndRelayContinuesOriginTr
 	if got := headerValues[TraceParentHeader]; strings.Contains(got, dispatcher.SpanID().String()) {
 		t.Fatalf("relayed traceparent continued dispatcher span: %q", got)
 	}
+}
+
+// newTraceBatchProducer is a one-route Kafka producer with an outbox, the
+// minimum EmitBatch needs to persist a row the relay then delivers.
+func newTraceBatchProducer(t *testing.T, adapter *fake.Adapter, repo *fakeOutboxRepo) *Producer {
+	t.Helper()
+
+	catalog, err := NewCatalog(EventDefinition{
+		Key: "transaction.created", ResourceType: "transaction", EventType: "created",
+	})
+	if err != nil {
+		t.Fatalf("NewCatalog() error = %v", err)
+	}
+
+	routes, err := contract.NewRouteTable(multiTestRoute(
+		"transaction.created.kafka.primary",
+		"transaction.created",
+		"primary",
+		"topic.transactions",
+		contract.RouteRequired,
+	))
+	if err != nil {
+		t.Fatalf("NewRouteTable() error = %v", err)
+	}
+
+	p, err := NewProducerMulti(
+		context.Background(),
+		MultiProducerConfig{Source: "svc-trace-batch"},
+		nil,
+		[]TargetSpec{{Name: "primary", Kind: TransportKafkaLike, Adapter: adapter}},
+		routes,
+		catalog,
+		WithLogger(log.NewNop()),
+		WithCatalog(catalog),
+		WithOutboxRepository(repo),
+	)
+	if err != nil {
+		t.Fatalf("NewProducerMulti() error = %v", err)
+	}
+
+	t.Cleanup(func() { _ = p.Close() })
+
+	return p
 }
 
 func TestCaptureTraceCarrier_EmptyContextsDoNotPersistMetadata(t *testing.T) {

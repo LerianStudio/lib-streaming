@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"testing"
 	"time"
 
@@ -236,8 +237,9 @@ func TestAdapter_PublishMapsMessageToKafkaRecord(t *testing.T) {
 		t.Fatalf("record value = %q; want %q", got.Value, message.Payload)
 	}
 
-	if len(got.Headers) != 2 || got.Headers[0].Key != "h1" || string(got.Headers[0].Value) != "v1" || got.Headers[1].Key != "h2" || string(got.Headers[1].Value) != "v2" {
-		t.Fatalf("record headers = %#v; want h1/h2", got.Headers)
+	wantHeaders := []kgo.RecordHeader{{Key: "h1", Value: []byte("v1")}, {Key: "h2", Value: []byte("v2")}}
+	if !reflect.DeepEqual(got.Headers, wantHeaders) {
+		t.Fatalf("record headers = %#v; want %#v", got.Headers, wantHeaders)
 	}
 }
 

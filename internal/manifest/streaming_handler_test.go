@@ -169,17 +169,15 @@ func TestStreamingHandler_GoldenManifestJSON(t *testing.T) {
 		t.Fatalf("decode manifest: %v", err)
 	}
 
-	if got := doc["version"]; got != "1.0.0" {
-		t.Errorf(`manifest["version"] = %v; want "1.0.0"`, got)
-	}
-
 	// One topic per producing application, at the DOCUMENT level.
-	if got := doc["topic"]; got != "lerian.streaming.lender" {
-		t.Errorf(`manifest["topic"] = %v; want "lerian.streaming.lender"`, got)
-	}
-
-	if got := doc["dlqTopic"]; got != "lerian.streaming.lender.dlq" {
-		t.Errorf(`manifest["dlqTopic"] = %v; want "lerian.streaming.lender.dlq"`, got)
+	for key, want := range map[string]any{
+		"version":  "1.0.0",
+		"topic":    "lerian.streaming.lender",
+		"dlqTopic": "lerian.streaming.lender.dlq",
+	} {
+		if got := doc[key]; got != want {
+			t.Errorf(`manifest[%q] = %v; want %q`, key, got, want)
+		}
 	}
 
 	// A fact-only catalog advertises NO commands queue. Naming one would send
@@ -211,22 +209,17 @@ func TestStreamingHandler_GoldenManifestJSON(t *testing.T) {
 		t.Fatalf(`manifest["events"][0] = %T; want an object`, events[0])
 	}
 
-	if got := event["eventKey"]; got != "loan_contract.disbursed" {
-		t.Errorf(`events[0]["eventKey"] = %v; want "loan_contract.disbursed"`, got)
-	}
-
-	if got := event["resourceType"]; got != "loan_contract" {
-		t.Errorf(`events[0]["resourceType"] = %v; want "loan_contract"`, got)
-	}
-
-	if got := event["eventType"]; got != "disbursed" {
-		t.Errorf(`events[0]["eventType"] = %v; want "disbursed"`, got)
-	}
-
-	// Always present, even on a fact-only manifest, so a reader can tell
-	// "emits only facts" apart from "predates the class field".
-	if got := event["class"]; got != "fact" {
-		t.Errorf(`events[0]["class"] = %v; want "fact"`, got)
+	// "class" is always present, even on a fact-only manifest, so a reader can
+	// tell "emits only facts" apart from "predates the class field".
+	for key, want := range map[string]any{
+		"eventKey":     "loan_contract.disbursed",
+		"resourceType": "loan_contract",
+		"eventType":    "disbursed",
+		"class":        "fact",
+	} {
+		if got := event[key]; got != want {
+			t.Errorf(`events[0][%q] = %v; want %q`, key, got, want)
+		}
 	}
 
 	// The per-event topic is GONE in v3. A definition has no topic of its own.

@@ -137,9 +137,7 @@ func TestAdapter_ConcurrentOperationsAreSafe(t *testing.T) {
 				Headers:     []transport.Header{{Key: "ce-id", Value: []byte("event")}},
 				Attributes:  map[string]string{"index": string(rune('a' + i%26))},
 			})
-			if err != nil && !errors.Is(err, configuredPublishErr) && !errors.Is(err, contract.ErrEmitterClosed) {
-				errCh <- err
-			}
+			sendUnexpected(errCh, err, configuredPublishErr, contract.ErrEmitterClosed)
 		})
 	}
 
@@ -164,21 +162,14 @@ func TestAdapter_ConcurrentOperationsAreSafe(t *testing.T) {
 	for range 40 {
 		wg.Go(func() {
 			_ = adapter.Messages()
-			if err := adapter.Healthy(context.Background()); err != nil && !errors.Is(err, configuredHealthErr) {
-				errCh <- err
-			}
-
-			if err := adapter.Flush(context.Background()); err != nil && !errors.Is(err, configuredFlushErr) {
-				errCh <- err
-			}
+			sendUnexpected(errCh, adapter.Healthy(context.Background()), configuredHealthErr)
+			sendUnexpected(errCh, adapter.Flush(context.Background()), configuredFlushErr)
 		})
 	}
 
 	for range 5 {
 		wg.Go(func() {
-			if err := adapter.Close(context.Background()); err != nil && !errors.Is(err, configuredCloseErr) {
-				errCh <- err
-			}
+			sendUnexpected(errCh, adapter.Close(context.Background()), configuredCloseErr)
 		})
 	}
 
@@ -196,6 +187,21 @@ func TestAdapter_ConcurrentOperationsAreSafe(t *testing.T) {
 	}
 
 	_ = adapter.Messages()
+}
+
+// sendUnexpected forwards err to errCh unless it is nil or wraps one of allowed.
+func sendUnexpected(errCh chan<- error, err error, allowed ...error) {
+	if err == nil {
+		return
+	}
+
+	for _, want := range allowed {
+		if errors.Is(err, want) {
+			return
+		}
+	}
+
+	errCh <- err
 }
 
 func TestAdapter_PublishAfterCloseReturnsEmitterClosed(t *testing.T) {

@@ -5,6 +5,7 @@ package cloudevents
 import (
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -90,48 +91,12 @@ func TestBuildAndParseCloudEventsHeaders_RoundTrip(t *testing.T) {
 				t.Fatalf("ParseCloudEventsHeaders err = %v", err)
 			}
 
-			if parsed.EventID != tt.event.EventID {
-				t.Errorf("EventID round-trip: got %q, want %q", parsed.EventID, tt.event.EventID)
-			}
+			// Every attribute travels as a header; only the payload does not.
+			want := tt.event
+			want.Payload = nil
 
-			if parsed.Source != tt.event.Source {
-				t.Errorf("Source round-trip: got %q, want %q", parsed.Source, tt.event.Source)
-			}
-
-			if parsed.ResourceType != tt.event.ResourceType {
-				t.Errorf("ResourceType round-trip: got %q, want %q", parsed.ResourceType, tt.event.ResourceType)
-			}
-
-			if parsed.EventType != tt.event.EventType {
-				t.Errorf("EventType round-trip: got %q, want %q", parsed.EventType, tt.event.EventType)
-			}
-
-			if parsed.SchemaVersion != tt.event.SchemaVersion {
-				t.Errorf("SchemaVersion round-trip: got %q, want %q", parsed.SchemaVersion, tt.event.SchemaVersion)
-			}
-
-			if !parsed.Timestamp.Equal(tt.event.Timestamp) {
-				t.Errorf("Timestamp round-trip: got %v, want %v", parsed.Timestamp, tt.event.Timestamp)
-			}
-
-			if parsed.TenantID != tt.event.TenantID {
-				t.Errorf("TenantID round-trip: got %q, want %q", parsed.TenantID, tt.event.TenantID)
-			}
-
-			if parsed.Subject != tt.event.Subject {
-				t.Errorf("Subject round-trip: got %q, want %q", parsed.Subject, tt.event.Subject)
-			}
-
-			if parsed.DataContentType != tt.event.DataContentType {
-				t.Errorf("DataContentType round-trip: got %q, want %q", parsed.DataContentType, tt.event.DataContentType)
-			}
-
-			if parsed.DataSchema != tt.event.DataSchema {
-				t.Errorf("DataSchema round-trip: got %q, want %q", parsed.DataSchema, tt.event.DataSchema)
-			}
-
-			if parsed.SystemEvent != tt.event.SystemEvent {
-				t.Errorf("SystemEvent round-trip: got %v, want %v", parsed.SystemEvent, tt.event.SystemEvent)
+			if !reflect.DeepEqual(parsed, want) {
+				t.Errorf("round-trip = %+v; want %+v", parsed, want)
 			}
 		})
 	}
@@ -449,19 +414,8 @@ func TestBuildHeaders(t *testing.T) {
 
 			// Byte-equal to the internal builder — BuildHeaders is a
 			// thin shim and must not drift.
-			internal := buildCloudEventsHeaders(tt.event)
-			if len(internal) != len(headers) {
-				t.Errorf("BuildHeaders length = %d; buildCloudEventsHeaders = %d (drift)", len(headers), len(internal))
-			}
-
-			for i := range headers {
-				if headers[i].Key != internal[i].Key {
-					t.Errorf("header[%d] key = %q; want %q (drift)", i, headers[i].Key, internal[i].Key)
-				}
-
-				if string(headers[i].Value) != string(internal[i].Value) {
-					t.Errorf("header[%d] value = %q; want %q (drift)", i, headers[i].Value, internal[i].Value)
-				}
+			if internal := buildCloudEventsHeaders(tt.event); !reflect.DeepEqual(headers, internal) {
+				t.Errorf("BuildHeaders = %q; buildCloudEventsHeaders = %q (drift)", headers, internal)
 			}
 
 			// Optional-header presence / absence by branch.
@@ -492,24 +446,8 @@ func TestBuildHeaders(t *testing.T) {
 				t.Fatalf("ParseCloudEventsHeaders(BuildHeaders(...)) err = %v", err)
 			}
 
-			if parsed.EventID != tt.event.EventID {
-				t.Errorf("round-trip EventID = %q; want %q", parsed.EventID, tt.event.EventID)
-			}
-
-			if parsed.Source != tt.event.Source {
-				t.Errorf("round-trip Source = %q; want %q", parsed.Source, tt.event.Source)
-			}
-
-			if parsed.ResourceType != tt.event.ResourceType {
-				t.Errorf("round-trip ResourceType = %q; want %q", parsed.ResourceType, tt.event.ResourceType)
-			}
-
-			if parsed.EventType != tt.event.EventType {
-				t.Errorf("round-trip EventType = %q; want %q", parsed.EventType, tt.event.EventType)
-			}
-
-			if parsed.SystemEvent != tt.event.SystemEvent {
-				t.Errorf("round-trip SystemEvent = %v; want %v", parsed.SystemEvent, tt.event.SystemEvent)
+			if !reflect.DeepEqual(parsed, tt.event) {
+				t.Errorf("round-trip = %+v; want %+v", parsed, tt.event)
 			}
 		})
 	}
