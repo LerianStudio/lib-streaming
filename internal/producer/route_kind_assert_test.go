@@ -38,6 +38,7 @@ func TestValidateRoutesAgainstTargets_KindMismatch_FiresAssertion(t *testing.T) 
 	if err != nil {
 		t.Fatalf("NewEventDefinition() error = %v", err)
 	}
+
 	catalog, err := contract.NewCatalog(soleDef)
 	if err != nil {
 		t.Fatalf("NewCatalog() error = %v", err)

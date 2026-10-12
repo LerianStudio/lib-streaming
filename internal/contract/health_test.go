@@ -29,6 +29,7 @@ func TestHealthState_String(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
+
 			if got := tt.state.String(); got != tt.want {
 				t.Errorf("HealthState(%d).String() = %q; want %q", tt.state, got, tt.want)
 			}
@@ -41,7 +42,7 @@ func TestHealthState_String(t *testing.T) {
 func TestHealthError_Error_WithCause(t *testing.T) {
 	t.Parallel()
 
-	cause := fmt.Errorf("dial sasl://user:hunter2@broker:9092: i/o timeout")
+	cause := errors.New("dial sasl://user:hunter2@broker:9092: i/o timeout")
 	he := NewHealthError(Degraded, cause)
 
 	got := he.Error()
@@ -108,7 +109,7 @@ func TestHealthError_Unwrap(t *testing.T) {
 		t.Errorf("errors.Is(he, sentinel) = false; want true")
 	}
 
-	if got := he.Unwrap(); got != sentinel {
+	if got := he.Unwrap(); got != sentinel { //nolint:errorlint // Unwrap must return the cause itself, not a wrapper
 		t.Errorf("Unwrap() = %v; want %v", got, sentinel)
 	}
 }
@@ -147,7 +148,7 @@ func TestHealthError_Unwrap_DirectSentinel(t *testing.T) {
 		t.Errorf("errors.Is(he, ErrNilProducer) = false; want true")
 	}
 
-	if got := he.Unwrap(); got != ErrNilProducer {
+	if got := he.Unwrap(); got != ErrNilProducer { //nolint:errorlint // Unwrap must return the cause itself, not a wrapper
 		t.Errorf("Unwrap() = %v; want ErrNilProducer", got)
 	}
 

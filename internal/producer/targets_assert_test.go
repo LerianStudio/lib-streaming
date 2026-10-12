@@ -137,6 +137,7 @@ func TestTargets_HealthyTargets_CBRecoveryLoopNotRunningDegradesHealth(t *testin
 	if !errors.As(err, &healthErr) {
 		t.Fatalf("healthyTargets() err = %T; want HealthError", err)
 	}
+
 	if healthErr.State() != contract.Degraded {
 		t.Fatalf("HealthError.State() = %s; want degraded while target is otherwise healthy", healthErr.State())
 	}

@@ -37,7 +37,7 @@ import (
 // Public Producer.Emit signatures pass their own ctx; outbox replay
 // passes the dispatcher's ctx; benchmark/property tests pass
 // context.Background() at construction.
-func (p *Producer) preFlightWithPayload(ctx context.Context, event Event, validatePayload bool) error {
+func (p *Producer) preFlightWithPayload(ctx context.Context, event Event) error {
 	// SystemEvent capability gate — runs FIRST so an opt-in violation is
 	// rejected before any other validation can mask it. A service that
 	// sets SystemEvent=true without WithAllowSystemEvents would otherwise
@@ -103,43 +103,41 @@ func (p *Producer) preFlightWithPayload(ctx context.Context, event Event, valida
 	// Pre-flight size cap. 1 MiB is the Redpanda default; we check BEFORE
 	// JSON validity so the dominant caller mistake (huge payload) short-
 	// circuits the slightly more expensive json.Valid scan.
-	if validatePayload {
-		// Lower length bound. newEmitRequest already refused an empty payload
-		// on the caller path; this copy guards the OTHER input to preflight —
-		// an outbox row decoded on replay, where the "caller" is the database
-		// and the bytes may have been edited or truncated at rest. The size
-		// cap below is duplicated for exactly the same reason.
-		if len(event.Payload) == 0 {
-			return contract.ErrEmptyPayload
-		}
+	// Lower length bound. newEmitRequest already refused an empty payload
+	// on the caller path; this copy guards the OTHER input to preflight —
+	// an outbox row decoded on replay, where the "caller" is the database
+	// and the bytes may have been edited or truncated at rest. The size
+	// cap below is duplicated for exactly the same reason.
+	if len(event.Payload) == 0 {
+		return contract.ErrEmptyPayload
+	}
 
-		if len(event.Payload) > maxPayloadBytes {
-			// Caller bug — payload exceeds the single-target 1 MiB cap.
-			// Pair the trident with the multi-target site at
-			// emit_multi.payload_size so dashboards see a symmetric signal
-			// across single vs multi callers.
-			a := p.newAsserter("preflight.payload_size")
-			_ = a.That(ctx, false, "payload size must not exceed single-target cap",
-				"payload_bytes", len(event.Payload),
-				"max_bytes", maxPayloadBytes,
-				"resource_type", event.ResourceType,
-				"event_type", event.EventType,
-			)
+	if len(event.Payload) > maxPayloadBytes {
+		// Caller bug — payload exceeds the single-target 1 MiB cap.
+		// Pair the trident with the multi-target site at
+		// emit_multi.payload_size so dashboards see a symmetric signal
+		// across single vs multi callers.
+		a := p.newAsserter("preflight.payload_size")
+		_ = a.That(ctx, false, "payload size must not exceed single-target cap",
+			"payload_bytes", len(event.Payload),
+			"max_bytes", maxPayloadBytes,
+			"resource_type", event.ResourceType,
+			"event_type", event.EventType,
+		)
 
-			return ErrPayloadTooLarge
-		}
+		return ErrPayloadTooLarge
+	}
 
-		// Payload must parse as JSON — but only for JSON content types. This
-		// is the line of defense that keeps malformed bytes out of consumers
-		// and prevents DLQ replay from repeatedly re-poisoning the same topic.
-		// A genuinely empty byte slice never reaches here — the lower length
-		// bound above refuses it by name for every content type. A non-JSON
-		// content type (e.g. application/xml) ships its
-		// payload verbatim as the record value and skips the scan; the size
-		// cap above still protects Kafka's max.message.bytes.
-		if contract.IsJSONContentType(event.DataContentType) && !json.Valid(event.Payload) {
-			return ErrNotJSON
-		}
+	// Payload must parse as JSON — but only for JSON content types. This
+	// is the line of defense that keeps malformed bytes out of consumers
+	// and prevents DLQ replay from repeatedly re-poisoning the same topic.
+	// A genuinely empty byte slice never reaches here — the lower length
+	// bound above refuses it by name for every content type. A non-JSON
+	// content type (e.g. application/xml) ships its
+	// payload verbatim as the record value and skips the scan; the size
+	// cap above still protects Kafka's max.message.bytes.
+	if contract.IsJSONContentType(event.DataContentType) && !json.Valid(event.Payload) {
+		return ErrNotJSON
 	}
 
 	return nil

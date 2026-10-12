@@ -188,7 +188,7 @@ func TestHealthy_AbsenceFromOnePollBatchIsNotProgress(t *testing.T) {
 
 	// A batch carrying no partitions at all, dropped in after the first halt:
 	// the wedged partition is absent without having made any progress.
-	script := []kgo.Fetches{poison(), {}}
+	script := append(make([]kgo.Fetches, 0, haltedCyclesUnhealthy+1), poison(), kgo.Fetches{})
 	for range haltedCyclesUnhealthy - 1 {
 		script = append(script, poison())
 	}
@@ -212,7 +212,7 @@ func TestHealthy_AbsenceFromOnePollBatchIsNotProgress(t *testing.T) {
 func TestHandleWithRetry_LogsTheHandlerErrorBehindAHalt(t *testing.T) {
 	t.Parallel()
 
-	handler := &fakeHandler{fn: func(context.Context, contract.Event, []byte) error { return transientErr }}
+	handler := &fakeHandler{fn: func(context.Context, contract.Event, []byte) error { return errTransient }}
 	spy := newSpyLogger()
 	r := newTestRuntime(t, newFakeGroupClient(), handler, &fakeDLQ{}, WithClassifier(retryClassifier), WithLogger(spy))
 
@@ -223,7 +223,7 @@ func TestHandleWithRetry_LogsTheHandlerErrorBehindAHalt(t *testing.T) {
 	}
 
 	assertHandlerErrorLine(t, spy, obs.LevelWarn, map[string]any{
-		"outcome": "halt", "offset": int64(9), "tenant_id": "tenantA", "error": transientErr.Error(),
+		"outcome": "halt", "offset": int64(9), "tenant_id": "tenantA", "error": errTransient.Error(),
 	})
 }
 
@@ -232,7 +232,7 @@ func TestHandleWithRetry_LogsTheHandlerErrorBehindAHalt(t *testing.T) {
 func TestHandleWithRetry_ShutdownLogsNoHandlerError(t *testing.T) {
 	t.Parallel()
 
-	for name, handlerErr := range map[string]error{"cancellation": context.Canceled, "transient": transientErr} {
+	for name, handlerErr := range map[string]error{"cancellation": context.Canceled, "transient": errTransient} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 

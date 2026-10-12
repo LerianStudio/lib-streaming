@@ -22,7 +22,7 @@ const emitSpanName = "streaming.emit"
 // tenant.id goes on the SPAN ONLY (never on metrics — DX-D02; the automated
 // cardinality test asserts that). The attribute is emitted ONLY when
 // TenantID is non-empty, mirroring the wire-format discipline in
-// buildCloudEventsHeaders (which omits ce-tenantid for system events).
+// cloudevents.BuildHeaders (which omits ce-tenantid for system events).
 // This keeps trace search/group-by clean: ops queries grouping by tenant
 // see no phantom empty-string bucket from system events.
 //

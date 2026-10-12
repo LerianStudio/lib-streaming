@@ -78,7 +78,6 @@ func TestIsNilInterface_Matrix(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -101,6 +100,7 @@ func TestCloneHeadersDeepCopiesValues(t *testing.T) {
 	if clone[0].Key != "ce-id" {
 		t.Fatalf("clone[0].Key = %q; want ce-id", clone[0].Key)
 	}
+
 	if string(clone[0].Value) != "event-1" {
 		t.Fatalf("clone[0].Value = %q; want event-1", string(clone[0].Value))
 	}
@@ -138,12 +138,15 @@ func TestCloneMessageDeepCopiesAdapterMutableFields(t *testing.T) {
 	if string(message.Payload) != `{"ok":true}` {
 		t.Fatalf("Payload shared backing array: %q", string(message.Payload))
 	}
+
 	if string(message.Headers[0].Value) != "evt-1" {
 		t.Fatalf("Header value shared backing array: %q", string(message.Headers[0].Value))
 	}
+
 	if message.Attributes["trace"] != "abc" {
 		t.Fatalf("Attributes map shared: %v", message.Attributes)
 	}
+
 	if message.Destination.Attributes["d"] != "1" {
 		t.Fatalf("Destination attributes map shared: %v", message.Destination.Attributes)
 	}

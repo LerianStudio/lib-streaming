@@ -83,7 +83,7 @@ func TestSourceVerification_RunsAheadOfEveryHandlerMode(t *testing.T) {
 				t.Fatalf("DLQ count = %d; want 1 (a foreign ce-source must quarantine)", dlq.count())
 			}
 
-			cause, kind := dlq.lastCause()
+			kind, cause := dlq.lastCause()
 			if kind != dlqCauseSourceMismatch {
 				t.Errorf("cause kind = %q; want %q", kind, dlqCauseSourceMismatch)
 			}

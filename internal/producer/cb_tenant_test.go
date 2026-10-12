@@ -45,6 +45,7 @@ func TestProducer_TenantAwareCircuitBreakersIsolateTenants(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewProducerMulti() error = %v", err)
 	}
+
 	t.Cleanup(func() { _ = p.Close() })
 
 	if p.tenantCBManager == nil {
@@ -52,6 +53,7 @@ func TestProducer_TenantAwareCircuitBreakersIsolateTenants(t *testing.T) {
 	}
 
 	primary.SetPublishError(errors.New("tenant-a upstream outage"))
+
 	if err := p.Emit(ctx, tenantRequest("tenant_a")); err == nil {
 		t.Fatal("tenant_a first Emit error = nil; want broker failure to trip tenant breaker")
 	}
@@ -62,6 +64,7 @@ func TestProducer_TenantAwareCircuitBreakersIsolateTenants(t *testing.T) {
 	}
 
 	primary.SetPublishError(nil)
+
 	if err := p.Emit(ctx, tenantRequest("tenant_b")); err != nil {
 		t.Fatalf("tenant_b Emit error = %v; want nil (tenant_a breaker must not poison tenant_b)", err)
 	}
@@ -109,14 +112,17 @@ func TestProducer_TenantAwareCircuitOpenOutboxFallbackWritesEnvelope(t *testing.
 	if err != nil {
 		t.Fatalf("NewProducerMulti() error = %v", err)
 	}
+
 	t.Cleanup(func() { _ = p.Close() })
 
 	primary.SetPublishError(errors.New("tenant-a upstream outage"))
+
 	if err := p.Emit(ctx, tenantRequest("tenant_a")); err == nil {
 		t.Fatal("tenant_a first Emit error = nil; want broker failure to trip tenant breaker")
 	}
 
 	primary.SetPublishError(nil)
+
 	if err := p.Emit(ctx, tenantRequest("tenant_a")); err != nil {
 		t.Fatalf("tenant_a second Emit error = %v; want nil (tenant-scoped outbox fallback)", err)
 	}
@@ -124,9 +130,11 @@ func TestProducer_TenantAwareCircuitOpenOutboxFallbackWritesEnvelope(t *testing.
 	if got := len(primary.Messages()); got != 0 {
 		t.Fatalf("primary published after tenant_a open retry = %d; want 0", got)
 	}
+
 	if got := len(writer.envelopes); got != 1 {
 		t.Fatalf("writer envelopes = %d; want 1", got)
 	}
+
 	if got := writer.envelopes[0]; got.Target != "primary" || got.RouteKey != "transaction.created.kafka.primary" || got.Event.TenantID != "tenant_a" {
 		t.Fatalf("outbox envelope = %+v; want primary route for tenant_a", got)
 	}
@@ -134,6 +142,7 @@ func TestProducer_TenantAwareCircuitOpenOutboxFallbackWritesEnvelope(t *testing.
 	if err := p.Emit(ctx, tenantRequest("tenant_b")); err != nil {
 		t.Fatalf("tenant_b Emit error = %v; want nil (tenant_a outbox fallback must not poison tenant_b)", err)
 	}
+
 	if got := len(primary.Messages()); got != 1 {
 		t.Fatalf("primary published after tenant_b = %d; want 1", got)
 	}
@@ -144,6 +153,7 @@ func TestProducer_TenantAwareCircuitBreakerSkipsSystemEvents(t *testing.T) {
 
 	ctx := context.Background()
 	primary := fake.NewAdapter(TransportKafkaLike)
+
 	catalog, err := NewCatalog(EventDefinition{
 		Key:             "ledger.rolled_over",
 		ResourceType:    "ledger",
@@ -155,6 +165,7 @@ func TestProducer_TenantAwareCircuitBreakerSkipsSystemEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCatalog() error = %v", err)
 	}
+
 	routes, err := contract.NewRouteTable(
 		multiTestRoute("ledger.rolled-over.kafka.primary", "ledger.rolled_over", "primary", "lerian.streaming.ledger.rolled_over", contract.RouteRequired),
 	)
@@ -181,10 +192,13 @@ func TestProducer_TenantAwareCircuitBreakerSkipsSystemEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewProducerMulti() error = %v", err)
 	}
+
 	t.Cleanup(func() { _ = p.Close() })
 
 	req := EmitRequest{DefinitionKey: "ledger.rolled_over", TenantID: "tenant_a", Payload: []byte(`{}`)}
+
 	primary.SetPublishError(errors.New("system upstream outage"))
+
 	if err := p.Emit(ctx, req); err == nil {
 		t.Fatal("system event first Emit error = nil; want broker failure to trip no-tenant breaker")
 	}
@@ -193,11 +207,13 @@ func TestProducer_TenantAwareCircuitBreakerSkipsSystemEvents(t *testing.T) {
 	if got := p.tenantCBManager.GetStateForTenant("tenant_a", serviceName); got != circuitbreaker.StateUnknown {
 		t.Fatalf("tenant-scoped system breaker state = %s; want unknown", got)
 	}
+
 	if got := p.cbManager.GetState(serviceName); got != circuitbreaker.StateOpen {
 		t.Fatalf("no-tenant system breaker state = %s; want open", got)
 	}
 
 	primary.SetPublishError(nil)
+
 	if err := p.Emit(ctx, req); !errors.Is(err, ErrCircuitOpen) {
 		t.Fatalf("system event second Emit error = %v; want ErrCircuitOpen from no-tenant breaker", err)
 	}
@@ -231,9 +247,11 @@ func TestProducer_TenantAwareRecoveryPokesRegisteredTenantBreakers(t *testing.T)
 	if err != nil {
 		t.Fatalf("NewProducerMulti() error = %v", err)
 	}
+
 	t.Cleanup(func() { _ = p.Close() })
 
 	primary.SetPublishError(errors.New("tenant-a upstream outage"))
+
 	if err := p.Emit(ctx, tenantRequest("tenant_a")); err == nil {
 		t.Fatal("tenant_a first Emit error = nil; want broker failure to trip tenant breaker")
 	}
@@ -244,14 +262,18 @@ func TestProducer_TenantAwareRecoveryPokesRegisteredTenantBreakers(t *testing.T)
 	}
 
 	deadline := time.Now().Add(500 * time.Millisecond)
+
 	for {
 		p.pokeAllTargetCBs()
+
 		if got := p.tenantCBManager.GetStateForTenant("tenant_a", serviceName); got == circuitbreaker.StateHalfOpen {
 			return
 		}
+
 		if time.Now().After(deadline) {
 			break
 		}
+
 		time.Sleep(10 * time.Millisecond)
 	}
 
@@ -284,19 +306,23 @@ func TestCircuitBreakerTenantIDScope(t *testing.T) {
 			if ok != tc.wantOK {
 				t.Fatalf("circuitBreakerTenantID ok = %v; want %v", ok, tc.wantOK)
 			}
+
 			if !tc.wantOK {
 				return
 			}
+
 			if tc.wantHash {
 				if got == tc.event.TenantID {
 					t.Fatal("circuitBreakerTenantID returned raw invalid tenant ID; want safe surrogate")
 				}
+
 				if !strings.HasPrefix(got, circuitBreakerTenantPrefix) {
 					t.Fatalf("circuitBreakerTenantID = %q; want %q prefix", got, circuitBreakerTenantPrefix)
 				}
 			} else if got != tc.want {
 				t.Fatalf("circuitBreakerTenantID = %q; want %q", got, tc.want)
 			}
+
 			if !tmcore.IsValidTenantID(got) {
 				t.Fatalf("circuitBreakerTenantID = %q; want tenant-manager-valid ID", got)
 			}

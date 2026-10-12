@@ -99,8 +99,9 @@ func requireStreamingEmitSpan(t *testing.T, spans tracetest.SpanStubs) tracetest
 func spanAttrs(s tracetest.SpanStub) map[string]string {
 	out := make(map[string]string, len(s.Attributes))
 	for _, kv := range s.Attributes {
-		out[string(kv.Key)] = kv.Value.Emit()
+		out[string(kv.Key)] = kv.Value.String()
 	}
+
 	return out
 }
 
@@ -122,12 +123,14 @@ func TestEmit_Span_SingleStreamingEmitSpan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
+
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	event := sampleEvent()
+
 	request := eventToRequest(event)
 	if err := emitter.Emit(ctx, request); err != nil {
 		t.Fatalf("Emit err = %v", err)
@@ -205,6 +208,7 @@ func TestEmit_Span_PreflightFailure_NoSpan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
+
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	bad := sampleRequest()
@@ -240,6 +244,7 @@ func TestEmit_Span_DebugLevelEmitsMessageKey(t *testing.T) {
 		if err != nil {
 			t.Fatalf("New err = %v", err)
 		}
+
 		t.Cleanup(func() { _ = emitter.Close() })
 
 		event := sampleRequest()
@@ -254,6 +259,7 @@ func TestEmit_Span_DebugLevelEmitsMessageKey(t *testing.T) {
 		if !ok {
 			t.Fatalf("messaging.kafka.message.key absent with DEBUG logger; want present")
 		}
+
 		if got != event.TenantID {
 			t.Errorf("messaging.kafka.message.key = %q; want %q (tenant ID)",
 				got, event.TenantID)
@@ -269,6 +275,7 @@ func TestEmit_Span_DebugLevelEmitsMessageKey(t *testing.T) {
 		if err != nil {
 			t.Fatalf("New err = %v", err)
 		}
+
 		t.Cleanup(func() { _ = emitter.Close() })
 
 		if err := emitter.Emit(context.Background(), sampleRequest()); err != nil {
@@ -295,11 +302,13 @@ func TestEmit_SpanError_RecordedOnFailure(t *testing.T) {
 		kerr.MessageTooLarge.Code)
 
 	tracer, getSpans := newSpanRecorder(t)
+
 	emitter, err := New(context.Background(), cfg,
 		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)), WithTracer(tracer))
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
+
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -314,6 +323,7 @@ func TestEmit_SpanError_RecordedOnFailure(t *testing.T) {
 	// Multi-target dispatch surfaces required-route failure as a
 	// structured span event named "route.required_failed".
 	foundFailureEvent := false
+
 	for _, ev := range span.Events {
 		if ev.Name == "route.required_failed" {
 			foundFailureEvent = true
@@ -334,6 +344,7 @@ func spanEventNames(s tracetest.SpanStub) []string {
 	for _, e := range s.Events {
 		names = append(names, e.Name)
 	}
+
 	return names
 }
 
@@ -354,6 +365,7 @@ func TestEmit_Span_NilTracerFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
+
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	p := asProducer(t, emitter)
@@ -378,6 +390,7 @@ func TestEmit_Span_IsRecordingFastPath(t *testing.T) {
 
 	// A tracer with no SpanProcessor never records; span.IsRecording == false.
 	provider := sdktrace.NewTracerProvider(sdktrace.WithSampler(sdktrace.NeverSample()))
+
 	t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
 
 	emitter, err := New(context.Background(), cfg,
@@ -386,6 +399,7 @@ func TestEmit_Span_IsRecordingFastPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
+
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	// The sole assertion is "no panic + Emit success" — when the tracer
@@ -411,6 +425,7 @@ func TestEmit_Span_AttributeCountInvariant(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
+
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	if err := emitter.Emit(context.Background(), sampleRequest()); err != nil {
@@ -465,5 +480,6 @@ func mapKeys(m map[string]struct{}) []string {
 	for k := range m {
 		keys = append(keys, k)
 	}
+
 	return keys
 }

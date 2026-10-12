@@ -23,8 +23,9 @@ import (
 // pointer flip and concurrent tests would observe whichever logger is
 // current. Mirror event_topic_assert_test.go's discipline.
 func TestNewRouteDefinition_DLQKindMismatch_StillReturnsSentinel(t *testing.T) {
-	cap := newCaptureContractLogger()
-	prev := setContractAsserterLogger(cap)
+	logs := newCaptureContractLogger()
+	prev := setContractAsserterLogger(logs)
+
 	t.Cleanup(func() { setContractAsserterLogger(prev) })
 
 	kafkaDLQ := Destination{Kind: TransportKafkaLike, Name: "tx.dlq"}
@@ -43,7 +44,7 @@ func TestNewRouteDefinition_DLQKindMismatch_StillReturnsSentinel(t *testing.T) {
 		t.Fatalf("NewRouteDefinition() error = %v; want errors.Is(ErrInvalidRouteDefinition)", err)
 	}
 
-	if !cap.containsMessage("ASSERTION FAILED") {
+	if !logs.loggedAssertionFailure() {
 		t.Fatal("expected asserter trident to fire on DLQ kind mismatch")
 	}
 }

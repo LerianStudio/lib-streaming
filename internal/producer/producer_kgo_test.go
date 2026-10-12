@@ -37,6 +37,7 @@ func TestResolveCompression_Table(t *testing.T) {
 				if err != nil {
 					t.Errorf("resolveCompression(%q) err = %v; want nil", tt.input, err)
 				}
+
 				return
 			}
 
@@ -74,6 +75,7 @@ func TestResolveAcks_Table(t *testing.T) {
 				if err != nil {
 					t.Errorf("resolveAcks(%q) err = %v; want nil", tt.input, err)
 				}
+
 				return
 			}
 

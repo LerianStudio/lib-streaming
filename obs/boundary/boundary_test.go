@@ -418,26 +418,30 @@ func (idx *index) scanFile(path, rel, dir string) ([]violation, error) {
 
 			report(d.Type, symbolName(d))
 		case *ast.GenDecl:
-			for _, spec := range d.Specs {
-				switch s := spec.(type) {
-				case *ast.TypeSpec:
-					if !s.Name.IsExported() {
-						continue
-					}
-
-					reportExportedFields(s, report)
-				case *ast.ValueSpec:
-					for _, name := range s.Names {
-						if name.IsExported() && s.Type != nil {
-							report(s.Type, name.Name)
-						}
-					}
-				}
-			}
+			reportGenDecl(d, report)
 		}
 	}
 
 	return violations, nil
+}
+
+// reportGenDecl reports the exported types and typed values of a declaration
+// group.
+func reportGenDecl(decl *ast.GenDecl, report func(ast.Node, string)) {
+	for _, spec := range decl.Specs {
+		switch s := spec.(type) {
+		case *ast.TypeSpec:
+			if s.Name.IsExported() {
+				reportExportedFields(s, report)
+			}
+		case *ast.ValueSpec:
+			for _, name := range s.Names {
+				if name.IsExported() && s.Type != nil {
+					report(s.Type, name.Name)
+				}
+			}
+		}
+	}
 }
 
 // reportExportedFields reports the exported fields and interface methods of a

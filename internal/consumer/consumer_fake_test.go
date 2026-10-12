@@ -157,11 +157,11 @@ func (f *fakeGroupClient) applyCursor(fetches kgo.Fetches) kgo.Fetches {
 		for _, ft := range fetch.Topics {
 			parts := make([]kgo.FetchPartition, 0, len(ft.Partitions))
 			for _, fp := range ft.Partitions {
-				min, ok := f.cursor[topicPartition{ft.Topic, fp.Partition}]
+				minOffset, ok := f.cursor[topicPartition{ft.Topic, fp.Partition}]
 				if ok {
 					kept := fp.Records[:0:0]
 					for _, r := range fp.Records {
-						if r.Offset >= min {
+						if r.Offset >= minOffset {
 							kept = append(kept, r)
 						}
 					}
@@ -230,6 +230,7 @@ func (f *fakeGroupClient) committedWatermarks() map[topicPartition]int64 {
 	defer f.mu.Unlock()
 
 	out := make(map[topicPartition]int64)
+
 	for _, batch := range f.commits {
 		for _, rec := range batch {
 			tp := topicPartition{topic: rec.Topic, partition: rec.Partition}
@@ -291,16 +292,16 @@ func (d *fakeDLQ) count() int {
 	return len(d.calls)
 }
 
-// lastCause returns the cause and cause kind of the most recent quarantine.
-func (d *fakeDLQ) lastCause() (error, string) {
+// lastCause returns the cause kind and cause of the most recent quarantine.
+func (d *fakeDLQ) lastCause() (string, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
 	if len(d.causes) == 0 {
-		return nil, ""
+		return "", nil
 	}
 
-	return d.causes[len(d.causes)-1], d.causeKinds[len(d.causeKinds)-1]
+	return d.causeKinds[len(d.causeKinds)-1], d.causes[len(d.causes)-1]
 }
 
 func (d *fakeDLQ) closeCount() int {
@@ -321,12 +322,14 @@ type fakeHandler struct {
 
 func (h *fakeHandler) Handle(ctx context.Context, ev contract.Event, payload []byte) error {
 	h.mu.Lock()
+
 	h.calls++
 	if tid, ok := ctx.Value(tenantContextKey{}).(string); ok {
 		h.tenant = append(h.tenant, tid)
 	} else {
 		h.tenant = append(h.tenant, "")
 	}
+
 	fn := h.fn
 	h.mu.Unlock()
 
@@ -468,7 +471,12 @@ func newTestRuntimeCfg(t testingTB, mutate func(*ConsumerConfig), client GroupCl
 		t.Fatalf("New: %v", err)
 	}
 
-	return r.(*consumerRuntime)
+	rt, ok := r.(*consumerRuntime)
+	if !ok {
+		t.Fatalf("New returned %T; want *consumerRuntime", r)
+	}
+
+	return rt
 }
 
 // testingTB is the subset of *testing.T the helpers use (keeps the import light).

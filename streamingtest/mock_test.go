@@ -5,6 +5,7 @@ package streamingtest
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -38,6 +39,7 @@ func TestMockEmitter_CaptureAndEvents(t *testing.T) {
 	if len(got) != len(requests) {
 		t.Fatalf("len(Requests()) = %d; want %d", len(got), len(requests))
 	}
+
 	for i, request := range requests {
 		if got[i].DefinitionKey != request.DefinitionKey || got[i].TenantID != request.TenantID {
 			t.Errorf("Requests()[%d] = %+v; want %+v", i, got[i], request)
@@ -102,6 +104,7 @@ func TestMockEmitter_RequestsReturnsDeepCopy(t *testing.T) {
 	if string(second.Payload) != `{"amount":100}` {
 		t.Fatalf("Requests() payload snapshot was not deep-copied: %q", string(second.Payload))
 	}
+
 	if second.PolicyOverride.Enabled == nil || !*second.PolicyOverride.Enabled {
 		t.Fatalf("Requests() PolicyOverride.Enabled snapshot was not deep-copied: %v", second.PolicyOverride.Enabled)
 	}
@@ -117,15 +120,17 @@ func TestMockEmitter_SetError(t *testing.T) {
 	m.SetError(ErrPayloadTooLarge)
 
 	err := m.Emit(ctx, EmitRequest{DefinitionKey: "transaction.created", TenantID: "t-1"})
-	if err != ErrPayloadTooLarge {
+	if !errors.Is(err, ErrPayloadTooLarge) {
 		t.Errorf("Emit() err = %v; want ErrPayloadTooLarge", err)
 	}
+
 	if got := len(m.Requests()); got != 0 {
 		t.Fatalf("errored Emit captured %d requests; want 0", got)
 	}
 
 	// Clearing restores the happy path.
 	m.SetError(nil)
+
 	if err := m.Emit(ctx, EmitRequest{DefinitionKey: "transaction.created", TenantID: "t-1"}); err != nil {
 		t.Errorf("Emit after SetError(nil) returned error: %v", err)
 	}
@@ -141,6 +146,7 @@ func TestMockEmitter_Reset(t *testing.T) {
 	if err := m.Emit(ctx, EmitRequest{DefinitionKey: "transaction.created", TenantID: "t-1"}); err != nil {
 		t.Fatalf("Emit() error = %v", err)
 	}
+
 	if err := m.Emit(ctx, EmitRequest{DefinitionKey: "account.updated", TenantID: "t-1"}); err != nil {
 		t.Fatalf("Emit() error = %v", err)
 	}
@@ -169,9 +175,11 @@ func TestMockEmitter_ConcurrentEmits(t *testing.T) {
 
 	var wg sync.WaitGroup
 	wg.Add(n)
-	for i := 0; i < n; i++ {
+
+	for i := range n {
 		go func(i int) {
 			defer wg.Done()
+
 			if err := m.Emit(ctx, EmitRequest{
 				DefinitionKey: "transaction.created",
 				TenantID:      fmt.Sprintf("t-%d", i),
@@ -180,6 +188,7 @@ func TestMockEmitter_ConcurrentEmits(t *testing.T) {
 			}
 		}(i)
 	}
+
 	wg.Wait()
 
 	if got := len(m.Requests()); got != n {
@@ -197,6 +206,7 @@ func TestMockEmitter_CloseHealthy(t *testing.T) {
 	if err := m.Healthy(ctx); err != nil {
 		t.Errorf("Healthy() = %v; want nil", err)
 	}
+
 	if err := m.Close(); err != nil {
 		t.Errorf("Close() = %v; want nil", err)
 	}
@@ -216,6 +226,7 @@ func TestMockEmitter_NilReceiver(t *testing.T) {
 	if err := m.Emit(context.Background(), EmitRequest{}); err != nil {
 		t.Errorf("nil.Emit = %v; want nil", err)
 	}
+
 	if got := m.Requests(); got != nil {
 		t.Errorf("nil.Requests = %v; want nil", got)
 	}
@@ -226,6 +237,7 @@ func TestMockEmitter_NilReceiver(t *testing.T) {
 	if err := m.Close(); err != nil {
 		t.Errorf("nil.Close = %v; want nil", err)
 	}
+
 	if err := m.Healthy(context.Background()); err != nil {
 		t.Errorf("nil.Healthy = %v; want nil", err)
 	}
@@ -265,11 +277,13 @@ func TestWaitForEvent_DeterministicMatch(t *testing.T) {
 
 	synctest.Test(t, func(t *testing.T) {
 		m := NewMockEmitter()
+
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
 		go func() {
 			time.Sleep(10 * time.Millisecond)
+
 			if err := m.Emit(ctx, EmitRequest{DefinitionKey: "transaction.created", TenantID: "t-1"}); err != nil {
 				t.Errorf("Emit() error = %v", err)
 			}
@@ -296,6 +310,7 @@ func TestWaitForEvent_NilContext(t *testing.T) {
 
 		go func() {
 			time.Sleep(5 * time.Millisecond)
+
 			if err := m.Emit(context.Background(), EmitRequest{
 				DefinitionKey: "transaction.created",
 				TenantID:      "t-1",
@@ -304,7 +319,6 @@ func TestWaitForEvent_NilContext(t *testing.T) {
 			}
 		}()
 
-		//nolint:staticcheck // intentional nil ctx to verify fallback
 		got := WaitForEvent(t, nil, m, func(request EmitRequest) bool {
 			return request.DefinitionKey == "transaction.created"
 		}, 1*time.Second)

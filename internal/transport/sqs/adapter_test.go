@@ -91,6 +91,7 @@ func TestSQS_Publish_ForwardsBodyAndAttributes(t *testing.T) {
 	t.Parallel()
 
 	client := &fakeClient{}
+
 	a, err := New(client, "")
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
@@ -110,6 +111,7 @@ func TestSQS_Publish_ForwardsBodyAndAttributes(t *testing.T) {
 	if call.queueURL != "https://sqs.us-east-1.amazonaws.com/123/q" {
 		t.Errorf("queueURL = %q", call.queueURL)
 	}
+
 	if string(call.body) != `{"hello":"world"}` {
 		t.Errorf("body = %q", string(call.body))
 	}
@@ -119,10 +121,12 @@ func TestSQS_Publish_ForwardsBodyAndAttributes(t *testing.T) {
 		"ce-source": "svc-test",
 		"x-trace":   "trc-1",
 	}
+
 	got := map[string]string{}
 	for _, a := range call.attributes {
 		got[a.Key] = string(a.Value)
 	}
+
 	for k, v := range wantKeys {
 		if got[k] != v {
 			t.Errorf("attribute %q = %q; want %q", k, got[k], v)
@@ -141,6 +145,7 @@ func TestSQS_Publish_HonorsDestinationAddress(t *testing.T) {
 	defaultURL := "https://sqs.us-east-1.amazonaws.com/123/default"
 	overrideURL := "https://sqs.us-east-1.amazonaws.com/123/override"
 	client := &fakeClient{}
+
 	a, err := New(client, defaultURL)
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
@@ -176,6 +181,7 @@ func TestSQS_Publish_PayloadCap(t *testing.T) {
 
 	client := &fakeClient{}
 	a, _ := New(client, "")
+
 	tooBig := make([]byte, MaxBodyBytes+1)
 	for i := range tooBig {
 		tooBig[i] = 'a'
@@ -186,6 +192,7 @@ func TestSQS_Publish_PayloadCap(t *testing.T) {
 	if err := a.Publish(context.Background(), msg); !errors.Is(err, contract.ErrPayloadTooLarge) {
 		t.Errorf("Publish() error = %v; want ErrPayloadTooLarge", err)
 	}
+
 	if len(client.calls) != 0 {
 		t.Fatalf("SendMessage calls = %d; want 0 for oversized payload", len(client.calls))
 	}
@@ -202,6 +209,7 @@ func TestSQS_Publish_AttributeWireSizeCap(t *testing.T) {
 	if err := a.Publish(context.Background(), msg); !errors.Is(err, contract.ErrPayloadTooLarge) {
 		t.Fatalf("Publish() error = %v; want ErrPayloadTooLarge", err)
 	}
+
 	if len(client.calls) != 0 {
 		t.Fatalf("SendMessage calls = %d; want 0 for oversized wire message", len(client.calls))
 	}
@@ -229,9 +237,11 @@ func TestSQS_Publish_PacksOverflowAttributes(t *testing.T) {
 	if err := a.Publish(context.Background(), msg); err != nil {
 		t.Fatalf("Publish() error = %v; want nil with packed overflow metadata", err)
 	}
+
 	if len(client.calls) != 1 {
 		t.Fatalf("SendMessage calls = %d; want 1", len(client.calls))
 	}
+
 	if got := len(client.calls[0].attributes); got > maxMessageAttributes {
 		t.Fatalf("attributes = %d; want <= %d", got, maxMessageAttributes)
 	}
@@ -249,9 +259,11 @@ func TestSQS_Publish_PacksOverflowAttributes(t *testing.T) {
 	if err := json.Unmarshal([]byte(attrs[metadataOverflowAttribute]), &overflow); err != nil {
 		t.Fatalf("overflow metadata unmarshal error = %v; raw=%q", err, attrs[metadataOverflowAttribute])
 	}
+
 	if overflow["ce-subject"] != "tx-1" {
 		t.Fatalf("overflow ce-subject = %q; want tx-1", overflow["ce-subject"])
 	}
+
 	if overflow["x-lerian-dlq-error-class"] != "auth" {
 		t.Fatalf("overflow dlq class = %q; want auth", overflow["x-lerian-dlq-error-class"])
 	}
@@ -284,9 +296,11 @@ func TestSQS_Publish_KeepsTraceHeadersTopLevelWhenAttributesOverflow(t *testing.
 	for _, attr := range client.calls[0].attributes {
 		attrs[attr.Key] = string(attr.Value)
 	}
+
 	if attrs["traceparent"] == "" {
 		t.Fatalf("traceparent missing from top-level attributes: %#v", attrs)
 	}
+
 	if attrs["tracestate"] == "" {
 		t.Fatalf("tracestate missing from top-level attributes: %#v", attrs)
 	}
@@ -299,14 +313,16 @@ func TestSQS_Publish_AttributeBoundary(t *testing.T) {
 	a, _ := New(client, "")
 	msg := sampleMessage("https://sqs.us-east-1.amazonaws.com/123/q", []byte(`{}`))
 	msg.Headers = nil
+
 	msg.Attributes = map[string]string{}
-	for i := 0; i < maxMessageAttributes; i++ {
+	for i := range maxMessageAttributes {
 		msg.Attributes[string(rune('a'+i))] = "v"
 	}
 
 	if err := a.Publish(context.Background(), msg); err != nil {
 		t.Fatalf("Publish() exactly cap error = %v; want nil", err)
 	}
+
 	if got := len(client.calls[0].attributes); got != maxMessageAttributes {
 		t.Fatalf("attributes = %d; want %d", got, maxMessageAttributes)
 	}
@@ -315,6 +331,7 @@ func TestSQS_Publish_AttributeBoundary(t *testing.T) {
 	if err := a.Publish(context.Background(), msg); err != nil {
 		t.Fatalf("Publish() over cap packed error = %v; want nil", err)
 	}
+
 	if got := len(client.calls[1].attributes); got > maxMessageAttributes {
 		t.Fatalf("packed attributes = %d; want <= %d", got, maxMessageAttributes)
 	}
@@ -330,6 +347,7 @@ func TestSQS_Publish_RejectsNonAWSHost(t *testing.T) {
 	if err := a.Publish(context.Background(), msg); !errors.Is(err, contract.ErrInvalidDestination) {
 		t.Fatalf("Publish() error = %v; want ErrInvalidDestination", err)
 	}
+
 	if len(client.calls) != 0 {
 		t.Fatalf("SendMessage calls = %d; want 0 for non-AWS host", len(client.calls))
 	}
@@ -345,6 +363,7 @@ func TestSQS_Publish_RejectsQueueURLWithoutPath(t *testing.T) {
 	if err := a.Publish(context.Background(), msg); !errors.Is(err, contract.ErrInvalidDestination) {
 		t.Fatalf("Publish() error = %v; want ErrInvalidDestination", err)
 	}
+
 	if len(client.calls) != 0 {
 		t.Fatalf("SendMessage calls = %d; want 0 for URL without queue path", len(client.calls))
 	}
@@ -363,7 +382,6 @@ func TestSQS_Publish_RejectsUnsafeQueueURLShapes(t *testing.T) {
 	}
 
 	for _, queueURL := range tests {
-		queueURL := queueURL
 		t.Run(queueURL, func(t *testing.T) {
 			t.Parallel()
 
@@ -374,6 +392,7 @@ func TestSQS_Publish_RejectsUnsafeQueueURLShapes(t *testing.T) {
 			if err := a.Publish(context.Background(), msg); !errors.Is(err, contract.ErrInvalidDestination) {
 				t.Fatalf("Publish() error = %v; want ErrInvalidDestination", err)
 			}
+
 			if len(client.calls) != 0 {
 				t.Fatalf("SendMessage calls = %d; want 0 for unsafe queue URL", len(client.calls))
 			}
@@ -464,6 +483,7 @@ func TestSQS_FlushAndClose_NoOps(t *testing.T) {
 	if err := a.Flush(context.Background()); err != nil {
 		t.Errorf("Flush() error = %v; want nil", err)
 	}
+
 	if err := a.Close(context.Background()); err != nil {
 		t.Errorf("Close() error = %v; want nil", err)
 	}

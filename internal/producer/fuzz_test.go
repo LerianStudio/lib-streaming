@@ -149,9 +149,9 @@ func encodeHeaders(headers []kgo.RecordHeader) []byte {
 			continue
 		}
 
-		out = append(out, byte(len(keyBytes)))
+		out = append(out, byte(len(keyBytes))) //nolint:gosec // G115: lengths above 255 are skipped above
 		out = append(out, keyBytes...)
-		out = append(out, byte(len(h.Value)))
+		out = append(out, byte(len(h.Value))) //nolint:gosec // G115: lengths above 255 are skipped above
 		out = append(out, h.Value...)
 	}
 

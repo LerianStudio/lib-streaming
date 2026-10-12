@@ -30,6 +30,7 @@ func (a *prevalidatingAdapter) ValidateMessage(message transport.TransportMessag
 		if len(message.Payload) > 0 {
 			message.Payload[0] = 'X'
 		}
+
 		for i := range message.Headers {
 			if message.Headers[i].Key == "ce-id" && len(message.Headers[i].Value) > 0 {
 				message.Headers[i].Value[0] = 'X'
@@ -61,6 +62,7 @@ func (*prevalidatingAdapter) Classify(err error) contract.ErrorClass {
 
 func TestProducer_TransportValidationMutationDoesNotLeakToPublish(t *testing.T) {
 	adapter := &prevalidatingAdapter{mutate: true}
+
 	route, err := contract.NewRouteDefinition(contract.RouteDefinition{
 		Key:           "transaction.created.custom.primary",
 		DefinitionKey: "transaction.created",
@@ -70,6 +72,7 @@ func TestProducer_TransportValidationMutationDoesNotLeakToPublish(t *testing.T) 
 	if err != nil {
 		t.Fatalf("NewRouteDefinition() error = %v", err)
 	}
+
 	routes, err := contract.NewRouteTable(route)
 	if err != nil {
 		t.Fatalf("NewRouteTable() error = %v", err)
@@ -89,6 +92,7 @@ func TestProducer_TransportValidationMutationDoesNotLeakToPublish(t *testing.T) 
 	if err != nil {
 		t.Fatalf("NewProducerMulti() error = %v", err)
 	}
+
 	t.Cleanup(func() { _ = p.Close() })
 
 	if err := p.Emit(context.Background(), sampleRequest()); err != nil {
@@ -99,9 +103,11 @@ func TestProducer_TransportValidationMutationDoesNotLeakToPublish(t *testing.T) 
 	if !ok {
 		t.Fatal("published message not captured")
 	}
+
 	if got := string(published.Payload); got != string(sampleRequest().Payload) {
 		t.Fatalf("published payload = %q; want original %q", got, string(sampleRequest().Payload))
 	}
+
 	for _, header := range published.Headers {
 		if header.Key == "ce-id" && len(header.Value) > 0 && header.Value[0] == 'X' {
 			t.Fatalf("published ce-id header was mutated: %q", string(header.Value))
@@ -112,6 +118,7 @@ func TestProducer_TransportValidationMutationDoesNotLeakToPublish(t *testing.T) 
 func TestProducer_TransportValidationBypassesCircuitBreaker(t *testing.T) {
 	fakeMgr := newFakeCBManager()
 	adapter := &prevalidatingAdapter{validateErr: contract.ErrPayloadTooLarge}
+
 	route, err := contract.NewRouteDefinition(contract.RouteDefinition{
 		Key:           "transaction.created.custom.primary",
 		DefinitionKey: "transaction.created",
@@ -121,6 +128,7 @@ func TestProducer_TransportValidationBypassesCircuitBreaker(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRouteDefinition() error = %v", err)
 	}
+
 	routes, err := contract.NewRouteTable(route)
 	if err != nil {
 		t.Fatalf("NewRouteTable() error = %v", err)
@@ -140,15 +148,18 @@ func TestProducer_TransportValidationBypassesCircuitBreaker(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewProducerMulti() error = %v", err)
 	}
+
 	t.Cleanup(func() { _ = p.Close() })
 
 	err = p.Emit(context.Background(), sampleRequest())
 	if !errors.Is(err, contract.ErrPayloadTooLarge) {
 		t.Fatalf("Emit() error = %v; want ErrPayloadTooLarge", err)
 	}
+
 	if !contract.IsCallerError(err) {
 		t.Fatalf("Emit() error = %v; want caller-correctable", err)
 	}
+
 	if got := adapter.publishN.Load(); got != 0 {
 		t.Fatalf("Publish calls = %d; want 0 after pre-validation failure", got)
 	}
@@ -156,12 +167,15 @@ func TestProducer_TransportValidationBypassesCircuitBreaker(t *testing.T) {
 	fakeMgr.mu.Lock()
 	breaker := fakeMgr.breakers[p.targets["primary"].cbServiceName]
 	fakeMgr.mu.Unlock()
+
 	if breaker == nil {
 		t.Fatal("fake circuit breaker was not registered")
 	}
+
 	if got := breaker.executeCalls(); got != 0 {
 		t.Fatalf("circuit breaker executions = %d; want 0 for caller validation failure", got)
 	}
+
 	if got := fakeMgr.GetState(p.targets["primary"].cbServiceName); got != circuitbreaker.StateClosed {
 		t.Fatalf("circuit breaker state = %v; want closed", got)
 	}

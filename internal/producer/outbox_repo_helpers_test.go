@@ -87,7 +87,7 @@ func (f *fakeOutboxRepo) ListPendingByType(context.Context, string, int) ([]*out
 func (f *fakeOutboxRepo) ListTenants(context.Context) ([]string, error) { return nil, nil }
 
 func (f *fakeOutboxRepo) GetByID(context.Context, uuid.UUID) (*outbox.OutboxEvent, error) {
-	return nil, nil
+	return nil, nil //nolint:nilnil // no-op stub: the producer never reads a row back
 }
 
 func (f *fakeOutboxRepo) MarkPublished(context.Context, uuid.UUID, time.Time) error { return nil }

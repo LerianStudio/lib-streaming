@@ -1,6 +1,9 @@
 version: "2"
 run:
   tests: true
+  # Every test file carries a suite tag; without it the unit tests are never loaded.
+  build-tags:
+    - unit
 linters:
   enable:
     # --- Existing linters ---

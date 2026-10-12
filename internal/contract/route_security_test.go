@@ -16,22 +16,22 @@ func TestDestinationValidate_RejectsSecuritySensitiveTopology(t *testing.T) {
 		name        string
 		destination Destination
 	}{
-		{name: "URL userinfo", destination: Destination{Kind: TransportSQS, Address: "https://user:pass@sqs.us-east-1.amazonaws.com/123/queue"}},
+		{name: "URL userinfo", destination: Destination{Kind: TransportSQS, Address: "https://user:pass@sqs.us-east-1.amazonaws.com/123/queue"}}, //nolint:gosec // fake credential fixture: the test asserts it is redacted
 		{name: "credential query token", destination: Destination{Kind: TransportSQS, Address: "https://sqs.us-east-1.amazonaws.com/123/queue?X-Amz-Signature=abc"}},
 		{name: "AWS session token query key", destination: Destination{Kind: TransportSQS, Address: "https://sqs.us-east-1.amazonaws.com/123/queue?X-Amz-Security-Token=abc"}},
 		{name: "snake AWS session token attribute key", destination: Destination{Kind: TransportCustom, Name: "custom", Attributes: map[string]string{"aws_session_token": "redacted"}}},
 		{name: "snake AWS secret access key attribute key", destination: Destination{Kind: TransportCustom, Name: "custom", Attributes: map[string]string{"aws_secret_access_key": "redacted"}}},
 		{name: "snake AWS access key ID attribute key", destination: Destination{Kind: TransportCustom, Name: "custom", Attributes: map[string]string{"aws_access_key_id": "redacted"}}},
-		{name: "bare AWS AKIA value", destination: Destination{Kind: TransportCustom, Name: "custom", Attributes: map[string]string{"external_id": "AKIAIOSFODNN7EXAMPLE"}}},
+		{name: "bare AWS AKIA value", destination: Destination{Kind: TransportCustom, Name: "custom", Attributes: map[string]string{"external_id": "AKIAIOSFODNN7EXAMPLE"}}}, //nolint:gosec // fake credential fixture: the test asserts it is redacted
 		{name: "bare AWS ASIA value", destination: Destination{Kind: TransportCustom, Name: "custom", Attributes: map[string]string{"external_id": "ASIAIOSFODNN7EXAMPLE"}}},
 		{name: "bearer authorization header value", destination: Destination{Kind: TransportCustom, Name: "custom", Attributes: map[string]string{"header": "Authorization: Bearer secret-token"}}},
 		{name: "standalone basic authorization value", destination: Destination{Kind: TransportCustom, Name: "custom", Attributes: map[string]string{"header": "Basic dXNlcjpwYXNz"}}},
 		{name: "standalone token authorization value", destination: Destination{Kind: TransportCustom, Name: "custom", Attributes: map[string]string{"header": "Token abc"}}},
-		{name: "camel AWS access key query key", destination: Destination{Kind: TransportSQS, Address: "https://sqs.us-east-1.amazonaws.com/123/queue?AWSAccessKeyId=AKIAIOSFODNN7EXAMPLE"}},
+		{name: "camel AWS access key query key", destination: Destination{Kind: TransportSQS, Address: "https://sqs.us-east-1.amazonaws.com/123/queue?AWSAccessKeyId=AKIAIOSFODNN7EXAMPLE"}}, //nolint:gosec // fake credential fixture: the test asserts it is redacted
 		{name: "compound AWS credential query key", destination: Destination{Kind: TransportSQS, Address: "https://sqs.us-east-1.amazonaws.com/123/queue?X-Amz-Credential=redacted"}},
 		{name: "bare signature query key", destination: Destination{Kind: TransportSQS, Address: "https://sqs.us-east-1.amazonaws.com/123/queue?Signature=redacted"}},
 		{name: "credential query value", destination: Destination{Kind: TransportSQS, Address: "https://sqs.us-east-1.amazonaws.com/123/queue?filter=credential%3Dsecret"}},
-		{name: "camel credential query value", destination: Destination{Kind: TransportSQS, Address: "https://sqs.us-east-1.amazonaws.com/123/queue?filter=AWSAccessKeyId%3DAKIAIOSFODNN7EXAMPLE"}},
+		{name: "camel credential query value", destination: Destination{Kind: TransportSQS, Address: "https://sqs.us-east-1.amazonaws.com/123/queue?filter=AWSAccessKeyId%3DAKIAIOSFODNN7EXAMPLE"}}, //nolint:gosec // fake credential fixture: the test asserts it is redacted
 		{name: "credential fragment", destination: Destination{Kind: TransportSQS, Address: "https://sqs.us-east-1.amazonaws.com/123/queue#token=secret"}},
 		{name: "compound credential fragment", destination: Destination{Kind: TransportSQS, Address: "https://sqs.us-east-1.amazonaws.com/123/queue#X-Amz-Credential=redacted"}},
 		{name: "credential attribute key", destination: Destination{Kind: TransportCustom, Name: "custom", Attributes: map[string]string{"authorization": "Bearer redacted"}}},
@@ -47,7 +47,7 @@ func TestDestinationValidate_RejectsSecuritySensitiveTopology(t *testing.T) {
 		{name: "credential assignment in name", destination: Destination{Kind: TransportKafkaLike, Name: "events-api_key=redacted"}},
 		{name: "camel credential assignment in name", destination: Destination{Kind: TransportKafkaLike, Name: "events-apiKey=redacted"}},
 		{name: "credential assignment in non URL address", destination: Destination{Kind: TransportCustom, Address: "sink token=secret"}},
-		{name: "camel credential assignment in non URL address", destination: Destination{Kind: TransportCustom, Address: "sink AWSAccessKeyId=AKIAIOSFODNN7EXAMPLE"}},
+		{name: "camel credential assignment in non URL address", destination: Destination{Kind: TransportCustom, Address: "sink AWSAccessKeyId=AKIAIOSFODNN7EXAMPLE"}}, //nolint:gosec // fake credential fixture: the test asserts it is redacted
 		{name: "tenant token in name", destination: Destination{Kind: TransportKafkaLike, Name: "events-${tenant_id}"}},
 		{name: "tenant token in address", destination: Destination{Kind: TransportRabbitMQ, Name: "events", Address: "tenant_id.created"}},
 		{name: "tenant token in attributes", destination: Destination{Kind: TransportCustom, Name: "custom", Attributes: map[string]string{"partition": ":tenant_id"}}},
@@ -60,7 +60,6 @@ func TestDestinationValidate_RejectsSecuritySensitiveTopology(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -81,7 +80,6 @@ func TestDestinationValidate_RejectsIncompleteSQSQueuePath(t *testing.T) {
 	}
 
 	for _, raw := range tests {
-		raw := raw
 		t.Run(raw, func(t *testing.T) {
 			err := (Destination{Kind: TransportSQS, Address: raw}).Validate()
 			if !errors.Is(err, ErrInvalidDestination) {
@@ -100,7 +98,6 @@ func TestValidateSQSQueueURLShape_RejectsCredentialMaterial(t *testing.T) {
 	}
 
 	for _, raw := range tests {
-		raw := raw
 		t.Run(raw, func(t *testing.T) {
 			if err := ValidateSQSQueueURLShape(raw); !errors.Is(err, ErrInvalidDestination) {
 				t.Fatalf("ValidateSQSQueueURLShape() error = %v; want ErrInvalidDestination", err)
@@ -111,6 +108,7 @@ func TestValidateSQSQueueURLShape_RejectsCredentialMaterial(t *testing.T) {
 
 func TestResolveAndValidateSQSQueueURL_RetriesAndPreservesCause(t *testing.T) {
 	old := resolveSQSQueueURLOnce
+
 	t.Cleanup(func() { resolveSQSQueueURLOnce = old })
 
 	attempts := 0
@@ -127,6 +125,7 @@ func TestResolveAndValidateSQSQueueURL_RetriesAndPreservesCause(t *testing.T) {
 	if err := (Destination{Kind: TransportSQS, Address: "https://sqs.us-east-1.amazonaws.com/123/q"}).Validate(); err != nil {
 		t.Fatalf("Validate() after transient resolver failures error = %v; want nil", err)
 	}
+
 	if attempts != 3 {
 		t.Fatalf("resolver attempts = %d; want 3", attempts)
 	}
@@ -142,9 +141,11 @@ func TestResolveAndValidateSQSQueueURL_RetriesAndPreservesCause(t *testing.T) {
 	if !errors.Is(err, ErrInvalidDestination) {
 		t.Fatalf("Validate() error = %v; want ErrInvalidDestination", err)
 	}
+
 	if !errors.Is(err, transient) {
 		t.Fatalf("Validate() error = %v; want resolver cause preserved", err)
 	}
+
 	if attempts != sqsDNSValidationAttempts {
 		t.Fatalf("resolver attempts = %d; want %d", attempts, sqsDNSValidationAttempts)
 	}
@@ -152,6 +153,7 @@ func TestResolveAndValidateSQSQueueURL_RetriesAndPreservesCause(t *testing.T) {
 
 func TestNewRouteTable_DeduplicatesSQSResolverPerQueueURL(t *testing.T) {
 	old := resolveSQSQueueURLOnce
+
 	t.Cleanup(func() { resolveSQSQueueURLOnce = old })
 
 	attempts := 0
@@ -161,6 +163,7 @@ func TestNewRouteTable_DeduplicatesSQSResolverPerQueueURL(t *testing.T) {
 	}
 
 	destination := Destination{Kind: TransportSQS, Address: "https://sqs.us-east-1.amazonaws.com/123/q"}
+
 	_, err := NewRouteTable(
 		RouteDefinition{Key: "transaction.created.sqs.primary", DefinitionKey: "transaction.created", Target: "primary", Destination: destination},
 		RouteDefinition{Key: "transaction.updated.sqs.primary", DefinitionKey: "transaction.updated", Target: "primary", Destination: destination},
@@ -168,6 +171,7 @@ func TestNewRouteTable_DeduplicatesSQSResolverPerQueueURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRouteTable() error = %v", err)
 	}
+
 	if attempts != 1 {
 		t.Fatalf("resolver attempts = %d; want 1 for duplicate queue URL", attempts)
 	}

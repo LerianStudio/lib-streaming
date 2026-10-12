@@ -19,6 +19,7 @@ func TestOptions_ApplyAllSetsFields(t *testing.T) {
 
 	logger := log.NewNop()
 	partFn := func(_ Event) string { return "custom" }
+
 	catalog, err := NewCatalog(EventDefinition{
 		Key:          "transaction.created",
 		ResourceType: "transaction",
@@ -45,18 +46,23 @@ func TestOptions_ApplyAllSetsFields(t *testing.T) {
 	if opts.logger == nil {
 		t.Error("WithLogger did not set opts.logger")
 	}
+
 	if opts.partitionKeyFn == nil {
 		t.Error("WithPartitionKey did not set opts.partitionKeyFn")
 	}
+
 	if got := opts.partitionKeyFn(Event{}); got != "custom" {
 		t.Errorf("opts.partitionKeyFn returned %q; want custom", got)
 	}
+
 	if opts.closeTimeout != 7*time.Second {
 		t.Errorf("opts.closeTimeout = %v; want 7s", opts.closeTimeout)
 	}
+
 	if !opts.allowSystemEvents {
 		t.Error("WithAllowSystemEvents did not set opts.allowSystemEvents")
 	}
+
 	if opts.catalog.Len() != 1 {
 		t.Errorf("WithCatalog did not set opts.catalog; len = %d, want 1", opts.catalog.Len())
 	}

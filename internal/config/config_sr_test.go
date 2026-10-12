@@ -94,7 +94,7 @@ func TestLoadConfig_SchemaRegistryPasswordWithoutUsernameRejected(t *testing.T) 
 func TestLoadConfig_SchemaRegistryHTTPWithCredentialsWarns(t *testing.T) {
 	clearStreamingEnv(t)
 
-	const password = "sr-hunter2-secret"
+	const password = "sr-hunter2-secret" //nolint:gosec // fake credential fixture: the test asserts it is redacted
 
 	t.Setenv("STREAMING_ENABLED", "true")
 	t.Setenv("STREAMING_BROKERS", "localhost:9092")
@@ -182,7 +182,7 @@ func TestLoadConfig_SchemaRegistryDisabledSkipsValidation(t *testing.T) {
 func TestLoadConfig_SchemaRegistryErrorNeverLeaksPassword(t *testing.T) {
 	clearStreamingEnv(t)
 
-	const password = "sr-hunter2-secret"
+	const password = "sr-hunter2-secret" //nolint:gosec // fake credential fixture: the test asserts it is redacted
 
 	t.Setenv("STREAMING_ENABLED", "true")
 	t.Setenv("STREAMING_BROKERS", "localhost:9092")

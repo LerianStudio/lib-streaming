@@ -67,7 +67,7 @@ func (p *Producer) emitMulti(ctx context.Context, request contract.EmitRequest) 
 
 	// Caller-side validation — same gate as single-target Emit. Preflight
 	// rejections never produce a span and do not enter route fan-out.
-	if err := p.preFlightWithPayload(ctx, event, true); err != nil {
+	if err := p.preFlightWithPayload(ctx, event); err != nil {
 		p.metrics.recordEmitted(ctx, topic, outcomeCallerError)
 		return err
 	}

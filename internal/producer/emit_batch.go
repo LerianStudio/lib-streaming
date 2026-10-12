@@ -94,7 +94,7 @@ func (p *Producer) buildBatchRequestEnvelopes(
 		return nil, fmt.Errorf("streaming: outbox batch request %d: %w", requestIndex, ErrEventDisabled)
 	}
 
-	if err := p.preFlightWithPayload(ctx, resolved.Event, true); err != nil {
+	if err := p.preFlightWithPayload(ctx, resolved.Event); err != nil {
 		return nil, fmt.Errorf("streaming: validate outbox batch request %d: %w", requestIndex, err)
 	}
 

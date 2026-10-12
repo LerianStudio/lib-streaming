@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/LerianStudio/lib-observability/v4/tracing"
-	"github.com/twmb/franz-go/pkg/kgo"
 
 	"github.com/LerianStudio/lib-streaming/v4/internal/cloudevents"
 	"github.com/LerianStudio/lib-streaming/v4/internal/config"
@@ -145,18 +144,6 @@ func NewPublisherDescriptor(descriptor PublisherDescriptor) (PublisherDescriptor
 
 func NewHealthError(state HealthState, cause error) *HealthError {
 	return contract.NewHealthError(state, cause)
-}
-
-// buildCloudEventsHeaders is the cold-path kgo-typed wrapper retained for
-// internal callers that still want kgo.RecordHeader (e.g. roundtrip
-// property/benchmark tests that call ParseCloudEventsHeaders against the
-// kgo shape). The Emit hot path uses buildCloudEventsTransportHeaders →
-// cloudevents.BuildTransportHeaders directly so we no longer pay the
-// kgo→transport conversion per Emit.
-//
-//nolint:unused // referenced from _test.go files (property_test, benchmark_test).
-func buildCloudEventsHeaders(event Event) []kgo.RecordHeader {
-	return cloudevents.BuildHeaders(event)
 }
 
 // buildCloudEventsTransportHeaders is the canonical hot-path header builder

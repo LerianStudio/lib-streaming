@@ -142,7 +142,6 @@ func TestLoadConsumerConfig_Defaults(t *testing.T) {
 	if cfg.RetryInLoopMaxDwell != defaultRetryInLoopMaxDwell {
 		t.Errorf("RetryInLoopMaxDwell = %s; want default %s", cfg.RetryInLoopMaxDwell, defaultRetryInLoopMaxDwell)
 	}
-
 }
 
 // TestLoadConsumerConfig_IgnoresRetiredDLQSuffixVar proves the DLQ topic name

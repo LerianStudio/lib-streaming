@@ -14,6 +14,7 @@ import (
 
 func TestBuildTransportHeadersInjectsTraceContext(t *testing.T) {
 	previous := otel.GetTextMapPropagator()
+
 	otel.SetTextMapPropagator(propagation.TraceContext{})
 	t.Cleanup(func() { otel.SetTextMapPropagator(previous) })
 
@@ -21,6 +22,7 @@ func TestBuildTransportHeadersInjectsTraceContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TraceIDFromHex() error = %v", err)
 	}
+
 	spanID, err := trace.SpanIDFromHex("00f067aa0ba902b7")
 	if err != nil {
 		t.Fatalf("SpanIDFromHex() error = %v", err)
@@ -52,6 +54,7 @@ func TestBuildTransportHeadersInjectsTraceContext(t *testing.T) {
 	if got, want := values["traceparent"], "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"; got != want {
 		t.Fatalf("traceparent = %q; want %q", got, want)
 	}
+
 	if values["ce-id"] != "evt-1" {
 		t.Fatalf("ce-id = %q; want evt-1", values["ce-id"])
 	}

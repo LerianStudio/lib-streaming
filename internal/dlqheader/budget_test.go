@@ -5,6 +5,7 @@ package dlqheader
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -59,7 +60,7 @@ func TestTruncateErrorMessage_BoundsTheHeaderBudget(t *testing.T) {
 					t.Errorf("got %q; want an explicit truncation marker", got)
 				}
 
-				if !strings.Contains(got, fmt.Sprintf("%d", MaxErrorMessageBytes*3)) {
+				if !strings.Contains(got, strconv.Itoa(MaxErrorMessageBytes*3)) {
 					t.Errorf("got %q; want the original byte count in the marker", got)
 				}
 			},

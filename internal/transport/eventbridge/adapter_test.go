@@ -93,6 +93,7 @@ func TestEventBridge_Publish_RendersCanonicalDetail(t *testing.T) {
 	t.Parallel()
 
 	cli := &fakeClient{}
+
 	a, err := New(cli)
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
@@ -105,6 +106,7 @@ func TestEventBridge_Publish_RendersCanonicalDetail(t *testing.T) {
 	if got := len(cli.calls); got != 1 {
 		t.Fatalf("calls = %d; want 1", got)
 	}
+
 	entries := cli.calls[0].entries
 	if got := len(entries); got != 1 {
 		t.Fatalf("entries = %d; want 1", got)
@@ -114,12 +116,15 @@ func TestEventBridge_Publish_RendersCanonicalDetail(t *testing.T) {
 	if e.EventBusName != "default-bus" {
 		t.Errorf("EventBusName = %q; want default-bus", e.EventBusName)
 	}
+
 	if e.Source != "svc-test" {
 		t.Errorf("Source = %q; want svc-test", e.Source)
 	}
+
 	if e.DetailType != "studio.lerian.svc-test.transaction.created" {
 		t.Errorf("DetailType = %q; want studio.lerian.svc-test.transaction.created", e.DetailType)
 	}
+
 	if got, want := e.Resources, []string{"arn:aws:events:us-east-1:123:rule/r1"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("Resources = %v; want %v", got, want)
 	}
@@ -148,6 +153,7 @@ func TestEventBridge_Publish_RendersCanonicalDetail(t *testing.T) {
 			t.Errorf("detail missing %q", k)
 			continue
 		}
+
 		if string(got) != v {
 			t.Errorf("detail[%q] = %s; want %s", k, string(got), v)
 		}
@@ -177,6 +183,7 @@ func TestEventBridge_Publish_PayloadCap(t *testing.T) {
 	if err := a.Publish(context.Background(), msg); !errors.Is(err, contract.ErrPayloadTooLarge) {
 		t.Errorf("Publish() error = %v; want ErrPayloadTooLarge", err)
 	}
+
 	if len(cli.calls) != 0 {
 		t.Fatalf("PutEvents calls = %d; want 0 for oversized payload", len(cli.calls))
 	}
@@ -193,6 +200,7 @@ func TestEventBridge_Publish_DetailEnvelopeCap(t *testing.T) {
 	if err := a.Publish(context.Background(), msg); !errors.Is(err, contract.ErrPayloadTooLarge) {
 		t.Fatalf("Publish() error = %v; want ErrPayloadTooLarge", err)
 	}
+
 	if len(cli.calls) != 0 {
 		t.Fatalf("PutEvents calls = %d; want 0 for oversized entry", len(cli.calls))
 	}
@@ -250,6 +258,7 @@ func TestEventBridge_Publish_PerEntryFailureReturnsError(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "AccessDeniedException") {
 		t.Fatalf("Publish() error = %v; want per-entry failure", err)
 	}
+
 	if strings.Contains(err.Error(), "secret") {
 		t.Fatalf("Publish() error = %v; leaked unsanitized provider detail", err)
 	}
@@ -280,7 +289,6 @@ func TestEventBridge_Publish_ResultBranches(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -304,6 +312,7 @@ func TestEventBridge_Publish_LegacyClientDoesNotRequireResultCapability(t *testi
 	if err := a.Publish(context.Background(), sampleMessage()); err != nil {
 		t.Fatalf("Publish() legacy client error = %v; want nil", err)
 	}
+
 	if len(cli.calls) != 1 {
 		t.Fatalf("PutEvents calls = %d; want 1", len(cli.calls))
 	}
@@ -322,6 +331,7 @@ func TestEventBridge_Classify_PerEntryAuthFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("Publish() error = nil; want per-entry failure")
 	}
+
 	if got := a.Classify(err); got != contract.ClassAuth {
 		t.Fatalf("Classify(per-entry failure) = %q; want %q", got, contract.ClassAuth)
 	}
@@ -394,6 +404,7 @@ func TestEventBridge_FlushAndClose_NoOps(t *testing.T) {
 	if err := a.Flush(context.Background()); err != nil {
 		t.Errorf("Flush() error = %v; want nil", err)
 	}
+
 	if err := a.Close(context.Background()); err != nil {
 		t.Errorf("Close() error = %v; want nil", err)
 	}

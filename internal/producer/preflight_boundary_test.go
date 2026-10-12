@@ -88,12 +88,13 @@ func TestProducer_EmitPreFlight_PayloadAtExactBoundary(t *testing.T) {
 			event.Payload = json.RawMessage(payload)
 			(&event).ApplyDefaults()
 
-			err := p.preFlightWithPayload(context.Background(), event, true)
+			err := p.preFlightWithPayload(context.Background(), event)
 
 			if tt.wantErr == nil {
 				if err != nil {
 					t.Errorf("preFlight err = %v; want nil for payload size %d", err, tt.payloadSize)
 				}
+
 				return
 			}
 
@@ -159,7 +160,7 @@ func TestProducer_EmitPreFlight_TopicAtExactBoundary(t *testing.T) {
 			event.EventType = strings.Repeat("e", 120)
 			(&event).ApplyDefaults()
 
-			err := p.preFlightWithPayload(context.Background(), event, true)
+			err := p.preFlightWithPayload(context.Background(), event)
 			if !errors.Is(err, tt.wantErr) {
 				t.Fatalf("preFlight err = %v; want errors.Is(%v)", err, tt.wantErr)
 			}

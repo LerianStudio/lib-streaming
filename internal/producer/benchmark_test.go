@@ -14,6 +14,7 @@ import (
 	"github.com/twmb/franz-go/pkg/kfake"
 
 	"github.com/LerianStudio/lib-observability/v4/log"
+	"github.com/LerianStudio/lib-streaming/v4/internal/cloudevents"
 	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
 	"github.com/LerianStudio/lib-streaming/v4/internal/transport/fake"
 	"github.com/LerianStudio/lib-streaming/v4/internal/transport/kafka"
@@ -36,8 +37,8 @@ import (
 
 // kfakeBenchConfig is the *testing.B twin of kfakeConfig. Same kfake cluster
 // shape and Config defaults, but accepts testing.TB so the helper serves
-// benchmarks. The returned cluster is registered for teardown via b.Cleanup.
-func kfakeBenchConfig(tb testing.TB) (Config, *kfake.Cluster) {
+// benchmarks. The cluster is closed via tb.Cleanup.
+func kfakeBenchConfig(tb testing.TB) Config {
 	tb.Helper()
 
 	cluster, err := kfake.NewCluster(
@@ -68,7 +69,7 @@ func kfakeBenchConfig(tb testing.TB) (Config, *kfake.Cluster) {
 		CBTimeout:             5 * time.Second,
 		CloseTimeout:          5 * time.Second,
 		CloudEventsSource:     "bench",
-	}, cluster
+	}
 }
 
 // kfakeBenchDLQConfig adds the DLQ topic alongside the source so DLQ-routed
@@ -114,12 +115,13 @@ func kfakeBenchDLQConfig(tb testing.TB) (Config, *kfake.Cluster) {
 func BenchmarkEmit_HappyPath(b *testing.B) {
 	b.ReportAllocs()
 
-	cfg, _ := kfakeBenchConfig(b)
+	cfg := kfakeBenchConfig(b)
 
 	p, err := NewProducer(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(b)))
 	if err != nil {
 		b.Fatalf("NewProducer err = %v", err)
 	}
+
 	b.Cleanup(func() { _ = p.Close() })
 
 	ctx := context.Background()
@@ -138,7 +140,7 @@ func BenchmarkEmit_HappyPath(b *testing.B) {
 func BenchmarkEmit_CircuitOpenOutbox(b *testing.B) {
 	b.ReportAllocs()
 
-	cfg, _ := kfakeBenchConfig(b)
+	cfg := kfakeBenchConfig(b)
 	repo := &fakeOutboxRepo{}
 
 	p, err := NewProducer(context.Background(), cfg,
@@ -148,6 +150,7 @@ func BenchmarkEmit_CircuitOpenOutbox(b *testing.B) {
 	if err != nil {
 		b.Fatalf("NewProducer err = %v", err)
 	}
+
 	b.Cleanup(func() { _ = p.Close() })
 
 	// Force the primary target's CB mirror OPEN so every Emit takes the
@@ -180,6 +183,7 @@ func BenchmarkEmit_DLQRoute(b *testing.B) {
 	if err != nil {
 		b.Fatalf("NewProducer err = %v", err)
 	}
+
 	b.Cleanup(func() { _ = p.Close() })
 
 	ctx := context.Background()
@@ -224,7 +228,8 @@ func BenchmarkClassifyError(b *testing.B) {
 func BenchmarkSanitizeBrokerURL(b *testing.B) {
 	b.Run("with_credentials", func(b *testing.B) {
 		b.ReportAllocs()
-		s := "dial sasl://admin:hunter2@broker.example.com:9092 failed: connection refused"
+
+		s := "dial sasl://admin:hunter2@broker.example.com:9092 failed: connection refused" //nolint:gosec // fake credential fixture: the test asserts it is redacted
 		for b.Loop() {
 			_ = sanitizeBrokerURL(s)
 		}
@@ -232,6 +237,7 @@ func BenchmarkSanitizeBrokerURL(b *testing.B) {
 
 	b.Run("no_credentials", func(b *testing.B) {
 		b.ReportAllocs()
+
 		s := "ordinary error with no credentials and no URL shape"
 		for b.Loop() {
 			_ = sanitizeBrokerURL(s)
@@ -251,7 +257,7 @@ func BenchmarkBuildCloudEventsHeaders(b *testing.B) {
 	event.Subject = "aggregate-1"
 
 	for b.Loop() {
-		_ = buildCloudEventsHeaders(event)
+		_ = cloudevents.BuildHeaders(event)
 	}
 }
 
@@ -274,7 +280,7 @@ func BenchmarkApplyDefaults(b *testing.B) {
 
 // BenchmarkParseCloudEventsHeaders measures header-map parsing for a
 // realistic header set. Uses the header slice produced by
-// buildCloudEventsHeaders so it mirrors the exact on-wire shape.
+// cloudevents.BuildHeaders so it mirrors the exact on-wire shape.
 func BenchmarkParseCloudEventsHeaders(b *testing.B) {
 	b.ReportAllocs()
 
@@ -282,7 +288,7 @@ func BenchmarkParseCloudEventsHeaders(b *testing.B) {
 	(&event).ApplyDefaults()
 	event.DataSchema = "https://schemas.lerian.test/tx.json"
 
-	headers := buildCloudEventsHeaders(event)
+	headers := cloudevents.BuildHeaders(event)
 
 	for b.Loop() {
 		if _, err := ParseCloudEventsHeaders(headers); err != nil {
@@ -313,7 +319,7 @@ func BenchmarkPreFlight(b *testing.B) {
 	ctx := context.Background()
 
 	for b.Loop() {
-		if err := p.preFlightWithPayload(ctx, event, true); err != nil {
+		if err := p.preFlightWithPayload(ctx, event); err != nil {
 			b.Fatalf("preFlight err = %v", err)
 		}
 	}
@@ -326,6 +332,7 @@ func BenchmarkPreFlight(b *testing.B) {
 func BenchmarkEvent_Topic(b *testing.B) {
 	b.Run("v1_default", func(b *testing.B) {
 		b.ReportAllocs()
+
 		event := Event{
 			ResourceType:  "transaction",
 			EventType:     "created",
@@ -338,6 +345,7 @@ func BenchmarkEvent_Topic(b *testing.B) {
 
 	b.Run("v2_semver", func(b *testing.B) {
 		b.ReportAllocs()
+
 		event := Event{
 			ResourceType:  "transaction",
 			EventType:     "created",
@@ -350,6 +358,7 @@ func BenchmarkEvent_Topic(b *testing.B) {
 
 	b.Run("empty_version", func(b *testing.B) {
 		b.ReportAllocs()
+
 		event := Event{
 			ResourceType: "transaction",
 			EventType:    "created",
@@ -446,7 +455,7 @@ func multiTargetFanoutSetup(tb testing.TB, routeCount int) (*Producer, EmitReque
 	cat := multiTargetFanoutCatalog(tb)
 
 	specs := make([]TargetSpec, 0, routeCount)
-	for i := 0; i < routeCount; i++ {
+	for i := range routeCount {
 		specs = append(specs, TargetSpec{
 			Name:    fmt.Sprintf("target-%d", i),
 			Kind:    TransportKafkaLike,
@@ -455,7 +464,7 @@ func multiTargetFanoutSetup(tb testing.TB, routeCount int) (*Producer, EmitReque
 	}
 
 	defs := make([]contract.RouteDefinition, 0, routeCount)
-	for i := 0; i < routeCount; i++ {
+	for i := range routeCount {
 		defs = append(defs, contract.RouteDefinition{
 			Key:           fmt.Sprintf("fanout.event.kafka.target-%d", i),
 			DefinitionKey: "fanout.event",

@@ -224,6 +224,7 @@ func TestProducer_RunContext_AlreadyClosed_ReturnsImmediately(t *testing.T) {
 		if runErr != nil {
 			t.Errorf("RunContext on closed Producer err = %v; want nil", runErr)
 		}
+
 		if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
 			t.Errorf("RunContext returned after %v; want <500ms for already-closed", elapsed)
 		}
@@ -274,6 +275,7 @@ func TestProducer_RunContext_WithLauncher_LogsStartAndStop(t *testing.T) {
 		if m == "streaming producer started" {
 			startFound = true
 		}
+
 		if m == "streaming producer stopped" {
 			stopFound = true
 		}
@@ -282,6 +284,7 @@ func TestProducer_RunContext_WithLauncher_LogsStartAndStop(t *testing.T) {
 	if !startFound {
 		t.Errorf("expected 'started' log; got messages: %v", got)
 	}
+
 	if !stopFound {
 		t.Errorf("expected 'stopped' log; got messages: %v", got)
 	}
@@ -298,7 +301,7 @@ func TestProducer_Close_IdempotentAcrossThreeCalls(t *testing.T) {
 		t.Fatalf("New err = %v", err)
 	}
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if err := emitter.Close(); err != nil {
 			t.Errorf("Close attempt %d err = %v; want nil (idempotent)", i, err)
 		}
@@ -532,7 +535,6 @@ func TestProducer_NilReceiver_AllMethods(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -548,6 +550,7 @@ func TestProducer_NilReceiver_AllMethods(t *testing.T) {
 				if err != nil {
 					t.Errorf("err = %v; want nil", err)
 				}
+
 				return
 			}
 
@@ -605,6 +608,7 @@ func TestProducer_Healthy_PlugsIntoHealthWithDependencies(t *testing.T) {
 		if !lastResult {
 			break
 		}
+
 		time.Sleep(50 * time.Millisecond)
 	}
 
@@ -715,9 +719,10 @@ func TestProducer_CloseContext_ConcurrentCallers(t *testing.T) {
 
 	wg.Add(callers)
 
-	for i := 0; i < callers; i++ {
+	for range callers {
 		go func() {
 			defer wg.Done()
+
 			if err := emitter.Close(); err != nil {
 				errs.Add(1)
 			}

@@ -4,6 +4,7 @@ package producer
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -107,26 +108,18 @@ func injectProduceError(cluster *kfake.Cluster, sourceTopic string, errCode int1
 
 		produceReq, ok := req.(*kmsg.ProduceRequest)
 		if !ok {
-			return nil, nil, false
+			return nil, nil, false //nolint:nilnil // kfake: nil response, nil error, false = not handled
 		}
 
 		topicNames := resolveRequestTopicNames(cluster, produceReq)
 
-		matched := false
-		for _, name := range topicNames {
-			if name == sourceTopic {
-				matched = true
-				break
-			}
-		}
-
-		if !matched {
-			return nil, nil, false
+		if !slices.Contains(topicNames, sourceTopic) {
+			return nil, nil, false //nolint:nilnil // kfake: nil response, nil error, false = not handled
 		}
 
 		resp, ok := produceReq.ResponseKind().(*kmsg.ProduceResponse)
 		if !ok {
-			return nil, nil, false
+			return nil, nil, false //nolint:nilnil // kfake: nil response, nil error, false = not handled
 		}
 
 		resp.Version = produceReq.Version

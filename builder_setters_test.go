@@ -5,7 +5,6 @@ package streaming_test
 import (
 	"context"
 	"errors"
-	"github.com/LerianStudio/lib-streaming/v4/obs"
 	"testing"
 	"time"
 
@@ -14,6 +13,7 @@ import (
 	streaming "github.com/LerianStudio/lib-streaming/v4"
 	"github.com/LerianStudio/lib-streaming/v4/internal/producer"
 	"github.com/LerianStudio/lib-streaming/v4/internal/transport"
+	"github.com/LerianStudio/lib-streaming/v4/obs"
 )
 
 // captureLoggerSentinel is a no-op logger that wraps log.NewNop so a test
@@ -74,6 +74,7 @@ func TestBuilder_Logger_FlowsToTransportFactory(t *testing.T) {
 		RegisterTransport(customKind, func(_ context.Context, opts producer.TransportAdapterOptions) (transport.TransportAdapter, error) {
 			captured.gotLogger = opts.Logger
 			captured.gotName = opts.Name
+
 			return captured, nil
 		})
 
@@ -81,14 +82,17 @@ func TestBuilder_Logger_FlowsToTransportFactory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
+
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	if captured.gotLogger == nil {
 		t.Fatal("factory received nil logger; want propagated Builder.Logger")
 	}
+
 	if captured.gotLogger != wantLogger {
 		t.Errorf("factory logger = %p; want %p (Builder.Logger value)", captured.gotLogger, wantLogger)
 	}
+
 	if captured.gotName != "primary" {
 		t.Errorf("factory name = %q; want primary", captured.gotName)
 	}
@@ -126,6 +130,7 @@ func TestBuilder_Logger_DefaultsToNopWhenUnset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
+
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	if captured.gotLogger == nil {
@@ -206,6 +211,7 @@ func TestBuilder_CBSetters_PropagateToMultiProducerConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
+
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	ctx := context.Background()
@@ -219,11 +225,12 @@ func TestBuilder_CBSetters_PropagateToMultiProducerConfig(t *testing.T) {
 	// Drive cbMinRequests consecutive failures. Each Emit returns a
 	// MultiEmitError carrying the underlying broker failure (NOT
 	// ErrCircuitOpen yet). The CB opens AT this attempt count.
-	for i := 0; i < cbMinRequests; i++ {
+	for i := range cbMinRequests {
 		emitErr := emitter.Emit(ctx, request)
 		if emitErr == nil {
 			t.Fatalf("Emit #%d error = nil; want broker failure", i)
 		}
+
 		if errors.Is(emitErr, streaming.ErrCircuitOpen) {
 			t.Fatalf("Emit #%d already returned ErrCircuitOpen at attempt %d; expected breaker to open AFTER %d attempts", i, i+1, cbMinRequests)
 		}
@@ -247,9 +254,11 @@ func TestBuilder_CBSetters_NilBuilderIsSafe(t *testing.T) {
 	if got := b.CBFailureRatio(0.5); got != nil {
 		t.Errorf("CBFailureRatio(nil-receiver) = %v; want nil", got)
 	}
+
 	if got := b.CBMinRequests(10); got != nil {
 		t.Errorf("CBMinRequests(nil-receiver) = %v; want nil", got)
 	}
+
 	if got := b.CBTimeout(time.Second); got != nil {
 		t.Errorf("CBTimeout(nil-receiver) = %v; want nil", got)
 	}

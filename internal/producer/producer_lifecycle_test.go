@@ -40,7 +40,7 @@ func TestProducer_Close_Idempotent(t *testing.T) {
 		t.Fatalf("New err = %v", err)
 	}
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if err := emitter.Close(); err != nil {
 			t.Errorf("Close iteration %d err = %v; want nil", i, err)
 		}

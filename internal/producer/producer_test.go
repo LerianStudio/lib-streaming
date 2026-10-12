@@ -188,12 +188,15 @@ func TestProducer_EmitRoundTrip(t *testing.T) {
 	if parsed.ResourceType != event.ResourceType {
 		t.Errorf("parsed ResourceType = %q; want %q", parsed.ResourceType, event.ResourceType)
 	}
+
 	if parsed.EventType != event.EventType {
 		t.Errorf("parsed EventType = %q; want %q", parsed.EventType, event.EventType)
 	}
+
 	if parsed.TenantID != event.TenantID {
 		t.Errorf("parsed TenantID = %q; want %q", parsed.TenantID, event.TenantID)
 	}
+
 	if parsed.Source != cfg.CloudEventsSource {
 		t.Errorf("parsed Source = %q; want %q", parsed.Source, cfg.CloudEventsSource)
 	}
@@ -228,6 +231,7 @@ func TestProducer_Emit_UnknownDefinitionKeyReturnsCallerError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
+
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	request := sampleRequest()
@@ -413,11 +417,11 @@ func TestProducer_ConcurrentEmit(t *testing.T) {
 
 	wg.Add(goroutines)
 
-	for i := 0; i < goroutines; i++ {
+	for range goroutines {
 		go func() {
 			defer wg.Done()
 
-			for j := 0; j < emitsPerGoroutine; j++ {
+			for range emitsPerGoroutine {
 				if err := emitter.Emit(ctx, sampleRequest()); err == nil {
 					successes.Add(1)
 				} else {

@@ -65,10 +65,10 @@ func TestDeliveryPolicy_Validate_DirectSkipRequiresOutboxAlways(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			cap := newCaptureContractLogger()
-			prev := setContractAsserterLogger(cap)
+			logs := newCaptureContractLogger()
+			prev := setContractAsserterLogger(logs)
+
 			t.Cleanup(func() { setContractAsserterLogger(prev) })
 
 			p := DeliveryPolicy{
@@ -83,7 +83,7 @@ func TestDeliveryPolicy_Validate_DirectSkipRequiresOutboxAlways(t *testing.T) {
 				t.Fatalf("Validate() error = %v; want errors.Is(ErrInvalidDeliveryPolicy)", err)
 			}
 
-			if !cap.containsMessage("ASSERTION FAILED") {
+			if !logs.loggedAssertionFailure() {
 				t.Fatal("expected asserter trident to fire on Direct=skip with Outbox != always")
 			}
 		})

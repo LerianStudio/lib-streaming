@@ -132,7 +132,7 @@ func (p *Producer) handleOutboxRow(ctx context.Context, row *outbox.OutboxEvent)
 		return p.keepLegacyOutboxRow(ctx, row, envelope, err)
 	}
 
-	if err := p.preFlightWithPayload(ctx, envelope.Event, true); err != nil {
+	if err := p.preFlightWithPayload(ctx, envelope.Event); err != nil {
 		// A version-1 row whose ce-source v4 rejects is failing because v4
 		// demands something v2 permitted: v2 folded the source through a
 		// lossy sanitizer, v4 refuses it outright. That is the only preflight

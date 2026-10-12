@@ -1,4 +1,3 @@
-//nolint:unused // Shared compatibility constants are consumed by integration/chaos build-tagged tests.
 package producer
 
 import (
