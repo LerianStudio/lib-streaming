@@ -135,7 +135,7 @@ func TestEmitError_Unwrap(t *testing.T) {
 		Cause: sentinel,
 	}
 
-	if got := ee.Unwrap(); !errors.Is(got, sentinel) {
+	if got := ee.Unwrap(); got != sentinel { //nolint:errorlint // Unwrap must return the cause itself, not a wrapper
 		t.Errorf("EmitError.Unwrap() = %v; want %v", got, sentinel)
 	}
 

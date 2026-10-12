@@ -109,7 +109,7 @@ func TestHealthError_Unwrap(t *testing.T) {
 		t.Errorf("errors.Is(he, sentinel) = false; want true")
 	}
 
-	if got := he.Unwrap(); !errors.Is(got, sentinel) {
+	if got := he.Unwrap(); got != sentinel { //nolint:errorlint // Unwrap must return the cause itself, not a wrapper
 		t.Errorf("Unwrap() = %v; want %v", got, sentinel)
 	}
 }
@@ -148,7 +148,7 @@ func TestHealthError_Unwrap_DirectSentinel(t *testing.T) {
 		t.Errorf("errors.Is(he, ErrNilProducer) = false; want true")
 	}
 
-	if got := he.Unwrap(); !errors.Is(got, ErrNilProducer) {
+	if got := he.Unwrap(); got != ErrNilProducer { //nolint:errorlint // Unwrap must return the cause itself, not a wrapper
 		t.Errorf("Unwrap() = %v; want ErrNilProducer", got)
 	}
 
