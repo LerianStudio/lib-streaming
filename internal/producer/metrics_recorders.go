@@ -84,6 +84,10 @@ func (m *streamingMetrics) recordOutboxReplayTargetUnknown(ctx context.Context, 
 //     bound for INVALID.
 //   - "legacy_unroutable": a version-1 row that cannot be re-derived under the
 //     current topology. Kept retryable so an operator can rewrite it.
+//   - "signing_source_mismatch": the producer signs envelopes and the row was
+//     persisted under a ce-source its active signing key is not bound to. Kept
+//     retryable so an operator can relay it from a producer of that source or
+//     drain it with signing off.
 //
 // This metric exists because the INVALID transition itself is UNOBSERVABLE
 // from here and very nearly unobservable anywhere. lib-commons flips
@@ -96,7 +100,7 @@ func (m *streamingMetrics) recordOutboxReplayTargetUnknown(ctx context.Context, 
 // independently of any WithOnInvalid callback the service may or may not have
 // registered.
 //
-// Cardinality: reason is a closed two-value set; target is operator-controlled
+// Cardinality: reason is a closed three-value set; target is operator-controlled
 // and bounded (single digits per service), matching
 // recordOutboxReplayTargetUnknown. The offending ce-source and row id are
 // deliberately NOT labels — they are unbounded, and they go in the paired

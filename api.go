@@ -16,6 +16,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/envelopesig"
 	"github.com/LerianStudio/lib-streaming/v4/internal/kafkasec"
 	"github.com/LerianStudio/lib-streaming/v4/internal/producer"
 	"github.com/LerianStudio/lib-streaming/v4/internal/transport"
@@ -115,6 +116,19 @@ type Builder struct {
 	// return an error directly; Build surfaces buildErr before doing any
 	// other work. Only the first failure is retained.
 	buildErr error
+
+	// signing is the key the latest SignEnvelopes / SigningFromConfig call
+	// named. buildMulti checks it against the builder's Source before any
+	// transport adapter is built, so a foreign or unknown key costs no
+	// adapter construction or topic provisioning. The producer re-validates it
+	// as the authoritative gate.
+	signing *builderSigning
+}
+
+// builderSigning is the envelope-signing key a Builder was given.
+type builderSigning struct {
+	ring        *Keyring
+	activeKeyID string
 }
 
 // NewBuilder returns an empty programmatic streaming builder.
@@ -381,6 +395,67 @@ func (b *Builder) SASLFromConfig(cfg Config) *Builder {
 	return b
 }
 
+// SignEnvelopes turns on envelope signing: every record the producer
+// publishes — each route's direct publish, each outbox relay and each route-DLQ
+// copy — carries ce-sigkid, ce-sigts and ce-sig, signed with the key
+// activeKeyID from ring at the instant of that publish. The key must be bound
+// to this builder's Source; a producer can only vouch for itself.
+//
+// A nil ring or an empty activeKeyID is captured as a deferred build error
+// (ErrInvalidSigningKey, first deferred error wins). An id absent from the ring
+// or a key bound to another source fails Build with ErrInvalidSigningKey before
+// any transport adapter is built. Without this call nothing is signed and the
+// wire output is unchanged. A later call replaces an earlier one.
+func (b *Builder) SignEnvelopes(ring *Keyring, activeKeyID string) *Builder {
+	if b == nil {
+		return b
+	}
+
+	if ring == nil || activeKeyID == "" {
+		if b.buildErr == nil {
+			b.buildErr = fmt.Errorf("%w: SignEnvelopes needs a keyring and an active key id", ErrInvalidSigningKey)
+		}
+
+		return b
+	}
+
+	b.signing = &builderSigning{ring: ring, activeKeyID: activeKeyID}
+	b.extraOptions = append(b.extraOptions, WithEnvelopeSigning(ring, activeKeyID))
+
+	return b
+}
+
+// SigningFromConfig turns on envelope signing from a loaded Config (the
+// STREAMING_SIGNING_KEY_ID / STREAMING_SIGNING_KEY environment variables): it
+// builds a one-key ring binding cfg.SigningKey to cfg.CloudEventsSource under
+// cfg.SigningKeyID, then calls SignEnvelopes with it.
+//
+// When both cfg.SigningKeyID and cfg.SigningKey are empty the call is a no-op.
+// An unusable key (missing id, short secret, bad id) is captured as a deferred
+// build error (ErrInvalidSigningKey, first deferred error wins). A
+// cfg.CloudEventsSource that differs from the builder's Source fails Build with
+// ErrInvalidSigningKey: the key would sign for a service this producer is not.
+func (b *Builder) SigningFromConfig(cfg Config) *Builder {
+	if b == nil {
+		return b
+	}
+
+	if cfg.SigningKeyID == "" && len(cfg.SigningKey) == 0 {
+		return b
+	}
+
+	ring, err := NewKeyring(SigningKey{ID: cfg.SigningKeyID, Source: cfg.CloudEventsSource, Secret: cfg.SigningKey})
+	if err != nil {
+		if b.buildErr == nil {
+			b.buildErr = err
+		}
+
+		return b
+	}
+
+	return b.SignEnvelopes(ring, cfg.SigningKeyID)
+}
+
 // Logger wires the structured logger for the producer path AND for
 // transport adapter factories. The logger flows into both:
 //
@@ -565,6 +640,12 @@ func (b *Builder) buildMulti(ctx context.Context, routeTable RouteTable) (Emitte
 	// was always going to fail with a caller-correctable error.
 	if err := contract.ValidateSource(b.source); err != nil {
 		return nil, err
+	}
+
+	if b.signing != nil {
+		if _, err := envelopesig.NewSigner(b.signing.ring, b.signing.activeKeyID, b.source); err != nil {
+			return nil, err
+		}
 	}
 
 	b.warnOffAppTopicKafkaRoutes(ctx, routeTable)

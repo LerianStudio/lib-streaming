@@ -47,6 +47,9 @@ func TestDLQHeaderKeys_AreFrozen(t *testing.T) {
 		"handler":                       streaming.DLQCauseHandler,
 		"source_mismatch":               streaming.DLQCauseSourceMismatch,
 		"unhandled_key":                 streaming.DLQCauseUnhandledKey,
+		"signature_missing":             streaming.DLQCauseSignatureMissing,
+		"signature_unknown_key":         streaming.DLQCauseSignatureUnknownKey,
+		"signature_invalid":             streaming.DLQCauseSignatureInvalid,
 	}
 
 	for want, got := range frozen {
@@ -81,6 +84,9 @@ func TestDLQHeaderConstants_MatchTheWriter(t *testing.T) {
 		"cause handler":    {streaming.DLQCauseHandler, dlqheader.CauseHandler},
 		"cause mismatch":   {streaming.DLQCauseSourceMismatch, dlqheader.CauseSourceMismatch},
 		"cause unhandled":  {streaming.DLQCauseUnhandledKey, dlqheader.CauseUnhandledKey},
+		"cause sig miss":   {streaming.DLQCauseSignatureMissing, dlqheader.CauseSignatureMissing},
+		"cause sig key":    {streaming.DLQCauseSignatureUnknownKey, dlqheader.CauseSignatureUnknownKey},
+		"cause sig bad":    {streaming.DLQCauseSignatureInvalid, dlqheader.CauseSignatureInvalid},
 	}
 
 	for name, pair := range pairs {

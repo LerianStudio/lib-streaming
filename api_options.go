@@ -67,6 +67,16 @@ func WithSASL(mechanism sasl.Mechanism) EmitterOption { return producer.WithSASL
 // It is unsafe for production because credentials are sent in cleartext.
 func WithAllowPlaintextSASL() EmitterOption { return producer.WithAllowPlaintextSASL() }
 
+// WithEnvelopeSigning signs every record the producer publishes — each route's
+// direct publish, each outbox relay and each route-DLQ copy, at the instant it
+// is published — with the key activeKeyID from ring. Build fails with
+// ErrInvalidSigningKey when ring is nil, the id is not in it, or the key is
+// bound to a source other than the producer's own. Builder.SignEnvelopes is
+// the dedicated setter; this option is the Options(...) equivalent.
+func WithEnvelopeSigning(ring *Keyring, activeKeyID string) EmitterOption {
+	return producer.WithEnvelopeSigning(ring, activeKeyID)
+}
+
 // WithAllowSystemEvents opts the producer into accepting system events.
 func WithAllowSystemEvents() EmitterOption { return producer.WithAllowSystemEvents() }
 

@@ -12,6 +12,7 @@ import (
 
 	"github.com/LerianStudio/lib-commons/v7/commons/circuitbreaker"
 	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/envelopesig"
 	"github.com/LerianStudio/lib-streaming/v4/internal/transport"
 	"github.com/LerianStudio/lib-streaming/v4/internal/transport/kafka"
 )
@@ -96,11 +97,8 @@ func NewProducerMulti(
 		resolvedOpts.catalog = catalog
 	}
 
-	if err := validateCatalogAtBootstrap(resolvedOpts.catalog, policyOverrides, resolvedOpts.allowSystemEvents); err != nil {
-		return nil, err
-	}
-
-	if err := validateRoutesAgainstTargets(ctx, logger, routes, targets, resolvedOpts.catalog, mpc.Source); err != nil {
+	signer, err := validateConstruction(ctx, resolvedOpts, policyOverrides, routes, targets, mpc.Source)
+	if err != nil {
 		return nil, err
 	}
 
@@ -140,6 +138,7 @@ func NewProducerMulti(
 		routes:             routes,
 		cloudEventsSource:  mpc.Source,
 		cbRecoveryInterval: resolveCBRecoveryInterval(cbCfg.Timeout),
+		signer:             signer,
 	}
 
 	// Build per-target runtimes BEFORE registering the shared CB listener.
@@ -244,6 +243,29 @@ func NewProducerMulti(
 	p.startCBRecoveryLoop()
 
 	return p, nil
+}
+
+// validateConstruction runs the I/O-free wiring checks NewProducerMulti needs
+// before it touches a circuit breaker — the catalog, the route table against
+// the targets, and the signing key against the producer's source — and returns
+// the signer (nil when signing is not configured).
+func validateConstruction(
+	ctx context.Context,
+	opts *emitterOptions,
+	policyOverrides map[string]contract.DeliveryPolicyOverride,
+	routes contract.RouteTable,
+	targets []TargetSpec,
+	source string,
+) (*envelopesig.Signer, error) {
+	if err := validateCatalogAtBootstrap(opts.catalog, policyOverrides, opts.allowSystemEvents); err != nil {
+		return nil, err
+	}
+
+	if err := validateRoutesAgainstTargets(ctx, opts.logger, routes, targets, opts.catalog, source); err != nil {
+		return nil, err
+	}
+
+	return newSigner(opts.signing, source)
 }
 
 // validateRoutesAgainstTargets enforces the cross-product invariant that

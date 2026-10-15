@@ -251,6 +251,8 @@
 //	STREAMING_SASL_USERNAME              | string   | ""              | SASL username; required when a mechanism is set
 //	STREAMING_SASL_PASSWORD              | string   | ""              | SASL password (SECRET; never logged)
 //	STREAMING_SASL_ALLOW_PLAINTEXT       | bool     | false           | Allow SASL without TLS (dev-only, unsafe)
+//	STREAMING_SIGNING_KEY_ID             | string   | ""              | Envelope-signing key id sent in ce-sigkid; matches ^[a-z0-9][a-z0-9._-]{0,63}$. Set with STREAMING_SIGNING_KEY or neither
+//	STREAMING_SIGNING_KEY                | string   | ""              | HMAC-SHA256 secret, standard base64, at least 32 bytes decoded (SECRET; never logged)
 //
 // Topic auto-provisioning is configured by a SEPARATE table, because these three
 // are NOT read by LoadConfig. They are read in internal/kafkasec at the point
@@ -390,7 +392,8 @@
 //     ErrInvalidDestination, ErrDuplicateRouteDefinition,
 //     ErrNoRoutesConfigured, ErrNoRequiredRoute, ErrMissingTarget,
 //     ErrMultiTransportRuntimeNotConfigured, ErrInvalidTLSConfig,
-//     ErrPlaintextSASLNotAllowed, ErrInvalidSASLMechanism.
+//     ErrPlaintextSASLNotAllowed, ErrInvalidSASLMechanism,
+//     ErrInvalidSigningKey, ErrUnsupportedHeaderValue (Signer.Sign).
 //
 //   - Producer config validation (LoadConfig, Builder.Build):
 //     ErrProducerMissingBrokers, ErrMissingSource, ErrInvalidSource,
@@ -404,7 +407,8 @@
 //     ErrBareOnWithMultipleApps, ErrUnknownDispatchApp,
 //     ErrAmbiguousSourceVerification, ErrExpectSourcesMissingApp,
 //     ErrInvalidExpectSource, ErrHandlerAndCommandsBothSet,
-//     ErrDiscardHandlerAndHandlerBothSet, ErrSubscribedToOwnQuarantineTopic.
+//     ErrDiscardHandlerAndHandlerBothSet, ErrSubscribedToOwnQuarantineTopic,
+//     ErrConsumerSignatureKeysMissing, ErrConsumerSignatureKeyMissingForSource.
 //
 //     The producer and the consumer define DIFFERENT error values for the
 //     same class of mistake, so each is named for its own side. A single bare
@@ -412,22 +416,27 @@
 //     the root used to export was the producer's.
 //
 //   - Consumer runtime (per record, or from Consumer.Healthy):
-//     ErrUnexpectedSource (ce-source outside the expected-producer allowlist —
-//     quarantined before any handler runs, in BOTH handler modes),
+//     ErrSignatureMissing, ErrSignatureUnknownKey, ErrSignatureInvalid (the
+//     consumer requires signatures and the record is unsigned, signed by an
+//     unknown key id, or does not verify — quarantined before the ce-source
+//     check, in BOTH handler modes), ErrUnexpectedSource (ce-source outside
+//     the expected-producer allowlist — quarantined before any handler runs,
+//     in BOTH handler modes),
 //     ErrUnhandledEvent (no handler for the (app, event key) pair — ALWAYS on a
 //     Commands(...) queue, and on a fact stream under the opt-in
 //     UnmatchedError policy), ErrConsumerPartitionHalted (a partition
 //     head-of-line blocked across consecutive poll cycles — returned by
 //     Healthy, not per record).
 //
-//     The library synthesizes ErrUnexpectedSource and ErrUnhandledEvent, so
-//     both quarantine outright and are never offered to the service
-//     Classifier: they are structural and can never become satisfiable by
-//     waiting, exactly like a codec fault.
+//     The library synthesizes the signature verdicts, ErrUnexpectedSource and
+//     ErrUnhandledEvent, so all of them quarantine outright and are never
+//     offered to the service Classifier: they are structural and can never
+//     become satisfiable by waiting, exactly like a codec fault.
 //
 //   - Lifecycle / wiring (NOT caller errors — IsCallerError returns false):
 //     ErrEmitterClosed, ErrNilProducer, ErrCircuitOpen,
-//     ErrOutboxNotConfigured, ErrOutboxTxUnsupported, ErrNilOutboxRegistry.
+//     ErrOutboxNotConfigured, ErrOutboxTxUnsupported, ErrNilOutboxRegistry,
+//     ErrSigningSourceMismatch.
 //
 // Use IsCallerError(err) to distinguish caller-correctable faults from
 // infrastructure faults without matching each sentinel individually.

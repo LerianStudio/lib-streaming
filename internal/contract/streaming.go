@@ -324,6 +324,44 @@ var (
 	// The error message never includes the registry password.
 	ErrInvalidSchemaRegistryConfig = errors.New("streaming: invalid schema registry config")
 
+	// ErrInvalidSigningKey is returned when envelope-signing keys cannot be
+	// used: an empty keyring, a key id outside ^[a-z0-9][a-z0-9._-]{0,63}$, a
+	// duplicate key id, a key whose Source is not a legal ce-source, a secret
+	// shorter than 32 bytes, an active signing key that is absent from the ring
+	// or bound to another source, or a negative verification skew. Surfaced at
+	// construction, never per record (a per-record refusal is
+	// ErrSigningSourceMismatch). Caller-correctable. The error message names
+	// key ids and sources, never secret bytes.
+	ErrInvalidSigningKey = errors.New("streaming: invalid envelope signing key")
+
+	// ErrSigningSourceMismatch is returned when a signing producer is asked to
+	// publish a record whose ce-source is not the source its active signing
+	// key is bound to. An Emit always carries the producer's own source, so in
+	// practice this is an outbox row persisted under an earlier or another
+	// source (a renamed source with rows still waiting, a table shared by two
+	// sources). Publishing it signed would hand every verifying consumer a
+	// record it quarantines as a forgery, so the row is refused instead. The
+	// public transport-agnostic Signer returns it too, for a header table whose
+	// ce-source is absent or foreign.
+	//
+	// DELIBERATELY NOT A CALLER ERROR. The condition is a configuration fault
+	// an operator can fix (relay the row from a producer of its source, or
+	// turn signing off to drain it), not a property of the durable row. With
+	// the documented WithRetryClassifier(streaming.IsCallerError) wiring the
+	// lib-commons dispatcher keeps the row retryable (FAILED, not INVALID) for
+	// its whole retry budget while the relay logs at ERROR and increments
+	// streaming_outbox_relay_rejected_total{reason="signing_source_mismatch"}
+	// on every attempt. The message names sources and the key id, never
+	// secret bytes.
+	ErrSigningSourceMismatch = errors.New("streaming: record source does not match the signing key source")
+
+	// ErrUnsupportedHeaderValue is returned when the transport-agnostic signer
+	// is handed a header table in which a signed ce-* header holds a value
+	// that is neither []byte nor string. The signature covers raw header
+	// bytes and never re-formats a value, so such a header cannot be signed.
+	// Caller-correctable: the caller built the header table.
+	ErrUnsupportedHeaderValue = errors.New("streaming: signed header value is neither []byte nor string")
+
 	// ErrNilProducer is returned when a method is invoked on a nil *Producer.
 	// Parallels circuitbreaker.ErrNilCircuitBreaker. Callers should treat this
 	// as a programming error — a nil Producer indicates construction was
@@ -470,6 +508,8 @@ var callerErrorSentinels = []error{
 	ErrPlaintextSASLNotAllowed,
 	ErrInvalidSASLMechanism,
 	ErrInvalidSchemaRegistryConfig,
+	ErrInvalidSigningKey,
+	ErrUnsupportedHeaderValue,
 	ErrInvalidTenantID,
 	ErrInvalidResourceType,
 	ErrInvalidEventType,
@@ -515,7 +555,8 @@ var callerErrorSentinels = []error{
 //     ErrInvalidDestination, ErrDuplicateRouteDefinition,
 //     ErrNoRoutesConfigured, ErrNoRequiredRoute, ErrMissingTarget,
 //     ErrMultiTransportRuntimeNotConfigured, ErrInvalidTLSConfig,
-//     ErrPlaintextSASLNotAllowed, ErrInvalidSASLMechanism
+//     ErrPlaintextSASLNotAllowed, ErrInvalidSASLMechanism,
+//     ErrInvalidSchemaRegistryConfig, ErrInvalidSigningKey
 //   - An *EmitError whose Class is ClassSerialization, ClassValidation, or
 //     ClassAuth.
 //

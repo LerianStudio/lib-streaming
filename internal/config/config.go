@@ -13,6 +13,7 @@ import (
 	"github.com/LerianStudio/lib-observability/v4/assert"
 	"github.com/LerianStudio/lib-observability/v4/log"
 	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/envelopesig"
 	"github.com/LerianStudio/lib-streaming/v4/internal/kafkasec"
 )
 
@@ -20,6 +21,12 @@ import (
 // invariant violations surfaced from Config.validate aggregate under the
 // same component axis as runtime invariants.
 const configAsserterComponent = "streaming"
+
+// The producer signing variables, read by LoadConfig and LoadSigningKeyring.
+const (
+	envSigningKeyID = "STREAMING_SIGNING_KEY_ID"
+	envSigningKey   = "STREAMING_SIGNING_KEY"
+)
 
 // newConfigAsserter constructs an *assert.Asserter for a per-call-site
 // operation. The config package has no caller-supplied logger today —
@@ -125,6 +132,17 @@ type Config struct {
 	// SECRET — never logged or rendered into errors. Maps to
 	// STREAMING_SCHEMA_REGISTRY_PASSWORD.
 	SchemaRegistryPassword string
+
+	// SigningKeyID is the id of this producer's envelope-signing key, carried
+	// on every signed record in ce-sigkid. Empty (with an empty SigningKey)
+	// means signing is off. Maps to STREAMING_SIGNING_KEY_ID. Adopted by
+	// Builder.SigningFromConfig, which binds the key to CloudEventsSource.
+	SigningKeyID string
+	// SigningKey is the HMAC-SHA256 secret for SigningKeyID, decoded from the
+	// standard base64 in STREAMING_SIGNING_KEY; at least 32 bytes. SECRET — it
+	// renders as a mask under every fmt verb, JSON and slog, and no error or
+	// warning carries it.
+	SigningKey envelopesig.Secret
 }
 
 // Default values used by LoadConfig when an environment variable is unset.
@@ -234,20 +252,11 @@ func LoadConfig() (Config, []string, error) {
 		policyOverrides = map[string]DeliveryPolicyOverride{}
 	}
 
-	// Resolve SASL plaintext opt-in. The canonical env var is
-	// STREAMING_SASL_ALLOW_PLAINTEXT. STREAMING_ALLOW_PLAINTEXT_SASL is a
-	// deprecated alias kept for services that adopted the earlier name; it is
-	// consulted ONLY when the canonical var is unset/empty, and using it emits
-	// a deprecation warning. The canonical value wins when both are set.
-	saslAllowPlaintext := commons.GetenvBoolOrDefault("STREAMING_SASL_ALLOW_PLAINTEXT", false)
+	saslAllowPlaintext, warnings := resolveSASLAllowPlaintext(warnings)
 
-	if strings.TrimSpace(os.Getenv("STREAMING_SASL_ALLOW_PLAINTEXT")) == "" {
-		if commons.GetenvBoolOrDefault("STREAMING_ALLOW_PLAINTEXT_SASL", false) {
-			saslAllowPlaintext = true
-
-			warnings = append(warnings,
-				"STREAMING_ALLOW_PLAINTEXT_SASL is deprecated; use STREAMING_SASL_ALLOW_PLAINTEXT")
-		}
+	signingKey, err := loadSigningKey(enabled)
+	if err != nil {
+		return Config{}, warnings, err
 	}
 
 	cfg := Config{
@@ -277,6 +286,9 @@ func LoadConfig() (Config, []string, error) {
 		SchemaRegistryURL:      commons.GetenvOrDefault("STREAMING_SCHEMA_REGISTRY_URL", ""),
 		SchemaRegistryUsername: commons.GetenvOrDefault("STREAMING_SCHEMA_REGISTRY_USERNAME", ""),
 		SchemaRegistryPassword: commons.GetenvOrDefault("STREAMING_SCHEMA_REGISTRY_PASSWORD", ""),
+
+		SigningKeyID: strings.TrimSpace(os.Getenv(envSigningKeyID)),
+		SigningKey:   signingKey,
 	}
 
 	warnings = appendSchemaRegistryWarnings(warnings, cfg)
@@ -348,6 +360,10 @@ func (c Config) validate() error {
 		return err
 	}
 
+	if err := c.validateSigning(); err != nil {
+		return err
+	}
+
 	return c.validateRanges()
 }
 
@@ -404,6 +420,104 @@ func (c Config) validateSchemaRegistry() error {
 
 	if (c.SchemaRegistryUsername == "") != (c.SchemaRegistryPassword == "") {
 		return fmt.Errorf("%w: STREAMING_SCHEMA_REGISTRY_USERNAME and STREAMING_SCHEMA_REGISTRY_PASSWORD must be set together", ErrInvalidSchemaRegistryConfig)
+	}
+
+	return nil
+}
+
+// resolveSASLAllowPlaintext resolves the SASL plaintext opt-in. The canonical
+// env var is STREAMING_SASL_ALLOW_PLAINTEXT. STREAMING_ALLOW_PLAINTEXT_SASL is a
+// deprecated alias kept for services that adopted the earlier name; it is
+// consulted ONLY when the canonical var is unset/empty, and using it appends a
+// deprecation warning. The canonical value wins when both are set.
+func resolveSASLAllowPlaintext(warnings []string) (bool, []string) {
+	if strings.TrimSpace(os.Getenv("STREAMING_SASL_ALLOW_PLAINTEXT")) != "" {
+		return commons.GetenvBoolOrDefault("STREAMING_SASL_ALLOW_PLAINTEXT", false), warnings
+	}
+
+	if !commons.GetenvBoolOrDefault("STREAMING_ALLOW_PLAINTEXT_SASL", false) {
+		return false, warnings
+	}
+
+	return true, append(warnings, "STREAMING_ALLOW_PLAINTEXT_SASL is deprecated; use STREAMING_SASL_ALLOW_PLAINTEXT")
+}
+
+// loadSigningKey decodes STREAMING_SIGNING_KEY with envelopesig.DecodeSecret
+// (standard base64, surrounding whitespace ignored). Unset yields nil. A value
+// that does not decode fails with ErrInvalidSigningKey when streaming is
+// enabled and is ignored when it is disabled, matching the rule that a
+// disabled config always loads clean. The error never carries the value.
+func loadSigningKey(enabled bool) (envelopesig.Secret, error) {
+	raw := os.Getenv(envSigningKey)
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+
+	secret, err := envelopesig.DecodeSecret(raw)
+	if err != nil {
+		if !enabled {
+			return nil, nil
+		}
+
+		return nil, fmt.Errorf("%s: %w", envSigningKey, err)
+	}
+
+	return secret, nil
+}
+
+// LoadSigningKeyring reads STREAMING_SIGNING_KEY_ID and STREAMING_SIGNING_KEY
+// whether or not streaming is enabled and returns the one-key ring binding the
+// secret to source, with the active key id. Neither variable set yields a nil
+// ring and an empty id (signing off). Only one set fails with
+// ErrInvalidConfigField; bad base64, a short secret, an illegal key id or an
+// illegal source fail with ErrInvalidSigningKey. Error texts name the variable
+// and never its value.
+func LoadSigningKeyring(source string) (*envelopesig.Keyring, string, error) {
+	id := strings.TrimSpace(os.Getenv(envSigningKeyID))
+	raw := os.Getenv(envSigningKey)
+
+	hasID, hasKey := id != "", strings.TrimSpace(raw) != ""
+	if err := checkSigningPair(hasID, hasKey); err != nil || !hasID {
+		return nil, "", err
+	}
+
+	secret, err := envelopesig.DecodeSecret(raw)
+	if err != nil {
+		return nil, "", fmt.Errorf("%s: %w", envSigningKey, err)
+	}
+
+	ring, err := envelopesig.NewKeyring(envelopesig.Key{ID: id, Source: source, Secret: secret})
+	if err != nil {
+		return nil, "", err
+	}
+
+	return ring, id, nil
+}
+
+// validateSigning enforces the signing pair: both STREAMING_SIGNING_KEY_ID and
+// STREAMING_SIGNING_KEY, or neither. A pair is checked by building the one-key
+// ring Builder.SigningFromConfig will build, so the id pattern and the 32-byte
+// floor live in envelopesig alone; its errors wrap ErrInvalidSigningKey and
+// name the id only.
+func (c Config) validateSigning() error {
+	hasID, hasKey := c.SigningKeyID != "", len(c.SigningKey) > 0
+	if err := checkSigningPair(hasID, hasKey); err != nil || !hasID {
+		return err
+	}
+
+	_, err := envelopesig.NewKeyring(envelopesig.Key{ID: c.SigningKeyID, Source: c.CloudEventsSource, Secret: c.SigningKey})
+
+	return err
+}
+
+// checkSigningPair refuses exactly one of the two signing variables with
+// ErrInvalidConfigField. Both or neither passes.
+func checkSigningPair(hasID, hasKey bool) error {
+	switch {
+	case hasID && !hasKey:
+		return fmt.Errorf("%w: %s is set but %s is empty", ErrInvalidConfigField, envSigningKeyID, envSigningKey)
+	case hasKey && !hasID:
+		return fmt.Errorf("%w: %s is set but %s is empty", ErrInvalidConfigField, envSigningKey, envSigningKeyID)
 	}
 
 	return nil
