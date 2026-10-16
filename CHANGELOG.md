@@ -1,5 +1,30 @@
 # Lib-streaming Changelog
 
+## [4.2.0](https://github.com/LerianStudio/lib-streaming/releases/tag/v4.2.0)
+
+Features:
+- Build TLS and SASL configurations from config files, enhancing security and flexibility for consumers. (@fredcamaral)
+
+Fixes:
+- Log handler errors behind a dead-letter queue (DLQ) route or a halt, ensuring that sensitive information is scrubbed from logs. (@fredcamaral)
+
+Improvements:
+- Bump `golangci-lint` to `v2.14.0` and resolve new findings, improving code quality and consistency. (@fredcamaral)
+- Standardize the compatibility policy documentation to ensure clarity and consistency. (@fredcamaral)
+- Apply `golangci-lint` autofixes to unit tests and fix lint findings, improving the maintainability of test code. (@fredcamaral)
+- Renew the `x/crypto` OpenPGP advisory ignore, maintaining security compliance. (@fredcamaral)
+- Bump `golang.org/x/net` to `v0.60.0` to address CVE-2026-78669, enhancing security. (@fredcamaral)
+- Document that the handler error reaches the log and specify what information is scrubbed, improving transparency in error handling. (@fredcamaral)
+- Assert that `Unwrap` returns the cause itself in tests, ensuring correct error handling behavior. (@fredcamaral)
+- Delete unnecessary header alias and empty interface tests, streamlining the test suite. (@fredcamaral)
+- Lint unit-tagged test files and bring complex unit tests under the linter's limits, improving code quality. (@fredcamaral)
+- Drop constant parameters and check type assertions in tests, enhancing test robustness. (@fredcamaral)
+- Show security setters after `FromConfig` in consumer documentation, improving usability and clarity. (@fredcamaral)
+
+[Compare changes](https://github.com/LerianStudio/lib-streaming/compare/v4.1.0...v4.2.0)
+
+---
+
 ## [4.1.0](https://github.com/LerianStudio/lib-streaming/releases/tag/v4.1.0)
 
 Features:
