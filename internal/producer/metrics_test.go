@@ -52,6 +52,7 @@ func newManualMeterSetup(t *testing.T) (*libMetrics.MetricsFactory, func() metri
 		if err := reader.Collect(context.Background(), &rm); err != nil {
 			t.Fatalf("Collect err = %v", err)
 		}
+
 		return rm
 	}
 
@@ -69,17 +70,19 @@ func findMetric(rm metricdata.ResourceMetrics, name string) (metricdata.Metrics,
 			}
 		}
 	}
+
 	return metricdata.Metrics{}, false
 }
 
 // attrSetToMap converts an attribute.Set into a map[string]string via
-// ToSlice. Values are stringified through attribute.Value.Emit() so
+// ToSlice. Values are stringified through attribute.Value.String() so
 // non-string types (bool, int, float) still serialise.
 func attrSetToMap(set attribute.Set) map[string]string {
 	out := make(map[string]string, set.Len())
 	for _, kv := range set.ToSlice() {
-		out[string(kv.Key)] = kv.Value.Emit()
+		out[string(kv.Key)] = kv.Value.String()
 	}
+
 	return out
 }
 
@@ -96,6 +99,7 @@ func sumInt64DataPoints(t *testing.T, m metricdata.Metrics) (int64, []map[string
 	}
 
 	var total int64
+
 	attrSets := make([]map[string]string, 0, len(agg.DataPoints))
 
 	for _, dp := range agg.DataPoints {
@@ -152,20 +156,24 @@ func extractAttributeSets(m metricdata.Metrics) []map[string]string {
 		for i, dp := range agg.DataPoints {
 			out[i] = attrSetToMap(dp.Attributes)
 		}
+
 		return out
 	case metricdata.Gauge[int64]:
 		out := make([]map[string]string, len(agg.DataPoints))
 		for i, dp := range agg.DataPoints {
 			out[i] = attrSetToMap(dp.Attributes)
 		}
+
 		return out
 	case metricdata.Histogram[int64]:
 		out := make([]map[string]string, len(agg.DataPoints))
 		for i, dp := range agg.DataPoints {
 			out[i] = attrSetToMap(dp.Attributes)
 		}
+
 		return out
 	}
+
 	return nil
 }
 
@@ -186,7 +194,7 @@ func TestMetrics_LazyInit_NilFactory_NoPanic_WarnsOnce(t *testing.T) {
 
 	// Exercise every record* method multiple times. None should panic, none
 	// should produce more than the single WARN.
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		m.recordEmitted(ctx, "topic.a", outcomeProduced)
 		m.recordEmitDuration(ctx, "topic.a", outcomeProduced, int64(i))
 		m.recordDLQ(ctx, "topic.a", "auth_error")
@@ -257,6 +265,7 @@ func TestMetrics_Emit_RecordsEmittedCounterWithOutcomeProduced(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
+
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -286,9 +295,11 @@ func TestMetrics_Emit_RecordsEmittedCounterWithOutcomeProduced(t *testing.T) {
 	if got["outcome"] != outcomeProduced {
 		t.Errorf("outcome label = %q; want %q", got["outcome"], outcomeProduced)
 	}
+
 	if got["operation"] != "send" {
 		t.Errorf("operation label = %q; want %q", got["operation"], "send")
 	}
+
 	if _, tenantPresent := got["tenant_id"]; tenantPresent {
 		t.Errorf("tenant_id label MUST NOT appear on streaming_emitted_total (DX-D02); got %v", got)
 	}
@@ -307,6 +318,7 @@ func TestMetrics_Emit_RecordsDurationHistogram(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
+
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -344,6 +356,7 @@ func TestMetrics_Emit_PreflightFailure_RecordsCallerErrorOutcome(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
+
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	bad := sampleRequest()
@@ -371,10 +384,10 @@ func TestMetrics_Emit_PreflightFailure_RecordsCallerErrorOutcome(t *testing.T) {
 
 	// Duration histogram MUST NOT have received a datapoint — preflight
 	// rejections are not emission attempts.
-	if _, ok := findMetric(rm, metricNameEmitDurationMS); ok {
+	if hist, ok := findMetric(rm, metricNameEmitDurationMS); ok {
 		// Present is acceptable only if count is zero; the SDK reports a
 		// metric even with no observations if the instrument was created.
-		if m, _ := findMetric(rm, metricNameEmitDurationMS); histogramCount(t, m) > 0 {
+		if histogramCount(t, hist) > 0 {
 			t.Errorf("duration histogram recorded for preflight failure; want 0")
 		}
 	}
@@ -391,6 +404,7 @@ func TestMetrics_Emit_UnknownDefinitionUsesBoundedMetricTopic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
+
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	bad := sampleRequest()
@@ -409,6 +423,7 @@ func TestMetrics_Emit_UnknownDefinitionUsesBoundedMetricTopic(t *testing.T) {
 	if len(attrSets) != 1 {
 		t.Fatalf("attrSets len = %d; want 1", len(attrSets))
 	}
+
 	if got := attrSets[0]["topic"]; got != metricTopicUnresolved {
 		t.Fatalf("topic = %q; want %q", got, metricTopicUnresolved)
 	}
@@ -431,6 +446,7 @@ func TestMetrics_DLQ_RecordsDlqCounter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
+
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -458,12 +474,14 @@ func TestMetrics_DLQ_RecordsDlqCounter(t *testing.T) {
 	}
 
 	found := false
+
 	for _, set := range attrSets {
 		if set["topic"] == sourceTopic && set["error_class"] != "" {
 			found = true
 			break
 		}
 	}
+
 	if !found {
 		t.Errorf("no (topic=%q, error_class=*) datapoint in %v", sourceTopic, attrSets)
 	}
@@ -476,12 +494,14 @@ func TestMetrics_DLQ_RecordsDlqCounter(t *testing.T) {
 
 	_, emSets := sumInt64DataPoints(t, em)
 	hasDLQ := false
+
 	for _, set := range emSets {
 		if set["outcome"] == outcomeDLQ {
 			hasDLQ = true
 			break
 		}
 	}
+
 	if !hasDLQ {
 		t.Errorf("emitted_total: no outcome=%q datapoint in %v", outcomeDLQ, emSets)
 	}
@@ -508,6 +528,7 @@ func TestMetrics_DLQFailed_RecordsCounter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
+
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -530,14 +551,17 @@ func TestMetrics_DLQFailed_RecordsCounter(t *testing.T) {
 	}
 
 	found := false
+
 	for _, set := range attrSets {
 		if set["topic"] == sourceTopic {
 			found = true
 		}
+
 		if _, ok := set["tenant_id"]; ok {
 			t.Errorf("tenant_id label MUST NOT appear on streaming_dlq_publish_failed_total; got %v", set)
 		}
 	}
+
 	if !found {
 		t.Errorf("no (topic=%q) datapoint in %v", sourceTopic, attrSets)
 	}
@@ -560,6 +584,7 @@ func TestMetrics_OutboxRouted_RecordsCounter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
+
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	p := asProducer(t, emitter)
@@ -610,12 +635,14 @@ func TestMetrics_OutboxRouted_RecordsCounter(t *testing.T) {
 	_, emSets := sumInt64DataPoints(t, em)
 
 	hasOutboxed := false
+
 	for _, set := range emSets {
 		if set["outcome"] == outcomeOutboxed {
 			hasOutboxed = true
 			break
 		}
 	}
+
 	if !hasOutboxed {
 		t.Errorf("emitted_total: no outcome=%q datapoint in %v", outcomeOutboxed, emSets)
 	}
@@ -635,6 +662,7 @@ func TestMetrics_CircuitOpen_NoOutbox_RecordsCircuitOpenOutcome(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
+
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	p := asProducer(t, emitter)
@@ -652,6 +680,7 @@ func TestMetrics_CircuitOpen_NoOutbox_RecordsCircuitOpenOutcome(t *testing.T) {
 	_, attrSets := sumInt64DataPoints(t, m)
 
 	hasCircuitOpen := false
+
 	for _, set := range attrSets {
 		if set["outcome"] == outcomeCircuitOpen {
 			hasCircuitOpen = true
@@ -677,6 +706,7 @@ func TestMetrics_CircuitState_UpdatedByListener(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
+
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	p := asProducer(t, emitter)
@@ -699,6 +729,7 @@ func TestMetrics_CircuitState_UpdatedByListener(t *testing.T) {
 	if len(vals) == 0 {
 		t.Fatalf("no gauge datapoints recorded")
 	}
+
 	if got := vals[0]; got != int64(flagCBOpen) {
 		t.Errorf("gauge value = %d; want %d (open)", got, flagCBOpen)
 	}
@@ -710,10 +741,12 @@ func TestMetrics_CircuitState_UpdatedByListener(t *testing.T) {
 
 	rm = snapshot()
 	m, _ = findMetric(rm, metricNameCircuitState)
+
 	vals = gaugeInt64Values(t, m)
 	if len(vals) == 0 {
 		t.Fatalf("no gauge datapoints after transitions")
 	}
+
 	if got := vals[0]; got != int64(flagCBClosed) {
 		t.Errorf("gauge value after closed = %d; want %d", got, flagCBClosed)
 	}
@@ -733,6 +766,7 @@ func TestMetrics_CircuitState_UnknownStateDoesNotRecord(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
+
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	p := asProducer(t, emitter)
@@ -758,27 +792,30 @@ func TestMetrics_CBRecoveryLivenessGauge(t *testing.T) {
 	m := newStreamingMetrics(factory, log.NewNop())
 
 	m.recordCBRecoveryLiveness(context.Background(), true)
+
 	rm := snapshot()
 
-	metric, ok := findMetric(rm, metricNameCBRecoveryLiveness)
+	liveness, ok := findMetric(rm, metricNameCBRecoveryLiveness)
 	if !ok {
 		t.Fatalf("metric %q not found", metricNameCBRecoveryLiveness)
 	}
 
-	vals := gaugeInt64Values(t, metric)
+	vals := gaugeInt64Values(t, liveness)
 	if len(vals) == 0 || vals[0] != 1 {
 		t.Fatalf("liveness values = %v; want first value 1", vals)
 	}
 
 	m.recordCBRecoveryLiveness(context.Background(), false)
+
 	rm = snapshot()
-	metric, _ = findMetric(rm, metricNameCBRecoveryLiveness)
-	vals = gaugeInt64Values(t, metric)
+	liveness, _ = findMetric(rm, metricNameCBRecoveryLiveness)
+
+	vals = gaugeInt64Values(t, liveness)
 	if len(vals) == 0 || vals[0] != 0 {
 		t.Fatalf("liveness values after dead = %v; want first value 0", vals)
 	}
 
-	for _, attrs := range extractAttributeSets(metric) {
+	for _, attrs := range extractAttributeSets(liveness) {
 		if len(attrs) != 0 {
 			t.Fatalf("liveness metric labels = %v; want none", attrs)
 		}
@@ -816,6 +853,7 @@ func TestMetrics_NoTenantIDLabel_10kEmits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
+
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -823,7 +861,7 @@ func TestMetrics_NoTenantIDLabel_10kEmits(t *testing.T) {
 
 	const emits = 10_000
 
-	for i := 0; i < emits; i++ {
+	for i := range emits {
 		ev := sampleRequest()
 		ev.TenantID = fmt.Sprintf("tenant-%06d", i)
 		// Inline a distinct payload per emit so json.Valid still passes but

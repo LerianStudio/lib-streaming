@@ -34,7 +34,7 @@ func TestSanitizeBrokerURL(t *testing.T) {
 			mustNotContain: []string{"access-key", "access-key@"},
 			mustContainAny: []string{"sasl://" + constants.ObfuscatedValue + "@broker.example.com:9092/cluster"},
 		},
-		{
+		{ //nolint:gosec // fake credential fixture: the test asserts it is redacted
 			name:           "kafka url with userinfo password",
 			in:             "dial failed kafka://admin:supersecret@kafka:9092",
 			mustNotContain: []string{"supersecret", "admin:supersecret", "admin@"},
@@ -177,7 +177,7 @@ func TestSanitizeBrokerURL(t *testing.T) {
 			mustNotContain: []string{"Token abc", "abc"},
 			mustContainAny: []string{"auth=" + constants.ObfuscatedValue},
 		},
-		{
+		{ //nolint:gosec // fake credential fixture: the test asserts it is redacted
 			name:           "AWS signed URL query credentials",
 			in:             "https://sqs.us-east-1.amazonaws.com/123/queue?X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20260504&X-Amz-Signature=abcdef",
 			mustNotContain: []string{"AKIAIOSFODNN7EXAMPLE", "abcdef"},
@@ -195,13 +195,13 @@ func TestSanitizeBrokerURL(t *testing.T) {
 			mustNotContain: []string{"sessiontokenvalue"},
 			mustContainAny: []string{"aws_session_token=" + constants.ObfuscatedValue},
 		},
-		{
+		{ //nolint:gosec // fake credential fixture: the test asserts it is redacted
 			name:           "bare AWS access key ID",
 			in:             "auth failed for access key AKIAIOSFODNN7EXAMPLE",
 			mustNotContain: []string{"AKIAIOSFODNN7EXAMPLE"},
 			mustContainAny: []string{constants.ObfuscatedValue},
 		},
-		{
+		{ //nolint:gosec // fake credential fixture: the test asserts it is redacted
 			name:           "bare AWS session access key ID",
 			in:             "auth failed for access key ASIAIOSFODNN7EXAMPLE",
 			mustNotContain: []string{"ASIAIOSFODNN7EXAMPLE"},
@@ -235,12 +235,14 @@ func TestSanitizeBrokerURL(t *testing.T) {
 
 			if len(tt.mustContainAny) > 0 {
 				found := false
+
 				for _, s := range tt.mustContainAny {
 					if strings.Contains(out, s) {
 						found = true
 						break
 					}
 				}
+
 				if !found {
 					t.Errorf("sanitizeBrokerURL(%q) = %q; expected at least one of %v", tt.in, out, tt.mustContainAny)
 				}

@@ -11,6 +11,7 @@ import (
 	"testing/quick"
 	"time"
 
+	"github.com/LerianStudio/lib-streaming/v4/internal/cloudevents"
 	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
 )
 
@@ -86,7 +87,7 @@ func propertyEventGenerator(rng *rand.Rand, _ int) reflect.Value {
 // for deterministic, reproducible runs.
 func propertyConfig() *quick.Config {
 	return &quick.Config{
-		Rand: rand.New(rand.NewSource(0)),
+		Rand: rand.New(rand.NewSource(0)), //nolint:gosec // testing/quick requires math/rand; seeded for reproducible runs
 		Values: func(args []reflect.Value, rng *rand.Rand) {
 			args[0] = propertyEventGenerator(rng, 0)
 		},
@@ -95,7 +96,7 @@ func propertyConfig() *quick.Config {
 
 // TestProperty_CloudEvents_BuildParse_Roundtrip asserts that for any Event
 // satisfying the preFlight preconditions, the round-trip through
-// buildCloudEventsHeaders and ParseCloudEventsHeaders recovers the
+// cloudevents.BuildHeaders and ParseCloudEventsHeaders recovers the
 // required + optional fields.
 //
 // Timestamps are compared via time.Equal() because RFC3339Nano
@@ -112,11 +113,11 @@ func TestProperty_CloudEvents_BuildParse_Roundtrip(t *testing.T) {
 		// validation table. allowSystemEvents=false is fine because our
 		// generator never sets SystemEvent=true.
 		p := &Producer{}
-		if err := p.preFlightWithPayload(context.Background(), event, true); err != nil {
+		if err := p.preFlightWithPayload(context.Background(), event); err != nil {
 			return true // filtered; property doesn't apply
 		}
 
-		headers := buildCloudEventsHeaders(event)
+		headers := cloudevents.BuildHeaders(event)
 
 		parsed, err := ParseCloudEventsHeaders(headers)
 		if err != nil {
@@ -127,30 +128,39 @@ func TestProperty_CloudEvents_BuildParse_Roundtrip(t *testing.T) {
 		if parsed.EventID != event.EventID {
 			return false
 		}
+
 		if parsed.Source != event.Source {
 			return false
 		}
+
 		if parsed.ResourceType != event.ResourceType {
 			return false
 		}
+
 		if parsed.EventType != event.EventType {
 			return false
 		}
+
 		if parsed.TenantID != event.TenantID {
 			return false
 		}
+
 		if parsed.SchemaVersion != event.SchemaVersion {
 			return false
 		}
+
 		if !parsed.Timestamp.Equal(event.Timestamp) {
 			return false
 		}
+
 		if parsed.Subject != event.Subject {
 			return false
 		}
+
 		if parsed.DataContentType != event.DataContentType {
 			return false
 		}
+
 		if parsed.SystemEvent != event.SystemEvent {
 			return false
 		}
@@ -293,36 +303,4 @@ func TestProperty_DeriveAggregateID_Deterministic(t *testing.T) {
 			t.Fatalf("iter %d: system event yielded identical UUIDs %v; want non-deterministic", i, a)
 		}
 	}
-}
-
-// itoa is a tiny helper that avoids pulling in strconv for a single
-// stringified integer inside the Topic property. Wrapping strconv.Itoa
-// would work too; the local helper keeps the property file's imports
-// minimal.
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-
-	// Buffer sized for int64 max: 20 digits + sign.
-	buf := [21]byte{}
-	i := len(buf)
-
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + (n % 10))
-		n /= 10
-	}
-
-	if neg {
-		i--
-		buf[i] = '-'
-	}
-
-	return string(buf[i:])
 }

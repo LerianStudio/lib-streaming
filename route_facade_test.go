@@ -80,6 +80,7 @@ func TestFacade_NewRouteDefinitionHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRouteDefinition() error = %v", err)
 	}
+
 	if route.Requirement != streaming.RouteRequired {
 		t.Fatalf("Requirement = %q; want %q", route.Requirement, streaming.RouteRequired)
 	}
@@ -99,6 +100,7 @@ func TestFacade_NewRouteTableHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRouteTable() error = %v", err)
 	}
+
 	if table.Len() != 1 {
 		t.Fatalf("Len() = %d; want 1", table.Len())
 	}
@@ -120,6 +122,7 @@ func TestFacade_RouteSentinelsAreExported(t *testing.T) {
 	}
 
 	route.Destination = streaming.Destination{Kind: streaming.TransportSQS, Address: "not-a-url"}
+
 	_, err = streaming.NewRouteDefinition(route)
 	if !errors.Is(err, streaming.ErrInvalidDestination) {
 		t.Fatalf("NewRouteDefinition() error = %v; want ErrInvalidDestination", err)

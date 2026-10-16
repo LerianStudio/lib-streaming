@@ -1,6 +1,9 @@
 version: "2"
 run:
   tests: true
+  # Every test file carries a suite tag; without it the unit tests are never loaded.
+  build-tags:
+    - unit
 linters:
   enable:
     # --- Existing linters ---
@@ -79,6 +82,10 @@ linters:
               desc: The io/ioutil package has been deprecated, see https://go.dev/doc/go1.16#ioutil
     gocyclo:
       min-complexity: 16
+    recvcheck:
+      # A value-receiver MarshalJSON marshals values and pointers alike; recvcheck v0.3 stopped exempting it.
+      exclusions:
+        - "*.MarshalJSON"
     govet:
       enable:
         - shadow

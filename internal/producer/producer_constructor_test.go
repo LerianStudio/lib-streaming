@@ -12,7 +12,6 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/twmb/franz-go/pkg/sasl/plain"
 
-	"github.com/LerianStudio/lib-commons/v7/commons/circuitbreaker"
 	"github.com/LerianStudio/lib-observability/v4/log"
 )
 
@@ -185,6 +184,7 @@ func TestProducer_CredentialSanitization(t *testing.T) {
 // kfake cfg returns a concrete *Producer.
 func TestProducer_New_RealProducer_AsProducer(t *testing.T) {
 	cfg, _ := kfakeConfig(t)
+
 	catalog, err := NewCatalog(EventDefinition{
 		Key:          "transaction.created",
 		ResourceType: "transaction",
@@ -209,6 +209,7 @@ func TestProducer_New_RealProducer_AsProducer(t *testing.T) {
 	if len(p.targets) == 0 {
 		t.Error("targets map is empty; want at least one target")
 	}
+
 	if p.catalog.Len() != 1 {
 		t.Errorf("catalog len = %d; want 1", p.catalog.Len())
 	}
@@ -290,6 +291,7 @@ func TestProducer_New_WithPartitionKeyOverride(t *testing.T) {
 	cfg, cluster := kfakeConfig(t)
 
 	fixed := "FIXED-PART-KEY"
+
 	emitter, err := New(context.Background(), cfg,
 		WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)),
 		WithPartitionKey(func(_ Event) string { return fixed }),
@@ -332,31 +334,3 @@ func TestProducer_New_WithPartitionKeyOverride(t *testing.T) {
 		t.Errorf("partition key = %q; want %q", got.Key, fixed)
 	}
 }
-
-type failingCBManager struct {
-	err error
-}
-
-func (f *failingCBManager) GetOrCreate(_ string, _ circuitbreaker.Config) (circuitbreaker.CircuitBreaker, error) {
-	return nil, f.err
-}
-
-func (f *failingCBManager) Execute(_ string, _ func() (any, error)) (any, error) {
-	return nil, f.err
-}
-
-func (*failingCBManager) GetState(_ string) circuitbreaker.State {
-	return circuitbreaker.StateUnknown
-}
-
-func (*failingCBManager) GetCounts(_ string) circuitbreaker.Counts {
-	return circuitbreaker.Counts{}
-}
-
-func (*failingCBManager) IsHealthy(_ string) bool {
-	return false
-}
-
-func (*failingCBManager) Reset(_ string) {}
-
-func (*failingCBManager) RegisterStateChangeListener(_ circuitbreaker.StateChangeListener) {}

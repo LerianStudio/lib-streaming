@@ -29,6 +29,7 @@ func TestProducer_Emit_OutboxAlwaysPolicySkipsDirectPublish(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
+
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	request := sampleRequest()
@@ -51,12 +52,16 @@ func TestProducer_Emit_OutboxAlwaysPolicySkipsDirectPublish(t *testing.T) {
 	}
 
 	consumer := newConsumer(t, cluster, "lerian.streaming.test")
+
 	fetchCtx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
 	fetches := consumer.PollFetches(fetchCtx)
+
 	var produced int
+
 	fetches.EachRecord(func(_ *kgo.Record) { produced++ })
+
 	if produced != 0 {
 		t.Fatalf("direct records = %d; want 0", produced)
 	}
@@ -69,6 +74,7 @@ func TestProducer_Emit_CallPolicyCanDisableEvent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
+
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	enabled := false
@@ -96,6 +102,7 @@ func TestProducer_Emit_OutboxNeverPolicyReturnsCircuitOpenWhenBreakerOpen(t *tes
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
+
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	p := asProducer(t, emitter)
@@ -110,6 +117,7 @@ func TestProducer_Emit_OutboxNeverPolicyReturnsCircuitOpenWhenBreakerOpen(t *tes
 	if !errors.Is(err, ErrCircuitOpen) {
 		t.Fatalf("Emit err = %v; want ErrCircuitOpen", err)
 	}
+
 	if got := fakeRepo.createdCount(); got != 0 {
 		t.Fatalf("outbox created count = %d; want 0", got)
 	}
@@ -124,6 +132,7 @@ func TestProducer_Emit_DLQNeverPolicySkipsDLQRoute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
+
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	request := sampleRequest()

@@ -76,7 +76,7 @@ func (d *recordingDiscard) value(key string) (string, bool) {
 // the forensic headers would prove only that the reader sees the strings the
 // test wrote; this one fails if the writer and the reader ever disagree about a
 // key, a value format, or which headers survive.
-func quarantine(t *testing.T, source *kgo.Record, cause error, consumerApp string) *kgo.Record {
+func quarantine(t *testing.T, source *kgo.Record, cause error) *kgo.Record {
 	t.Helper()
 
 	adapter := fake.NewAdapter(contract.TransportKafkaLike)
@@ -84,7 +84,7 @@ func quarantine(t *testing.T, source *kgo.Record, cause error, consumerApp strin
 	client := newFakeGroupClient(fetchOf(source.Topic, source.Partition, source))
 	handler := &fakeHandler{fn: func(context.Context, contract.Event, []byte) error { return cause }}
 
-	r := newTestRuntime(t, client, handler, newTestDLQPublisher(adapter, consumerApp))
+	r := newTestRuntime(t, client, handler, newTestDLQPublisher(adapter, "lender"))
 
 	runUntilClosed(t, r)
 
@@ -93,7 +93,7 @@ func quarantine(t *testing.T, source *kgo.Record, cause error, consumerApp strin
 		t.Fatalf("quarantined %d records; want 1", len(msgs))
 	}
 
-	return dlqRecord(msgs[0], contract.AppDLQTopic(consumerApp))
+	return dlqRecord(msgs[0], contract.AppDLQTopic("lender"))
 }
 
 // dlqRecord turns a published quarantine copy back into the record a consumer
@@ -151,7 +151,7 @@ func TestDiscardSeam_CarriesTheForensicHeadersThroughVerbatim(t *testing.T) {
 	t.Parallel()
 
 	poison := rec("lerian.streaming.gateway", 3, 42, ceHeaders("tenant-abc", false))
-	entry := quarantine(t, poison, errors.New("loan already settled"), "lender")
+	entry := quarantine(t, poison, errors.New("loan already settled"))
 
 	discard := &recordingDiscard{}
 
@@ -259,7 +259,7 @@ func TestDiscardSeam_IsNotArmedByAHandlersMethodSet(t *testing.T) {
 			t.Fatalf("a normal consumer quarantined %d codec faults; want 1 — the discard path was armed by a method set", dlq.count())
 		}
 
-		if _, kind := dlq.lastCause(); kind != dlqheader.CauseCodec {
+		if kind, _ := dlq.lastCause(); kind != dlqheader.CauseCodec {
 			t.Errorf("cause kind = %q; want %q", kind, dlqheader.CauseCodec)
 		}
 
@@ -285,7 +285,7 @@ func TestDiscardSeam_IsNotArmedByAHandlersMethodSet(t *testing.T) {
 			t.Fatalf("ce-source verification quarantined %d foreign writes; want 1", dlq.count())
 		}
 
-		if _, kind := dlq.lastCause(); kind != dlqheader.CauseSourceMismatch {
+		if kind, _ := dlq.lastCause(); kind != dlqheader.CauseSourceMismatch {
 			t.Errorf("cause kind = %q; want %q", kind, dlqheader.CauseSourceMismatch)
 		}
 	})
@@ -367,7 +367,7 @@ func TestDiscardSeam_ForeignSourceIsNotQuarantined(t *testing.T) {
 	t.Parallel()
 
 	poison := rec("lerian.streaming.gateway", 0, 5, ceHeaders("tenant-abc", false))
-	entry := quarantine(t, poison, errors.New("terminal"), "lender")
+	entry := quarantine(t, poison, errors.New("terminal"))
 
 	discard := &recordingDiscard{}
 
@@ -390,7 +390,7 @@ func TestDiscardSeam_TenantTravelsOnTheHandlerContext(t *testing.T) {
 	t.Parallel()
 
 	poison := rec("lerian.streaming.gateway", 0, 5, ceHeaders("tenant-xyz", false))
-	entry := quarantine(t, poison, errors.New("terminal"), "lender")
+	entry := quarantine(t, poison, errors.New("terminal"))
 
 	discard := &recordingDiscard{}
 
@@ -413,7 +413,7 @@ func TestDiscardSeam_ReturnedErrorStillQuarantines(t *testing.T) {
 	t.Parallel()
 
 	poison := rec("lerian.streaming.gateway", 0, 5, ceHeaders("tenant-abc", false))
-	entry := quarantine(t, poison, errors.New("terminal"), "lender")
+	entry := quarantine(t, poison, errors.New("terminal"))
 
 	discard := &recordingDiscard{err: errors.New("exception desk is down")}
 
@@ -423,7 +423,7 @@ func TestDiscardSeam_ReturnedErrorStillQuarantines(t *testing.T) {
 		t.Fatalf("DLQ count = %d; want 1 — a reader's own error is classified like any other", dlq.count())
 	}
 
-	if _, kind := dlq.lastCause(); kind != dlqheader.CauseHandler {
+	if kind, _ := dlq.lastCause(); kind != dlqheader.CauseHandler {
 		t.Errorf("cause kind = %q; want %q", kind, dlqheader.CauseHandler)
 	}
 }
@@ -588,7 +588,7 @@ func TestPublishDLQ_RequarantineCarriesExactlyOneForensicSet(t *testing.T) {
 
 	// First quarantine: the gateway's poison record lands on lender's DLQ.
 	poison := rec("lerian.streaming.gateway", 3, 42, ceHeaders("tenant-abc", false))
-	first := quarantine(t, poison, errors.New("loan already settled"), "lender")
+	first := quarantine(t, poison, errors.New("loan already settled"))
 
 	// Second: the DLQ reader read that entry at a NEW coordinate and failed.
 	first.Topic = contract.AppDLQTopic("lender")
@@ -630,8 +630,8 @@ func TestPublishDLQ_RequarantineCarriesExactlyOneForensicSet(t *testing.T) {
 				got, contract.AppDLQTopic("lender"))
 		}
 
-		if got, _ := headerValue(second, dlqheader.SourceOffset); got != "99" {
-			t.Errorf("origin offset = %q; want 99", got)
+		if offset, _ := headerValue(second, dlqheader.SourceOffset); offset != "99" {
+			t.Errorf("origin offset = %q; want 99", offset)
 		}
 	})
 

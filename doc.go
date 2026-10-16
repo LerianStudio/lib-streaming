@@ -270,7 +270,10 @@
 // STREAMING_SASL_ALLOW_PLAINTEXT. It is consulted only when the canonical
 // variable is unset and its use emits a deprecation warning from LoadConfig;
 // the canonical variable wins when both are set. Enable TLS/SASL from these
-// env vars via streaming.NewBuilder().TLSFromConfig(cfg).SASLFromConfig(cfg).
+// env vars via streaming.NewBuilder().TLSFromConfig(cfg).SASLFromConfig(cfg) on
+// the producer and
+// streaming.NewConsumer().FromConfig(cc).TLSFromConfig(cfg).SASLFromConfig(cfg)
+// on the consumer; security goes after FromConfig, which discards earlier setters.
 //
 // Multi-transport wiring (multiple Kafka clusters, SQS / RabbitMQ /
 // EventBridge fan-out) is programmatic via streaming.Builder in code —

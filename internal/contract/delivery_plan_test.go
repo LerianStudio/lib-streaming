@@ -21,15 +21,19 @@ func TestDeliveryPolicyReportsDeliveryPaths(t *testing.T) {
 	if err := direct.Validate(); err != nil {
 		t.Fatalf("DefaultDeliveryPolicy().Validate() error = %v", err)
 	}
+
 	if !direct.DirectAllowed() {
 		t.Fatal("default plan should allow direct publish")
 	}
+
 	if !direct.OutboxFallbackOnCircuitOpen() {
 		t.Fatal("default plan should allow circuit-open outbox fallback")
 	}
+
 	if !direct.DLQAllowed() {
 		t.Fatal("default plan should allow DLQ routing")
 	}
+
 	if !direct.HasDeliveryPath() {
 		t.Fatal("default plan should have a delivery path")
 	}
@@ -43,18 +47,23 @@ func TestDeliveryPolicyReportsDeliveryPaths(t *testing.T) {
 	if err := outboxOnly.Validate(); err != nil {
 		t.Fatalf("outboxOnly.Validate() error = %v", err)
 	}
+
 	if outboxOnly.DirectAllowed() {
 		t.Fatal("outbox-only plan should not allow direct publish")
 	}
+
 	if outboxOnly.Direct != contract.DirectModeSkip {
 		t.Fatal("outbox-only plan should report skipped direct publish")
 	}
+
 	if !outboxOnly.OutboxAlways() {
 		t.Fatal("outbox-only plan should report always-outbox")
 	}
+
 	if outboxOnly.DLQAllowed() {
 		t.Fatal("outbox-only plan should not allow DLQ")
 	}
+
 	if !outboxOnly.HasDeliveryPath() {
 		t.Fatal("outbox-only plan should have a delivery path")
 	}

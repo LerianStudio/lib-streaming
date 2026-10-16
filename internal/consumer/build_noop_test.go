@@ -119,8 +119,18 @@ func TestBuild_QuarantinesIntoTheConsumersOwnDLQTopic(t *testing.T) {
 		t.Fatalf("Build = %v; want nil", err)
 	}
 
+	rt, ok := c.(*consumerRuntime)
+	if !ok {
+		t.Fatalf("Build returned %T; want *consumerRuntime", c)
+	}
+
+	pub, ok := rt.dlq.(*transportDLQPublisher)
+	if !ok {
+		t.Fatalf("dlq = %T; want *transportDLQPublisher", rt.dlq)
+	}
+
 	want := contract.AppDLQTopic("matcher")
-	if got := c.(*consumerRuntime).dlq.(*transportDLQPublisher).dlqTopic; got != want {
+	if got := pub.dlqTopic; got != want {
 		t.Errorf("DLQ topic = %q; want %q (the consumer's own DLQ)", got, want)
 	}
 
@@ -272,6 +282,7 @@ func TestConsumerOptions(t *testing.T) {
 	t.Parallel()
 
 	var sawCodec bool
+
 	codec := func([]kgo.RecordHeader) (contract.Event, error) {
 		sawCodec = true
 		return contract.Event{}, nil

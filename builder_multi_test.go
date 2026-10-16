@@ -57,6 +57,7 @@ func TestBuilder_MultiTargetBuildWithFakeTransports(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
+
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	if err := emitter.Emit(context.Background(), streaming.EmitRequest{
@@ -70,6 +71,7 @@ func TestBuilder_MultiTargetBuildWithFakeTransports(t *testing.T) {
 	if got := len(primary.Messages()); got != 1 {
 		t.Fatalf("primary published = %d; want 1", got)
 	}
+
 	if got := len(secondary.Messages()); got != 1 {
 		t.Fatalf("secondary published = %d; want 1", got)
 	}
@@ -77,6 +79,7 @@ func TestBuilder_MultiTargetBuildWithFakeTransports(t *testing.T) {
 	if dest := primary.Messages()[0].Destination; dest.Kind != streaming.TransportKafkaLike || dest.Name != "lerian.streaming.transaction.created" {
 		t.Fatalf("primary message destination = %#v; want kafka topic", dest)
 	}
+
 	if dest := secondary.Messages()[0].Destination; dest.Kind != streaming.TransportSQS {
 		t.Fatalf("secondary message destination kind = %q; want SQS", dest.Kind)
 	}
@@ -131,6 +134,7 @@ func TestBuilder_MultiTargetSurfacesRequiredFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
+
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	emitErr := emitter.Emit(context.Background(), streaming.EmitRequest{
@@ -142,13 +146,14 @@ func TestBuilder_MultiTargetSurfacesRequiredFailure(t *testing.T) {
 		t.Fatal("Emit() error = nil; want MultiEmitError")
 	}
 
-	var multi *streaming.MultiEmitError
-	if !errors.As(emitErr, &multi) {
+	if _, ok := errors.AsType[*streaming.MultiEmitError](emitErr); !ok {
 		t.Fatalf("Emit() error = %T; want *MultiEmitError (%v)", emitErr, emitErr)
 	}
+
 	if !errors.Is(emitErr, secondaryErr) {
 		t.Fatalf("errors.Is(Emit, secondaryErr) = false; want true (chain: %v)", emitErr)
 	}
+
 	if len(primary.Messages()) != 1 {
 		t.Fatalf("primary published = %d; want 1 (sibling success preserved)", len(primary.Messages()))
 	}
@@ -171,6 +176,7 @@ func namedAdapterFactory(lookup map[string]streaming.TransportAdapter) streaming
 		if !ok {
 			return nil, errors.New("no adapter registered for " + opts.Name)
 		}
+
 		return adapter, nil
 	}
 }

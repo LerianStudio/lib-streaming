@@ -26,10 +26,12 @@ import (
 // production ordering contract (see outbox_writer.go outboxRowFromEnvelope).
 func newTestUUIDv7(tb testing.TB) uuid.UUID {
 	tb.Helper()
+
 	id, err := commons.GenerateUUIDv7()
 	if err != nil {
 		tb.Fatalf("commons.GenerateUUIDv7 err = %v", err)
 	}
+
 	return id
 }
 
@@ -42,9 +44,11 @@ func TestProducer_RegisterOutboxRelay_RelaysStableEnvelope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
+
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	p := asProducer(t, emitter)
+
 	registry := outbox.NewHandlerRegistry()
 	if err := p.RegisterOutboxRelay(registry); err != nil {
 		t.Fatalf("RegisterOutboxRelay err = %v", err)
@@ -52,7 +56,8 @@ func TestProducer_RegisterOutboxRelay_RelaysStableEnvelope(t *testing.T) {
 
 	event := sampleEvent()
 	event.ApplyDefaults()
-	envelope := testOutboxEnvelope(event, event.Topic(), "transaction.created", DefaultDeliveryPolicy(), newTestUUIDv7(t))
+	envelope := testOutboxEnvelope(event, DefaultDeliveryPolicy(), newTestUUIDv7(t))
+
 	payload, err := json.Marshal(envelope)
 	if err != nil {
 		t.Fatalf("json.Marshal envelope err = %v", err)
@@ -67,24 +72,30 @@ func TestProducer_RegisterOutboxRelay_RelaysStableEnvelope(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+
 	if err := registry.Handle(ctx, row); err != nil {
 		t.Fatalf("registry.Handle err = %v", err)
 	}
 
 	consumer := newConsumer(t, cluster, event.Topic())
+
 	fetchCtx, fetchCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer fetchCancel()
 
 	fetches := consumer.PollFetches(fetchCtx)
+
 	var gotRec *kgo.Record
+
 	fetches.EachRecord(func(r *kgo.Record) {
 		if gotRec == nil {
 			gotRec = r
 		}
 	})
+
 	if gotRec == nil {
 		t.Fatal("no record on broker after stable outbox relay")
 	}
+
 	if string(gotRec.Value) != string(event.Payload) {
 		t.Errorf("relayed payload = %q; want %q", gotRec.Value, event.Payload)
 	}
@@ -114,7 +125,7 @@ func TestProducer_OutboxHandler_PublishDirectFailure_SurfacesError(t *testing.T)
 
 	event := sampleEvent()
 	event.ApplyDefaults()
-	envelope := testOutboxEnvelope(event, event.Topic(), "transaction.created", DefaultDeliveryPolicy(), newTestUUIDv7(t))
+	envelope := testOutboxEnvelope(event, DefaultDeliveryPolicy(), newTestUUIDv7(t))
 
 	payload, err := json.Marshal(envelope)
 	if err != nil {
@@ -157,6 +168,7 @@ func TestProducer_HandleOutboxRow_DestinationAttributesReachAdapter(t *testing.T
 	routes := mustMultiRouteTable(t,
 		multiTestRoute("transaction.created.kafka.primary", "transaction.created", "primary", "lerian.streaming.transaction.created", contract.RouteRequired),
 	)
+
 	p, err := NewProducerMulti(
 		ctx,
 		MultiProducerConfig{Source: "svc-outbox-attrs"},
@@ -170,12 +182,14 @@ func TestProducer_HandleOutboxRow_DestinationAttributesReachAdapter(t *testing.T
 	if err != nil {
 		t.Fatalf("NewProducerMulti() error = %v", err)
 	}
+
 	t.Cleanup(func() { _ = p.Close() })
 
 	event := sampleEvent()
 	event.ApplyDefaults()
-	envelope := testOutboxEnvelope(event, event.Topic(), "transaction.created", DefaultDeliveryPolicy(), newTestUUIDv7(t))
+	envelope := testOutboxEnvelope(event, DefaultDeliveryPolicy(), newTestUUIDv7(t))
 	envelope.Destination.Attributes = map[string]string{"eventbridge.resources": "arn:aws:events:us-east-1:123:rule/replay"}
+
 	payload, err := json.Marshal(envelope)
 	if err != nil {
 		t.Fatalf("json.Marshal envelope err = %v", err)
@@ -191,10 +205,12 @@ func TestProducer_HandleOutboxRow_DestinationAttributesReachAdapter(t *testing.T
 	if err := p.handleOutboxRow(ctx, row); err != nil {
 		t.Fatalf("handleOutboxRow() error = %v", err)
 	}
+
 	messages := adapter.Messages()
 	if got := len(messages); got != 1 {
 		t.Fatalf("messages = %d; want 1", got)
 	}
+
 	if got := messages[0].Attributes["eventbridge.resources"]; got != "arn:aws:events:us-east-1:123:rule/replay" {
 		t.Fatalf("replay message attribute = %q; want envelope destination attribute", got)
 	}
@@ -240,13 +256,15 @@ func TestProducer_OutboxHandler_UnknownTargetReturnsError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
+
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	p := asProducer(t, emitter)
 	event := sampleEvent()
 	event.ApplyDefaults()
-	envelope := testOutboxEnvelope(event, event.Topic(), "transaction.created", DefaultDeliveryPolicy(), newTestUUIDv7(t))
+	envelope := testOutboxEnvelope(event, DefaultDeliveryPolicy(), newTestUUIDv7(t))
 	envelope.Target = "retired-target"
+
 	payload, err := json.Marshal(envelope)
 	if err != nil {
 		t.Fatalf("json.Marshal err = %v", err)
@@ -397,19 +415,19 @@ func TestHandleOutboxRow_BypassesCBWhenOpen(t *testing.T) {
 		t.Fatalf("GetOrCreate err = %v", err)
 	}
 
-	fake, ok := cbIface.(*fakeCB)
+	cb, ok := cbIface.(*fakeCB)
 	if !ok {
 		t.Fatalf("GetOrCreate returned %T; want *fakeCB", cbIface)
 	}
 
-	baseline := fake.executeCalls()
+	baseline := cb.executeCalls()
 
 	// Build a valid v0.2.0 envelope around sampleEvent and feed it to the
 	// handler. sampleEvent()'s topic matches the catalog, so preflight will
 	// accept it.
 	event := sampleEvent()
 	event.ApplyDefaults()
-	envelope := testOutboxEnvelope(event, event.Topic(), "transaction.created", DefaultDeliveryPolicy(), newTestUUIDv7(t))
+	envelope := testOutboxEnvelope(event, DefaultDeliveryPolicy(), newTestUUIDv7(t))
 
 	payload, err := json.Marshal(envelope)
 	if err != nil {
@@ -439,6 +457,7 @@ func TestHandleOutboxRow_BypassesCBWhenOpen(t *testing.T) {
 	fetches := consumer.PollFetches(fetchCtx)
 
 	var gotRec *kgo.Record
+
 	fetches.EachRecord(func(r *kgo.Record) {
 		if gotRec == nil {
 			gotRec = r
@@ -452,7 +471,7 @@ func TestHandleOutboxRow_BypassesCBWhenOpen(t *testing.T) {
 	// Assertion 2: cb.Execute was NEVER called. If this grew, it would mean
 	// handleOutboxRow drifted from publishDirect to the Emit → cb.Execute
 	// path and the loop-prevention property is broken.
-	if got := fake.executeCalls(); got != baseline {
+	if got := cb.executeCalls(); got != baseline {
 		t.Errorf("cb.Execute call count = %d; want %d (replay must bypass CB entirely per TRD §C7)", got, baseline)
 	}
 }
@@ -463,6 +482,7 @@ func TestProducer_HandleOutboxRow_NilReceiver(t *testing.T) {
 	t.Parallel()
 
 	var p *Producer
+
 	err := p.handleOutboxRow(context.Background(), &outbox.OutboxEvent{})
 	if !errors.Is(err, ErrNilProducer) {
 		t.Errorf("nil.handleOutboxRow err = %v; want ErrNilProducer", err)
@@ -558,6 +578,7 @@ func TestProducer_EndToEnd_OutboxFallbackAndRelay(t *testing.T) {
 	if err := json.Unmarshal(row.Payload, &decodedEnvelope); err != nil {
 		t.Fatalf("unmarshal envelope err = %v", err)
 	}
+
 	consumer := newConsumer(t, cluster, decodedEnvelope.Destination.Name)
 
 	fetchCtx, fetchCancel := context.WithTimeout(ctx, 5*time.Second)
@@ -566,6 +587,7 @@ func TestProducer_EndToEnd_OutboxFallbackAndRelay(t *testing.T) {
 	fetches := consumer.PollFetches(fetchCtx)
 
 	var gotRec *kgo.Record
+
 	fetches.EachRecord(func(r *kgo.Record) {
 		if gotRec == nil {
 			gotRec = r

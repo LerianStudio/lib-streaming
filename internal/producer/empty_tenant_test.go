@@ -38,12 +38,14 @@ func TestProducer_EmitEmptyTenant_DirectPath(t *testing.T) {
 	}
 
 	consumer := newConsumer(t, cluster, "lerian.streaming.test")
+
 	fetchCtx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
 	fetches := consumer.PollFetches(fetchCtx)
 
 	var produced int
+
 	fetches.EachRecord(func(_ *kgo.Record) { produced++ })
 
 	if produced != 1 {
@@ -72,7 +74,7 @@ func TestProducer_EmitEmptyTenant_PreFlight(t *testing.T) {
 	e.SystemEvent = false
 	(&e).ApplyDefaults()
 
-	if err := p.preFlightWithPayload(context.Background(), e, true); err != nil {
+	if err := p.preFlightWithPayload(context.Background(), e); err != nil {
 		t.Errorf("preFlight empty tenant err = %v; want nil", err)
 	}
 }

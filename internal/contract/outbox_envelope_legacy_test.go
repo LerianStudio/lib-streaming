@@ -4,7 +4,6 @@ package contract
 
 import (
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -169,12 +168,12 @@ func TestResolveDestinationUnroutableSourceStaysRetryable(t *testing.T) {
 
 			_, err := envelope.ResolveDestination()
 			require.Error(t, err)
-			assert.ErrorIs(t, err, ErrLegacyOutboxRowUnroutable)
+			require.ErrorIs(t, err, ErrLegacyOutboxRowUnroutable)
 
 			assert.False(t, IsCallerError(err),
 				"a caller error sends the row straight to INVALID on attempt one; "+
 					"this row must stay retryable so an operator can act on it")
-			assert.NotErrorIs(t, err, ErrInvalidSource,
+			require.NotErrorIs(t, err, ErrInvalidSource,
 				"the cause must be rendered with %v, never %w: wrapping it re-enters callerErrorSentinels")
 			assert.NotErrorIs(t, err, ErrMissingSource,
 				"the cause must be rendered with %v, never %w: wrapping it re-enters callerErrorSentinels")
@@ -192,7 +191,7 @@ func TestLegacyUnroutableSentinelIsNotACallerError(t *testing.T) {
 		"ErrLegacyOutboxRowUnroutable must never be classified caller-correctable")
 
 	for _, sentinel := range callerErrorSentinels {
-		assert.False(t, errors.Is(ErrLegacyOutboxRowUnroutable, sentinel),
+		assert.NotErrorIs(t, ErrLegacyOutboxRowUnroutable, sentinel,
 			"ErrLegacyOutboxRowUnroutable must not alias a caller-error sentinel")
 	}
 }

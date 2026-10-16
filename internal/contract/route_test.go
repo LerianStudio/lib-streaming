@@ -46,9 +46,11 @@ func TestRouteDefinition_New_NormalizesAndCopies(t *testing.T) {
 	if route.Destination.Attributes["content_type"] != "application/json" {
 		t.Fatalf("Destination attributes were not copied: %#v", route.Destination.Attributes)
 	}
+
 	if route.DLQ == nil || route.DLQ.Attributes["retention"] != "14d" {
 		t.Fatalf("DLQ attributes were not copied: %#v", route.DLQ)
 	}
+
 	if route.Policy.Enabled == nil || !*route.Policy.Enabled {
 		t.Fatalf("Policy override pointer was not copied: %#v", route.Policy.Enabled)
 	}
@@ -196,6 +198,7 @@ func TestRouteDefinition_New_RejectsInvalidShape(t *testing.T) {
 			if !errors.Is(err, tt.want) {
 				t.Fatalf("NewRouteDefinition() error = %v; want errors.Is(..., %v)", err, tt.want)
 			}
+
 			if !errors.Is(err, ErrInvalidRouteDefinition) {
 				t.Fatalf("NewRouteDefinition() error = %v; want ErrInvalidRouteDefinition", err)
 			}
@@ -241,11 +244,11 @@ func TestRouteDefinition_New_RejectsCrossKindDLQ(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
 			dlq := tt.dlq
+
 			_, err := NewRouteDefinition(RouteDefinition{
 				Key:           "transaction.created.kafka.primary",
 				DefinitionKey: "transaction.created",
@@ -266,6 +269,7 @@ func TestRouteDefinition_New_AllowsSameKindDLQ(t *testing.T) {
 	t.Parallel()
 
 	dlq := Destination{Kind: TransportKafkaLike, Name: "source.topic.dlq"}
+
 	_, err := NewRouteDefinition(RouteDefinition{
 		Key:           "transaction.created.kafka.primary",
 		DefinitionKey: "transaction.created",
@@ -305,7 +309,6 @@ func TestDestinationValidate_KindSpecificRules(t *testing.T) {
 	}
 
 	for _, destination := range valid {
-		destination := destination
 		t.Run(string(destination.Kind), func(t *testing.T) {
 			t.Parallel()
 
@@ -358,7 +361,6 @@ func TestDestinationValidate_RejectsInvalidKindSpecificShape(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -390,7 +392,6 @@ func TestIsAllowedSQSQueueHost(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -443,7 +444,6 @@ func TestDestinationValidate_RejectsHeaderBoundaryViolations(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -464,7 +464,6 @@ func TestDestinationValidate_AllowsNonCredentialBusinessWords(t *testing.T) {
 	}
 
 	for _, destination := range destinations {
-		destination := destination
 		t.Run(destination.Name, func(t *testing.T) {
 			t.Parallel()
 
@@ -484,7 +483,6 @@ func TestCredentialLikeMaterial_RejectionBalance(t *testing.T) {
 		"events.tokenization.completed",
 	}
 	for _, value := range allowed {
-		value := value
 		t.Run("allow/"+value, func(t *testing.T) {
 			t.Parallel()
 
@@ -501,7 +499,6 @@ func TestCredentialLikeMaterial_RejectionBalance(t *testing.T) {
 		"dict.key.registered",
 	}
 	for _, value := range topologyAllowed {
-		value := value
 		t.Run("allow topology/"+value, func(t *testing.T) {
 			t.Parallel()
 
@@ -543,7 +540,6 @@ func TestCredentialLikeMaterial_RejectionBalance(t *testing.T) {
 		"apiKey",
 	}
 	for _, value := range rejected {
-		value := value
 		t.Run("reject/"+value, func(t *testing.T) {
 			t.Parallel()
 
@@ -561,7 +557,6 @@ func TestCredentialLikeMaterial_RejectionBalance(t *testing.T) {
 		"key=literal-secret",
 	}
 	for _, value := range topologyRejected {
-		value := value
 		t.Run("reject topology/"+value, func(t *testing.T) {
 			t.Parallel()
 
@@ -602,7 +597,6 @@ func TestRouteDefinition_AllowsKeyAsDomainSegment(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -638,6 +632,7 @@ func TestRouteTable_NewRouteTableOrdersDefinitionsDeterministically(t *testing.T
 	}
 
 	got := table.Definitions()
+
 	wantKeys := []string{"account.created.kafka", "transaction.created.kafka", "transaction.updated.kafka"}
 	if len(got) != len(wantKeys) {
 		t.Fatalf("Definitions() len = %d; want %d", len(got), len(wantKeys))
@@ -660,10 +655,12 @@ func TestRouteTable_RoutesReturnsDefensiveCopies(t *testing.T) {
 
 	routes := table.Routes("transaction.created")
 	routes[0].Key = "mutated"
+
 	routes[0].Destination.Attributes["format"] = "mutated"
 	if routes[0].Policy.Enabled != nil {
 		*routes[0].Policy.Enabled = false
 	}
+
 	if routes[0].DLQ != nil {
 		routes[0].DLQ.Attributes["format"] = "mutated"
 	}
@@ -672,12 +669,15 @@ func TestRouteTable_RoutesReturnsDefensiveCopies(t *testing.T) {
 	if fresh[0].Key != "transaction.created.kafka" {
 		t.Fatalf("Routes() exposed route storage: %q", fresh[0].Key)
 	}
+
 	if fresh[0].Destination.Attributes["format"] != "json" {
 		t.Fatalf("Routes() exposed destination attributes: %#v", fresh[0].Destination.Attributes)
 	}
+
 	if fresh[0].Policy.Enabled == nil || !*fresh[0].Policy.Enabled {
 		t.Fatalf("Routes() exposed policy enabled pointer: %#v", fresh[0].Policy.Enabled)
 	}
+
 	if fresh[0].DLQ == nil || fresh[0].DLQ.Attributes["format"] != "json" {
 		t.Fatalf("Routes() exposed DLQ attributes: %#v", fresh[0].DLQ)
 	}
@@ -693,10 +693,12 @@ func TestRouteTable_DefinitionsReturnsDefensiveCopies(t *testing.T) {
 
 	definitions := table.Definitions()
 	definitions[0].Key = "mutated"
+
 	definitions[0].Destination.Attributes["format"] = "mutated"
 	if definitions[0].Policy.Enabled != nil {
 		*definitions[0].Policy.Enabled = false
 	}
+
 	if definitions[0].DLQ != nil {
 		definitions[0].DLQ.Attributes["format"] = "mutated"
 	}
@@ -705,12 +707,15 @@ func TestRouteTable_DefinitionsReturnsDefensiveCopies(t *testing.T) {
 	if fresh[0].Key != "transaction.created.kafka" {
 		t.Fatalf("Definitions() exposed route storage: %q", fresh[0].Key)
 	}
+
 	if fresh[0].Destination.Attributes["format"] != "json" {
 		t.Fatalf("Definitions() exposed destination attributes: %#v", fresh[0].Destination.Attributes)
 	}
+
 	if fresh[0].Policy.Enabled == nil || !*fresh[0].Policy.Enabled {
 		t.Fatalf("Definitions() exposed policy enabled pointer: %#v", fresh[0].Policy.Enabled)
 	}
+
 	if fresh[0].DLQ == nil || fresh[0].DLQ.Attributes["format"] != "json" {
 		t.Fatalf("Definitions() exposed DLQ attributes: %#v", fresh[0].DLQ)
 	}
@@ -738,6 +743,7 @@ func TestRouteTable_OrdersSameDefinitionByRouteKey(t *testing.T) {
 	if len(routes) != 2 {
 		t.Fatalf("Routes() len = %d; want 2", len(routes))
 	}
+
 	if routes[0].Key != "transaction.created.a" || routes[1].Key != "transaction.created.z" {
 		t.Fatalf("Routes() ordering = [%q %q]; want [transaction.created.a transaction.created.z]", routes[0].Key, routes[1].Key)
 	}
@@ -822,9 +828,11 @@ func TestRouteTable_ZeroValueBehavesAsEmpty(t *testing.T) {
 	if table.Len() != 0 {
 		t.Fatalf("zero-value Len() = %d; want 0", table.Len())
 	}
+
 	if got := table.Definitions(); got == nil || len(got) != 0 {
 		t.Fatalf("zero-value Definitions() = %#v; want non-nil empty", got)
 	}
+
 	if got := table.Routes("missing"); got == nil || len(got) != 0 {
 		t.Fatalf("zero-value Routes() = %#v; want non-nil empty", got)
 	}
@@ -882,7 +890,6 @@ func TestCredentialLikeMaterial_CloudAndSaaSPatterns(t *testing.T) {
 	}
 
 	for _, tt := range rejected {
-		tt := tt
 		t.Run("reject/"+tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -917,7 +924,6 @@ func TestCredentialLikeMaterial_CloudAndSaaSPatterns(t *testing.T) {
 	}
 
 	for _, tt := range allowed {
-		tt := tt
 		t.Run("allow/"+tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -962,7 +968,7 @@ func TestRouteDefinition_DescriptionIsValidated(t *testing.T) {
 			description: "Set api_key=secret123 on this route.",
 			want:        ErrInvalidRouteDefinition,
 		},
-		{
+		{ //nolint:gosec // fake credential fixture: the test asserts it is redacted
 			name:        "bare AWS access key in description",
 			description: "Owned by team using AKIAIOSFODNN7EXAMPLE for staging.",
 			want:        ErrInvalidRouteDefinition,
@@ -985,7 +991,6 @@ func TestRouteDefinition_DescriptionIsValidated(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 

@@ -115,6 +115,7 @@ func TestBuilder_AllFourTransports_Build_Emit_AllTargetsReceiveMessage(t *testin
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
+
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	if err := emitter.Emit(ctx, streaming.EmitRequest{
@@ -128,12 +129,15 @@ func TestBuilder_AllFourTransports_Build_Emit_AllTargetsReceiveMessage(t *testin
 	if got := len(kafkaAdapter.Messages()); got != 1 {
 		t.Errorf("kafka publishes = %d; want 1", got)
 	}
+
 	if sqsClient.calls != 1 {
 		t.Errorf("sqs calls = %d; want 1", sqsClient.calls)
 	}
+
 	if rabbitClient.calls != 1 {
 		t.Errorf("rabbitmq calls = %d; want 1", rabbitClient.calls)
 	}
+
 	if ebClient.calls != 1 {
 		t.Errorf("eventbridge calls = %d; want 1", ebClient.calls)
 	}

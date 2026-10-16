@@ -39,7 +39,7 @@ func TestBuildSchemaRegistryClient_WithBasicAuthReturnsClient(t *testing.T) {
 func TestBuildSchemaRegistryClient_PartialCredentialsReturnSentinel(t *testing.T) {
 	t.Parallel()
 
-	const password = "sr-hunter2-secret"
+	const password = "sr-hunter2-secret" //nolint:gosec // fake credential fixture: the test asserts it is redacted
 
 	tests := []struct {
 		name     string
@@ -51,7 +51,6 @@ func TestBuildSchemaRegistryClient_PartialCredentialsReturnSentinel(t *testing.T
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -84,11 +83,10 @@ func TestBuildSchemaRegistryClient_EmptyURLReturnsSentinel(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			const password = "sr-hunter2-secret"
+			const password = "sr-hunter2-secret" //nolint:gosec // fake credential fixture: the test asserts it is redacted
 
 			client, err := BuildSchemaRegistryClient(tt.url, "alice", password)
 			if !errors.Is(err, contract.ErrInvalidSchemaRegistryConfig) {

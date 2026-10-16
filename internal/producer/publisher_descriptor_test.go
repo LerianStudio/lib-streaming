@@ -22,6 +22,7 @@ func TestPublisherDescriptor_DefaultRoutePath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPublisherDescriptor() error = %v", err)
 	}
+
 	if descriptor.RoutePath != "/streaming" {
 		t.Errorf("RoutePath = %q; want /streaming", descriptor.RoutePath)
 	}

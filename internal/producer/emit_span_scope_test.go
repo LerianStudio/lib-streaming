@@ -31,10 +31,12 @@ func TestEmit_Span_DefaultTracerScope(t *testing.T) {
 	)
 
 	previous := otel.GetTracerProvider()
+
 	otel.SetTracerProvider(provider)
 
 	t.Cleanup(func() {
 		otel.SetTracerProvider(previous)
+
 		_ = provider.Shutdown(context.Background())
 	})
 
@@ -46,6 +48,7 @@ func TestEmit_Span_DefaultTracerScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New err = %v", err)
 	}
+
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

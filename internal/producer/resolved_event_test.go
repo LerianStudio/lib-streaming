@@ -66,6 +66,7 @@ func TestNewProducer_RejectsMissingOrMalformedSource(t *testing.T) {
 			emitter, err := New(context.Background(), cfg, WithLogger(log.NewNop()), WithCatalog(sampleCatalog(t)))
 			if err == nil {
 				_ = emitter.Close()
+
 				t.Fatalf("New(source=%q) = nil error; want %v at CONSTRUCTION", tc.source, tc.want)
 			}
 

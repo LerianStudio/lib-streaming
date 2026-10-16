@@ -33,12 +33,15 @@ func TestEmitRequest_New_CopiesAndPreservesRuntimeFields(t *testing.T) {
 
 	payload[0] = '['
 	enabled = false
+
 	if string(request.Payload) != `{"id":"tx-1"}` {
 		t.Errorf("newEmitRequest() did not copy payload, got %q", string(request.Payload))
 	}
+
 	if request.PolicyOverride.Enabled == nil || !*request.PolicyOverride.Enabled {
 		t.Errorf("newEmitRequest() did not copy PolicyOverride.Enabled, got %v", request.PolicyOverride.Enabled)
 	}
+
 	if request.Timestamp != ts {
 		t.Errorf("Timestamp = %v; want %v", request.Timestamp, ts)
 	}

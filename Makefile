@@ -89,7 +89,7 @@ endif
 # Pinned tool versions for reproducibility (update as needed)
 GOTESTSUM_VERSION ?= v1.13.0
 GOSEC_VERSION ?= v2.26.1
-GOLANGCI_LINT_VERSION ?= v2.12.2
+GOLANGCI_LINT_VERSION ?= v2.14.0
 GORELEASER_VERSION ?= v2.15.4
 BUF_VERSION ?= v1.72.0
 # Baseline the protobuf backward-compatibility check runs against. Defaults to

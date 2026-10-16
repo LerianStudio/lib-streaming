@@ -10,10 +10,10 @@
 CVE-2026-45045 exp:2026-09-01
 
 # golang.org/x/crypto/openpgp inherited advisory.
-# lib-streaming does not import openpgp, and govulncheck reports no reachable
-# call path. No fixed version is published yet.
+# lib-streaming does not import openpgp (go list -deps -test, every build tag,
+# re-checked 2026-10-11 on x/crypto v0.57.0). No fixed version is published yet.
 #
 # Severity: UNKNOWN (GO-2026-5932)
-# Review by: 2026-10-01
+# Review by: 2026-11-30
 # Tracking: https://pkg.go.dev/vuln/GO-2026-5932
-GO-2026-5932 exp:2026-10-01
+GO-2026-5932 exp:2026-11-30

@@ -35,12 +35,12 @@ func (c *captureBuilderLogger) Log(_ context.Context, _ int, msg string, _ ...an
 func (c *captureBuilderLogger) Enabled(_ int) bool           { return true }
 func (c *captureBuilderLogger) Sync(_ context.Context) error { return nil }
 
-func (c *captureBuilderLogger) containsMessage(needle string) bool {
+func (c *captureBuilderLogger) loggedAssertionFailure() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	for _, msg := range c.entries {
-		if strings.Contains(msg, needle) {
+		if strings.Contains(msg, "ASSERTION FAILED") {
 			return true
 		}
 	}
@@ -83,10 +83,10 @@ func minimalRoute() RouteDefinition {
 func TestBuilder_TargetNameEmpty_FiresAssertion(t *testing.T) {
 	t.Parallel()
 
-	cap := newCaptureBuilderLogger()
+	logs := newCaptureBuilderLogger()
 
 	_, err := NewBuilder().
-		Logger(cap).
+		Logger(logs).
 		Source("svc-ledger").
 		Catalog(minimalCatalog(t)).
 		Routes(minimalRoute()).
@@ -97,7 +97,7 @@ func TestBuilder_TargetNameEmpty_FiresAssertion(t *testing.T) {
 		t.Fatalf("Build() error = %v; want errors.Is(ErrMissingTarget)", err)
 	}
 
-	if !cap.containsMessage("ASSERTION FAILED") {
+	if !logs.loggedAssertionFailure() {
 		t.Fatal("expected asserter trident to fire on empty target name")
 	}
 }
@@ -109,10 +109,10 @@ func TestBuilder_TargetNameEmpty_FiresAssertion(t *testing.T) {
 func TestBuilder_TargetNameControlChar_FiresAssertion(t *testing.T) {
 	t.Parallel()
 
-	cap := newCaptureBuilderLogger()
+	logs := newCaptureBuilderLogger()
 
 	_, err := NewBuilder().
-		Logger(cap).
+		Logger(logs).
 		Source("svc-ledger").
 		Catalog(minimalCatalog(t)).
 		Routes(minimalRoute()).
@@ -123,7 +123,7 @@ func TestBuilder_TargetNameControlChar_FiresAssertion(t *testing.T) {
 		t.Fatalf("Build() error = %v; want errors.Is(ErrInvalidRouteDefinition)", err)
 	}
 
-	if !cap.containsMessage("ASSERTION FAILED") {
+	if !logs.loggedAssertionFailure() {
 		t.Fatal("expected asserter trident to fire on control-char target name")
 	}
 }
@@ -134,11 +134,11 @@ func TestBuilder_TargetNameControlChar_FiresAssertion(t *testing.T) {
 func TestBuilder_TargetNameOversize_FiresAssertion(t *testing.T) {
 	t.Parallel()
 
-	cap := newCaptureBuilderLogger()
+	logs := newCaptureBuilderLogger()
 	tooLong := strings.Repeat("a", contract.MaxEventIDBytes+1)
 
 	_, err := NewBuilder().
-		Logger(cap).
+		Logger(logs).
 		Source("svc-ledger").
 		Catalog(minimalCatalog(t)).
 		Routes(minimalRoute()).
@@ -149,7 +149,7 @@ func TestBuilder_TargetNameOversize_FiresAssertion(t *testing.T) {
 		t.Fatalf("Build() error = %v; want errors.Is(ErrInvalidRouteDefinition)", err)
 	}
 
-	if !cap.containsMessage("ASSERTION FAILED") {
+	if !logs.loggedAssertionFailure() {
 		t.Fatal("expected asserter trident to fire on oversize target name")
 	}
 }
@@ -163,10 +163,10 @@ func TestBuilder_TargetNameOversize_FiresAssertion(t *testing.T) {
 func TestBuilder_TargetNameCredentialLike_FiresAssertion(t *testing.T) {
 	t.Parallel()
 
-	cap := newCaptureBuilderLogger()
+	logs := newCaptureBuilderLogger()
 
 	_, err := NewBuilder().
-		Logger(cap).
+		Logger(logs).
 		Source("svc-ledger").
 		Catalog(minimalCatalog(t)).
 		Routes(minimalRoute()).
@@ -179,7 +179,7 @@ func TestBuilder_TargetNameCredentialLike_FiresAssertion(t *testing.T) {
 		t.Fatalf("Build() error = %v; want errors.Is(ErrMissingTarget) for credential-like name", err)
 	}
 
-	if !cap.containsMessage("ASSERTION FAILED") {
+	if !logs.loggedAssertionFailure() {
 		t.Fatal("expected asserter trident to fire on credential-like target name")
 	}
 }
@@ -191,10 +191,10 @@ func TestBuilder_TargetNameCredentialLike_FiresAssertion(t *testing.T) {
 func TestBuilder_TargetNameDuplicate_FiresAssertion(t *testing.T) {
 	t.Parallel()
 
-	cap := newCaptureBuilderLogger()
+	logs := newCaptureBuilderLogger()
 
 	_, err := NewBuilder().
-		Logger(cap).
+		Logger(logs).
 		Source("svc-ledger").
 		Catalog(minimalCatalog(t)).
 		Routes(minimalRoute()).
@@ -206,7 +206,7 @@ func TestBuilder_TargetNameDuplicate_FiresAssertion(t *testing.T) {
 		t.Fatalf("Build() error = %v; want errors.Is(ErrInvalidRouteDefinition) for duplicate name", err)
 	}
 
-	if !cap.containsMessage("ASSERTION FAILED") {
+	if !logs.loggedAssertionFailure() {
 		t.Fatal("expected asserter trident to fire on duplicate target name")
 	}
 }

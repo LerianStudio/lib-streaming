@@ -110,6 +110,8 @@ func TestConsumerBuilder_NilReceiverGuards(t *testing.T) {
 		func() *ConsumerBuilder { return b.TLS(&tls.Config{MinVersion: tls.VersionTLS12}) },
 		func() *ConsumerBuilder { return b.SASL(plain.Auth{User: "u", Pass: "p"}.AsMechanism()) },
 		func() *ConsumerBuilder { return b.AllowPlaintextSASL() },
+		func() *ConsumerBuilder { return b.TLSFromConfig(Config{TLSEnabled: true}) },
+		func() *ConsumerBuilder { return b.SASLFromConfig(Config{SASLMechanism: "PLAIN"}) },
 		func() *ConsumerBuilder { return b.Handler(noopHandler{}) },
 		func() *ConsumerBuilder { return b.RetryBudget(3) },
 		func() *ConsumerBuilder { return b.Classifier(func(error) bool { return false }) },

@@ -49,12 +49,15 @@ func TestManifest_BuildManifest(t *testing.T) {
 	if manifest.Version != ManifestVersion {
 		t.Errorf("Version = %q; want %q", manifest.Version, ManifestVersion)
 	}
+
 	if manifest.Publisher.ServiceName != "transaction-service" {
 		t.Errorf("Publisher.ServiceName = %q", manifest.Publisher.ServiceName)
 	}
+
 	if len(manifest.Events) != 2 {
 		t.Fatalf("len(Events) = %d; want 2", len(manifest.Events))
 	}
+
 	if manifest.Events[0].Key != "account.closed" {
 		t.Errorf("Events[0].Key = %q; want sorted key account.closed", manifest.Events[0].Key)
 	}
@@ -63,15 +66,19 @@ func TestManifest_BuildManifest(t *testing.T) {
 	if manifest.Topic != "lerian.streaming.midaz-transaction-service" {
 		t.Errorf("Topic = %q; want lerian.streaming.midaz-transaction-service", manifest.Topic)
 	}
+
 	if manifest.DLQTopic != "lerian.streaming.midaz-transaction-service.dlq" {
 		t.Errorf("DLQTopic = %q; want lerian.streaming.midaz-transaction-service.dlq", manifest.DLQTopic)
 	}
+
 	if manifest.Events[0].EventKey != "account.closed" {
 		t.Errorf("Events[0].EventKey = %q; want account.closed", manifest.Events[0].EventKey)
 	}
+
 	if !manifest.Events[0].SystemEvent {
 		t.Error("Events[0].SystemEvent = false; want true")
 	}
+
 	if manifest.Events[1].DefaultPolicy.Outbox != OutboxModeAlways {
 		t.Errorf("Events[1].DefaultPolicy.Outbox = %q; want always", manifest.Events[1].DefaultPolicy.Outbox)
 	}
@@ -80,6 +87,7 @@ func TestManifest_BuildManifest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("json.Marshal() error = %v", err)
 	}
+
 	if !strings.Contains(string(encoded), `"serviceName":"transaction-service"`) {
 		t.Errorf("manifest JSON = %s; want camelCase publisher metadata", string(encoded))
 	}
@@ -202,6 +210,7 @@ func TestManifest_DeterministicJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCatalog(defA, defB) error = %v", err)
 	}
+
 	catalog2, err := NewCatalog(defA, defB)
 	if err != nil {
 		t.Fatalf("NewCatalog(defA, defB) error = %v", err)
@@ -217,10 +226,12 @@ func TestManifest_DeterministicJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildManifest(1) error = %v", err)
 	}
+
 	manifest2, err := BuildManifest(descriptor, catalog2, RouteTable{})
 	if err != nil {
 		t.Fatalf("BuildManifest(2) error = %v", err)
 	}
+
 	manifest3, err := BuildManifest(descriptor, catalog3, RouteTable{})
 	if err != nil {
 		t.Fatalf("BuildManifest(3) error = %v", err)
@@ -230,10 +241,12 @@ func TestManifest_DeterministicJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("json.Marshal(1) error = %v", err)
 	}
+
 	out2, err := json.Marshal(manifest2)
 	if err != nil {
 		t.Fatalf("json.Marshal(2) error = %v", err)
 	}
+
 	out3, err := json.Marshal(manifest3)
 	if err != nil {
 		t.Fatalf("json.Marshal(3) error = %v", err)
@@ -242,6 +255,7 @@ func TestManifest_DeterministicJSON(t *testing.T) {
 	if !bytes.Equal(out1, out2) {
 		t.Errorf("manifest JSON not deterministic across repeated builds:\nout1 = %s\nout2 = %s", out1, out2)
 	}
+
 	if !bytes.Equal(out1, out3) {
 		t.Errorf("manifest JSON not independent of catalog insertion order:\nout1 = %s\nout3 = %s", out1, out3)
 	}

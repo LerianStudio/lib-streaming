@@ -44,6 +44,7 @@ func TestNewProducerMulti_AllRequiredSucceedReturnsNil(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewProducerMulti() error = %v", err)
 	}
+
 	t.Cleanup(func() { _ = p.Close() })
 
 	if err := p.Emit(ctx, eventToRequest(sampleEvent())); err != nil {
@@ -53,6 +54,7 @@ func TestNewProducerMulti_AllRequiredSucceedReturnsNil(t *testing.T) {
 	if got := len(primary.Messages()); got != 1 {
 		t.Fatalf("primary published = %d; want 1", got)
 	}
+
 	if got := len(secondary.Messages()); got != 1 {
 		t.Fatalf("secondary published = %d; want 1", got)
 	}
@@ -60,6 +62,7 @@ func TestNewProducerMulti_AllRequiredSucceedReturnsNil(t *testing.T) {
 	if dest := primary.Messages()[0].Destination; dest.Name != "lerian.streaming.transaction.created" {
 		t.Fatalf("primary destination = %q; want lerian.streaming.transaction.created", dest.Name)
 	}
+
 	if dest := secondary.Messages()[0].Destination; dest.Name != "lerian.streaming.transaction.created.replica" {
 		t.Fatalf("secondary destination = %q; want lerian.streaming.transaction.created.replica", dest.Name)
 	}
@@ -89,6 +92,7 @@ func TestNewProducerMulti_RouteDestinationAttributesReachAdapter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewProducerMulti() error = %v", err)
 	}
+
 	t.Cleanup(func() { _ = p.Close() })
 
 	if err := p.Emit(ctx, eventToRequest(sampleEvent())); err != nil {
@@ -99,6 +103,7 @@ func TestNewProducerMulti_RouteDestinationAttributesReachAdapter(t *testing.T) {
 	if got := len(messages); got != 1 {
 		t.Fatalf("messages = %d; want 1", got)
 	}
+
 	if got := messages[0].Attributes["eventbridge.resources"]; got != "arn:aws:events:us-east-1:123:rule/r1" {
 		t.Fatalf("message attribute = %q; want route destination attribute", got)
 	}
@@ -133,6 +138,7 @@ func TestNewProducerMulti_AdapterMutationDoesNotLeakAcrossRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewProducerMulti() error = %v", err)
 	}
+
 	t.Cleanup(func() { _ = p.Close() })
 
 	if err := p.Emit(ctx, eventToRequest(sampleEvent())); err != nil {
@@ -180,6 +186,7 @@ func TestNewProducerMulti_OneRequiredFailsAggregatesMultiEmitError(t *testing.T)
 	if err != nil {
 		t.Fatalf("NewProducerMulti() error = %v", err)
 	}
+
 	t.Cleanup(func() { _ = p.Close() })
 
 	emitErr := p.Emit(ctx, eventToRequest(sampleEvent()))
@@ -191,12 +198,15 @@ func TestNewProducerMulti_OneRequiredFailsAggregatesMultiEmitError(t *testing.T)
 	if !errors.As(emitErr, &multi) {
 		t.Fatalf("Emit() error = %T (%v); want *MultiEmitError", emitErr, emitErr)
 	}
+
 	if !multi.HasRequiredFailures() {
 		t.Fatalf("MultiEmitError.Required = %d; want >= 1", len(multi.Required))
 	}
+
 	if multi.Required[0].RouteKey != "transaction.created.kafka.secondary" {
 		t.Fatalf("Required[0].RouteKey = %q; want secondary", multi.Required[0].RouteKey)
 	}
+
 	if !errors.Is(emitErr, secondaryErr) {
 		t.Fatalf("errors.Is(Emit, secondaryErr) = false; want true (chain: %v)", emitErr)
 	}
@@ -237,6 +247,7 @@ func TestNewProducerMulti_OptionalFailureDoesNotPropagate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewProducerMulti() error = %v", err)
 	}
+
 	t.Cleanup(func() { _ = p.Close() })
 
 	if err := p.Emit(ctx, eventToRequest(sampleEvent())); err != nil {
@@ -246,6 +257,7 @@ func TestNewProducerMulti_OptionalFailureDoesNotPropagate(t *testing.T) {
 	if got := len(primary.Messages()); got != 1 {
 		t.Fatalf("primary published = %d; want 1", got)
 	}
+
 	if got := len(optional.Messages()); got != 0 {
 		t.Fatalf("optional published = %d; want 0 (failed by design)", got)
 	}
@@ -280,6 +292,7 @@ func TestNewProducerMulti_PerTargetCircuitBreakerIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewProducerMulti() error = %v", err)
 	}
+
 	t.Cleanup(func() { _ = p.Close() })
 
 	// Manually flip secondary's CB state mirror to OPEN. This test exercises
@@ -295,12 +308,14 @@ func TestNewProducerMulti_PerTargetCircuitBreakerIsolation(t *testing.T) {
 	if rt == nil {
 		t.Fatal("secondary target not registered")
 	}
+
 	rt.state.Store(flagCBOpen)
 
 	emitErr := p.Emit(ctx, eventToRequest(sampleEvent()))
 	if emitErr == nil {
 		t.Fatal("Emit() error = nil; want ErrCircuitOpen via MultiEmitError")
 	}
+
 	if !errors.Is(emitErr, ErrCircuitOpen) {
 		t.Fatalf("errors.Is(emitErr, ErrCircuitOpen) = false; want true (got %v)", emitErr)
 	}
@@ -309,9 +324,11 @@ func TestNewProducerMulti_PerTargetCircuitBreakerIsolation(t *testing.T) {
 	if got := len(primary.Messages()); got != 1 {
 		t.Fatalf("primary published = %d; want 1 (CB isolation preserved)", got)
 	}
+
 	if got := p.targetState("primary"); got != flagCBClosed {
 		t.Fatalf("primary state = %d; want flagCBClosed (%d)", got, flagCBClosed)
 	}
+
 	if got := p.targetState("secondary"); got != flagCBOpen {
 		t.Fatalf("secondary state = %d; want flagCBOpen (%d)", got, flagCBOpen)
 	}
@@ -345,6 +362,7 @@ func TestNewProducerMulti_OutboxFallbackOnCircuitOpenWritesV2Envelope(t *testing
 	if err != nil {
 		t.Fatalf("NewProducerMulti() error = %v", err)
 	}
+
 	t.Cleanup(func() { _ = p.Close() })
 
 	p.tenantCBManager = nil
@@ -364,16 +382,20 @@ func TestNewProducerMulti_OutboxFallbackOnCircuitOpenWritesV2Envelope(t *testing
 	if got := len(writer.envelopes); got != 1 {
 		t.Fatalf("writer envelopes = %d; want 1", got)
 	}
+
 	got := writer.envelopes[0]
 	if got.Version != contract.OutboxEnvelopeVersion {
 		t.Fatalf("envelope.Version = %d; want %d", got.Version, contract.OutboxEnvelopeVersion)
 	}
+
 	if got.Target != "primary" {
 		t.Fatalf("envelope.Target = %q; want primary", got.Target)
 	}
+
 	if got.Transport != TransportKafkaLike {
 		t.Fatalf("envelope.Transport = %q; want %q", got.Transport, TransportKafkaLike)
 	}
+
 	if got.RouteKey != "transaction.created.kafka.primary" {
 		t.Fatalf("envelope.RouteKey = %q; want transaction.created.kafka.primary", got.RouteKey)
 	}
@@ -487,6 +509,7 @@ func TestNewProducerMulti_PostCloseEmitReturnsErrEmitterClosed(t *testing.T) {
 	if got := len(primary.Messages()); got != 0 {
 		t.Errorf("primary published = %d; want 0 (post-close Emit must not touch adapters)", got)
 	}
+
 	if got := len(secondary.Messages()); got != 0 {
 		t.Errorf("secondary published = %d; want 0 (post-close Emit must not touch adapters)", got)
 	}
@@ -497,6 +520,7 @@ func TestNewProducerMulti_RejectsCatalogDefinitionWithNoRoute(t *testing.T) {
 
 	primary := fake.NewAdapter(TransportKafkaLike)
 	catalog := sampleCatalog(t) // multiple definitions; only one route below
+
 	routes, err := contract.NewRouteTable(
 		multiTestRoute("transaction.created.kafka.primary", "transaction.created", "primary", "lerian.streaming.transaction.created", contract.RouteRequired),
 	)
@@ -600,8 +624,10 @@ func TestNewProducerMulti_AllOptionalFail_ReturnsNilButRecordsOptional(t *testin
 	failErr := errors.New("optional broker down")
 	optA := fake.NewAdapter(TransportKafkaLike)
 	optA.SetPublishError(failErr)
+
 	optB := fake.NewAdapter(TransportKafkaLike)
 	optB.SetPublishError(failErr)
+
 	optC := fake.NewAdapter(TransportKafkaLike)
 	optC.SetPublishError(failErr)
 
@@ -647,6 +673,7 @@ func TestNewProducerMulti_AllOptionalFail_ReturnsNilButRecordsOptional(t *testin
 	if err != nil {
 		t.Fatalf("NewProducerMulti() error = %v", err)
 	}
+
 	t.Cleanup(func() { _ = p.Close() })
 
 	emitErr := p.Emit(ctx, eventToRequest(sampleEvent()))
@@ -659,17 +686,18 @@ func TestNewProducerMulti_AllOptionalFail_ReturnsNilButRecordsOptional(t *testin
 	if got := len(optA.Messages()); got != 0 {
 		t.Errorf("opt-a Messages = %d; want 0 (publish failed)", got)
 	}
+
 	if got := len(optB.Messages()); got != 0 {
 		t.Errorf("opt-b Messages = %d; want 0 (publish failed)", got)
 	}
+
 	if got := len(optC.Messages()); got != 0 {
 		t.Errorf("opt-c Messages = %d; want 0 (publish failed)", got)
 	}
 
 	// MultiEmitError must NOT have surfaced. We already asserted nil
 	// above, but defensively walk the chain to catch a weird wrap path.
-	var multi *contract.MultiEmitError
-	if errors.As(emitErr, &multi) {
+	if multi, ok := errors.AsType[*contract.MultiEmitError](emitErr); ok {
 		t.Fatalf("Emit() leaked *MultiEmitError despite all-Optional fan-out (%v)", multi)
 	}
 
@@ -678,6 +706,7 @@ func TestNewProducerMulti_AllOptionalFail_ReturnsNilButRecordsOptional(t *testin
 	// data-point count is the same regardless of the state-bug above:
 	// one per route that reached dispatchRoute.
 	rm := snapshot()
+
 	emitDuration, ok := findMetric(rm, metricNameEmitDurationMS)
 	if !ok {
 		t.Fatal("streaming_emit_duration_ms not recorded; want >=3 observations (one per dispatched optional route)")
@@ -730,6 +759,7 @@ func TestNewProducerMulti_EmptyCatalogReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("NewProducerMulti() with empty catalog returned nil error; want ErrInvalidEventDefinition")
 	}
+
 	if !errors.Is(err, ErrInvalidEventDefinition) {
 		t.Fatalf("NewProducerMulti() error = %v; want errors.Is(ErrInvalidEventDefinition)", err)
 	}
@@ -788,6 +818,7 @@ func TestNewProducerMulti_OptionalFailureRecordsMetricObservations(t *testing.T)
 	if err != nil {
 		t.Fatalf("NewProducerMulti() error = %v", err)
 	}
+
 	t.Cleanup(func() { _ = p.Close() })
 
 	if err := p.Emit(ctx, eventToRequest(sampleEvent())); err != nil {
@@ -800,6 +831,7 @@ func TestNewProducerMulti_OptionalFailureRecordsMetricObservations(t *testing.T)
 	if got := len(primary.Messages()); got != 1 {
 		t.Errorf("primary Messages = %d; want 1 (Required route success)", got)
 	}
+
 	if got := len(optional.Messages()); got != 0 {
 		t.Errorf("optional Messages = %d; want 0 (publish failed by design)", got)
 	}
@@ -808,6 +840,7 @@ func TestNewProducerMulti_OptionalFailureRecordsMetricObservations(t *testing.T)
 	// route + one Optional route, expect 2 increments on
 	// streaming_emitted_total regardless of the outcome-label bug.
 	rm := snapshot()
+
 	emitted, ok := findMetric(rm, metricNameEmitted)
 	if !ok {
 		t.Fatal("streaming_emitted_total not recorded after mixed-required-optional Emit")
@@ -824,6 +857,7 @@ func TestNewProducerMulti_OptionalFailureRecordsMetricObservations(t *testing.T)
 	if !ok {
 		t.Fatal("streaming_emit_duration_ms not recorded after mixed-required-optional Emit")
 	}
+
 	if got := histogramCount(t, emitDuration); got < 2 {
 		t.Errorf("streaming_emit_duration_ms count = %d; want >=2 (one per Optional/Required route)", got)
 	}
@@ -861,6 +895,7 @@ func mustMultiRouteTable(t *testing.T, routes ...contract.RouteDefinition) contr
 	for _, r := range routes {
 		have[r.DefinitionKey] = struct{}{}
 	}
+
 	for _, r := range defaults {
 		if _, ok := have[r.DefinitionKey]; !ok {
 			routes = append(routes, r)
@@ -871,6 +906,7 @@ func mustMultiRouteTable(t *testing.T, routes ...contract.RouteDefinition) contr
 	if err != nil {
 		t.Fatalf("NewRouteTable() error = %v", err)
 	}
+
 	return rt
 }
 
@@ -884,9 +920,11 @@ func (a *mutatingAdapter) Publish(_ context.Context, message transport.Transport
 	if len(message.Payload) > 0 {
 		message.Payload[0] = 'X'
 	}
+
 	if len(message.Headers) > 0 && len(message.Headers[0].Value) > 0 {
 		message.Headers[0].Value[0] = 'X'
 	}
+
 	if message.Attributes != nil {
 		message.Attributes["mutated"] = "true"
 	}

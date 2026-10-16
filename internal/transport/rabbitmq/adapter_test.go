@@ -85,6 +85,7 @@ func TestRabbitMQ_Publish_ForwardsExchangeAndRoutingKey(t *testing.T) {
 	t.Parallel()
 
 	pub := &fakePublisher{}
+
 	a, err := New(pub)
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
@@ -102,12 +103,15 @@ func TestRabbitMQ_Publish_ForwardsExchangeAndRoutingKey(t *testing.T) {
 	if call.exchange != "events" {
 		t.Errorf("exchange = %q; want events", call.exchange)
 	}
+
 	if call.routingKey != "tx.created" {
 		t.Errorf("routingKey = %q; want tx.created", call.routingKey)
 	}
+
 	if call.contentType != "application/json" {
 		t.Errorf("contentType = %q; want application/json", call.contentType)
 	}
+
 	if string(call.body) != `{"hello":"rabbit"}` {
 		t.Errorf("body = %q", string(call.body))
 	}
@@ -116,13 +120,16 @@ func TestRabbitMQ_Publish_ForwardsExchangeAndRoutingKey(t *testing.T) {
 	if call.headers == nil {
 		t.Fatal("headers = nil; want populated map")
 	}
+
 	gotID, ok := call.headers["ce-id"].([]byte)
 	if !ok || string(gotID) != "evt-1" {
 		t.Errorf("headers[ce-id] = %v; want evt-1", call.headers["ce-id"])
 	}
+
 	if gotTrace, ok := call.headers["x-trace"].(string); !ok || gotTrace != "trc-1" {
 		t.Errorf("headers[x-trace] = %v; want trc-1", call.headers["x-trace"])
 	}
+
 	if gotTenant, ok := call.headers["X-Tenant-ID"].(string); !ok || gotTenant != "t-1" {
 		t.Errorf("headers[X-Tenant-ID] = %v; want t-1", call.headers["X-Tenant-ID"])
 	}
@@ -215,6 +222,7 @@ func TestRabbitMQ_FlushAndClose_NoOps(t *testing.T) {
 	if err := a.Flush(context.Background()); err != nil {
 		t.Errorf("Flush() error = %v; want nil", err)
 	}
+
 	if err := a.Close(context.Background()); err != nil {
 		t.Errorf("Close() error = %v; want nil", err)
 	}

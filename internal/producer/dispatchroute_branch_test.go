@@ -340,6 +340,7 @@ func TestDispatchRoute_BranchMatrix(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewProducerMulti() error = %v", err)
 			}
+
 			t.Cleanup(func() { _ = p.Close() })
 
 			tc.setup(t, p, primary)
@@ -369,9 +370,11 @@ func TestDispatchRoute_BranchMatrix(t *testing.T) {
 			if outcome.state != tc.wantState {
 				t.Errorf("outcome.state = %q; want %q", outcome.state, tc.wantState)
 			}
+
 			if tc.wantClass != "" && outcome.class != tc.wantClass {
 				t.Errorf("outcome.class = %q; want %q", outcome.class, tc.wantClass)
 			}
+
 			if tc.wantCause != nil && !errors.Is(outcome.cause, tc.wantCause) {
 				t.Errorf("outcome.cause = %v; want errors.Is(..., %v)", outcome.cause, tc.wantCause)
 			}
@@ -412,6 +415,7 @@ func TestDispatchRoute_NilAdapterReturnsErrNilProducer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewProducerMulti() error = %v", err)
 	}
+
 	t.Cleanup(func() { _ = p.Close() })
 
 	// Corrupt the adapter post-construction. The dispatch path's
@@ -419,6 +423,7 @@ func TestDispatchRoute_NilAdapterReturnsErrNilProducer(t *testing.T) {
 	p.targets["primary"].adapter = nil
 
 	tracer := noop.NewTracerProvider().Tracer("test")
+
 	_, span := tracer.Start(context.Background(), "test")
 	defer span.End()
 
@@ -447,6 +452,7 @@ func TestDispatchRoute_NilAdapterReturnsErrNilProducer(t *testing.T) {
 	if outcome.state != outcomeFailed {
 		t.Errorf("outcome.state = %q; want %q", outcome.state, outcomeFailed)
 	}
+
 	if !errors.Is(outcome.cause, ErrNilProducer) {
 		t.Errorf("outcome.cause = %v; want errors.Is(..., ErrNilProducer)", outcome.cause)
 	}
@@ -479,12 +485,14 @@ func TestDispatchRoute_NilCBReturnsErrNilProducer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewProducerMulti() error = %v", err)
 	}
+
 	t.Cleanup(func() { _ = p.Close() })
 
 	// Corrupt the breaker pointer post-construction.
 	p.targets["primary"].cb = nil
 
 	tracer := noop.NewTracerProvider().Tracer("test")
+
 	_, span := tracer.Start(context.Background(), "test")
 	defer span.End()
 
@@ -513,6 +521,7 @@ func TestDispatchRoute_NilCBReturnsErrNilProducer(t *testing.T) {
 	if outcome.state != outcomeFailed {
 		t.Errorf("outcome.state = %q; want %q", outcome.state, outcomeFailed)
 	}
+
 	if !errors.Is(outcome.cause, ErrNilProducer) {
 		t.Errorf("outcome.cause = %v; want errors.Is(..., ErrNilProducer)", outcome.cause)
 	}

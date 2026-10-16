@@ -85,6 +85,7 @@ func TestEvent_Topic(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
+
 			e := Event{
 				Source:        tt.source,
 				ResourceType:  tt.resourceType,
@@ -165,6 +166,7 @@ func TestEvent_PartitionKey(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
+
 			if got := tt.event.PartitionKey(); got != tt.want {
 				t.Errorf("Event.PartitionKey() = %q; want %q", got, tt.want)
 			}
@@ -192,18 +194,23 @@ func TestEvent_ApplyDefaults(t *testing.T) {
 	if e.EventID == "" {
 		t.Error("ApplyDefaults: EventID should be auto-populated")
 	}
+
 	if len(e.EventID) != 36 {
 		t.Errorf("ApplyDefaults: EventID should be a UUID (36 chars), got len=%d value=%q", len(e.EventID), e.EventID)
 	}
+
 	if e.Timestamp.IsZero() {
 		t.Error("ApplyDefaults: Timestamp should be auto-populated")
 	}
+
 	if e.Timestamp.Before(before) || e.Timestamp.After(after) {
 		t.Errorf("ApplyDefaults: Timestamp %v outside expected window [%v, %v]", e.Timestamp, before, after)
 	}
+
 	if e.SchemaVersion != "1.0.0" {
 		t.Errorf("ApplyDefaults: SchemaVersion = %q; want %q", e.SchemaVersion, "1.0.0")
 	}
+
 	if e.DataContentType != "application/json" {
 		t.Errorf("ApplyDefaults: DataContentType = %q; want %q", e.DataContentType, "application/json")
 	}
@@ -231,12 +238,15 @@ func TestEvent_ApplyDefaults_PreservesNonZero(t *testing.T) {
 	if e.EventID != explicitID {
 		t.Errorf("ApplyDefaults overwrote explicit EventID: got %q, want %q", e.EventID, explicitID)
 	}
+
 	if !e.Timestamp.Equal(explicitTime) {
 		t.Errorf("ApplyDefaults overwrote explicit Timestamp: got %v, want %v", e.Timestamp, explicitTime)
 	}
+
 	if e.SchemaVersion != explicitSchema {
 		t.Errorf("ApplyDefaults overwrote explicit SchemaVersion: got %q, want %q", e.SchemaVersion, explicitSchema)
 	}
+
 	if e.DataContentType != explicitCT {
 		t.Errorf("ApplyDefaults overwrote explicit DataContentType: got %q, want %q", e.DataContentType, explicitCT)
 	}

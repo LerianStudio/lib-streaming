@@ -62,7 +62,6 @@ func TestConfig_Validate_CBFailureRatioOutOfRange(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -110,7 +109,6 @@ func TestConfig_Validate_NegativeNonNegativeFields(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -147,7 +145,6 @@ func TestConfig_Validate_ZeroPositiveFields(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 

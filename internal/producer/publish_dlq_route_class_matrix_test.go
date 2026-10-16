@@ -49,6 +49,7 @@ func (a *classifyingFakeAdapter) Publish(_ context.Context, message transport.Tr
 	// DLQ destination — record for inspection and succeed.
 	a.mu.Lock()
 	defer a.mu.Unlock()
+
 	a.dlqMessages = append(a.dlqMessages, transport.CloneMessage(message))
 
 	return nil
@@ -76,8 +77,10 @@ func (a *classifyingFakeAdapter) Classify(err error) contract.ErrorClass {
 func (a *classifyingFakeAdapter) DLQMessages() []transport.TransportMessage {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+
 	out := make([]transport.TransportMessage, len(a.dlqMessages))
 	copy(out, a.dlqMessages)
+
 	return out
 }
 
@@ -174,7 +177,6 @@ func TestPublishRouteDLQ_ClassMatrix(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -200,6 +202,7 @@ func TestPublishRouteDLQ_ClassMatrix(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewProducerMulti() error = %v", err)
 			}
+
 			t.Cleanup(func() { _ = p.Close() })
 
 			emitErr := p.Emit(ctx, eventToRequest(sampleEvent()))
@@ -212,26 +215,27 @@ func TestPublishRouteDLQ_ClassMatrix(t *testing.T) {
 			if !errors.As(emitErr, &multi) {
 				t.Fatalf("Emit() error = %v; want MultiEmitError", emitErr)
 			}
+
 			if got := len(multi.Required); got != 1 {
 				t.Fatalf("MultiEmitError.Required len = %d; want 1", got)
 			}
+
 			if got := multi.Required[0].Class; got != tc.want.errorClass {
 				t.Errorf("MultiEmitError.Required[0].Class = %q; want %q", got, tc.want.errorClass)
 			}
 
-			dlqMessages := adapter.DLQMessages()
+			wantDLQ := 0
 			if tc.want.dlqDelivered {
-				if len(dlqMessages) != 1 {
-					t.Errorf("DLQ messages = %d; want 1 for class %q (DLQ-routable)", len(dlqMessages), tc.class)
-				} else {
-					if dest := dlqMessages[0].Destination; dest.Name != sourceTopic+".dlq" {
-						t.Errorf("DLQ destination = %q; want %s.dlq", dest.Name, sourceTopic)
-					}
-				}
-			} else {
-				if len(dlqMessages) != 0 {
-					t.Errorf("DLQ messages = %d; want 0 for class %q (non-DLQ-routable)", len(dlqMessages), tc.class)
-				}
+				wantDLQ = 1
+			}
+
+			dlqMessages := adapter.DLQMessages()
+			if len(dlqMessages) != wantDLQ {
+				t.Fatalf("DLQ messages = %d; want %d for class %q", len(dlqMessages), wantDLQ, tc.class)
+			}
+
+			if wantDLQ == 1 && dlqMessages[0].Destination.Name != sourceTopic+".dlq" {
+				t.Errorf("DLQ destination = %q; want %s.dlq", dlqMessages[0].Destination.Name, sourceTopic)
 			}
 		})
 	}
@@ -265,6 +269,7 @@ func TestPublishRouteDLQ_DestinationAttributesReachAdapter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewProducerMulti() error = %v", err)
 	}
+
 	t.Cleanup(func() { _ = p.Close() })
 
 	if err := p.Emit(ctx, eventToRequest(sampleEvent())); err == nil {
@@ -275,6 +280,7 @@ func TestPublishRouteDLQ_DestinationAttributesReachAdapter(t *testing.T) {
 	if got := len(messages); got != 1 {
 		t.Fatalf("DLQ messages = %d; want 1", got)
 	}
+
 	if got := messages[0].Attributes["eventbridge.resources"]; got != "arn:aws:events:us-east-1:123:rule/dlq" {
 		t.Fatalf("DLQ message attribute = %q; want DLQ destination attribute", got)
 	}
@@ -318,6 +324,7 @@ func (a *failPublishRouteDLQAdapter) Publish(_ context.Context, message transpor
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
+
 	a.dlqAttempts++
 
 	return a.dlqErr
@@ -331,6 +338,7 @@ func (a *failPublishRouteDLQAdapter) Classify(err error) contract.ErrorClass {
 	if err == nil {
 		return ""
 	}
+
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return contract.ClassContextCanceled
 	}
@@ -342,6 +350,7 @@ func (a *failPublishRouteDLQAdapter) Classify(err error) contract.ErrorClass {
 func (a *failPublishRouteDLQAdapter) DLQAttempts() int {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+
 	return a.dlqAttempts
 }
 
@@ -399,6 +408,7 @@ func TestPublishRouteDLQ_PublishFailIncrementsCounter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewProducerMulti() error = %v", err)
 	}
+
 	t.Cleanup(func() { _ = p.Close() })
 
 	emitErr := p.Emit(ctx, eventToRequest(sampleEvent()))
@@ -412,12 +422,15 @@ func TestPublishRouteDLQ_PublishFailIncrementsCounter(t *testing.T) {
 	if !errors.As(emitErr, &multi) {
 		t.Fatalf("Emit() error = %T (%v); want *MultiEmitError", emitErr, emitErr)
 	}
+
 	if got := len(multi.Required); got != 1 {
 		t.Fatalf("MultiEmitError.Required len = %d; want 1", got)
 	}
+
 	if !errors.Is(emitErr, adapter.sourceErr) {
 		t.Errorf("errors.Is(emitErr, sourceErr) = false; want true (DLQ failure must not replace source failure in chain)")
 	}
+
 	if errors.Is(emitErr, adapter.dlqErr) {
 		t.Errorf("errors.Is(emitErr, dlqErr) = true; want false (DLQ failure must NOT surface to caller)")
 	}
@@ -430,14 +443,17 @@ func TestPublishRouteDLQ_PublishFailIncrementsCounter(t *testing.T) {
 
 	// (2) streaming_dlq_publish_failed_total increments exactly once.
 	rm := snapshot()
+
 	dlqFailed, ok := findMetric(rm, metricNameDLQFailed)
 	if !ok {
 		var seen []string
+
 		for _, scope := range rm.ScopeMetrics {
 			for _, m := range scope.Metrics {
 				seen = append(seen, m.Name)
 			}
 		}
+
 		t.Fatalf("metric %q not found in snapshot; metrics seen = %v", metricNameDLQFailed, seen)
 	}
 
@@ -445,9 +461,11 @@ func TestPublishRouteDLQ_PublishFailIncrementsCounter(t *testing.T) {
 	if total != 1 {
 		t.Errorf("streaming_dlq_publish_failed_total = %d; want 1", total)
 	}
+
 	if len(attrSets) != 1 {
 		t.Fatalf("attrSets len = %d; want 1", len(attrSets))
 	}
+
 	if got := attrSets[0]["topic"]; got != sourceTopic {
 		t.Errorf("topic label = %q; want %q (DLQ counter is keyed on SOURCE topic)", got, sourceTopic)
 	}

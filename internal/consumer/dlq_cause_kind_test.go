@@ -5,12 +5,16 @@ package consumer
 import (
 	"context"
 	"errors"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/twmb/franz-go/pkg/kgo"
 
 	"github.com/LerianStudio/lib-streaming/v4/internal/contract"
+	"github.com/LerianStudio/lib-streaming/v4/internal/dlqheader"
 	"github.com/LerianStudio/lib-streaming/v4/internal/transport/fake"
+	"github.com/LerianStudio/lib-streaming/v4/obs"
 )
 
 // TestRouteDLQ_StampsTheCauseKindThatQuarantinedTheRecord pins that every DLQ
@@ -83,7 +87,7 @@ func TestRouteDLQ_StampsTheCauseKindThatQuarantinedTheRecord(t *testing.T) {
 				t.Fatalf("DLQ count = %d; want 1 (the record must quarantine)", dlq.count())
 			}
 
-			cause, kind := dlq.lastCause()
+			kind, cause := dlq.lastCause()
 
 			if kind != tt.wantKind {
 				t.Errorf("cause kind = %q; want %q", kind, tt.wantKind)
@@ -130,5 +134,55 @@ func TestPublishDLQ_StampsCauseKindHeader(t *testing.T) {
 
 	if got != "source_mismatch" {
 		t.Fatalf("x-lerian-dlq-cause-kind = %q; want source_mismatch", got)
+	}
+}
+
+const handlerErrorLine = "streaming consumer: handler error"
+
+// assertHandlerErrorLine asserts exactly one handler-error line at level, carrying
+// every field in want.
+func assertHandlerErrorLine(t *testing.T, spy *spyLogger, level int, want map[string]any) {
+	t.Helper()
+
+	if got := spy.levelsOf(handlerErrorLine); !slices.Equal(got, []int{level}) {
+		t.Fatalf("%q levels = %v; want exactly one line at level %d", handlerErrorLine, got, level)
+	}
+
+	for key, w := range want {
+		if got := spy.fieldValues(handlerErrorLine, key); len(got) != 1 || got[0] != w {
+			t.Errorf("%s = %v; want %v", key, got, w)
+		}
+	}
+}
+
+// TestHandleWithRetry_LogsTheHandlerErrorBeforeTheDLQ pins that the reason a
+// record was quarantined reaches the service log, not only the DLQ header: the
+// header is readable only by whoever holds DLQ read access.
+func TestHandleWithRetry_LogsTheHandlerErrorBeforeTheDLQ(t *testing.T) {
+	t.Parallel()
+
+	cause := "loan already settled via kafka://svc:s3cret@broker:9092 " + strings.Repeat("x", dlqheader.MaxErrorMessageBytes)
+	handler := &fakeHandler{fn: func(context.Context, contract.Event, []byte) error {
+		return errors.New(cause)
+	}}
+	spy := newSpyLogger()
+	dlq := &fakeDLQ{}
+	r := newTestRuntime(t, newFakeGroupClient(), handler, dlq, WithLogger(spy))
+
+	r.processFetches(context.Background(), fetchOf("t", 2, rec("t", 2, 41, ceHeaders("tenantA", false))))
+
+	if dlq.count() != 1 {
+		t.Fatalf("DLQ count = %d; want 1", dlq.count())
+	}
+
+	assertHandlerErrorLine(t, spy, obs.LevelError, map[string]any{
+		"outcome": "dlq", "topic": "t", "partition": 2, "offset": int64(41), "event_key": "loan.created",
+		"event_id": "evt-1", "tenant_id": "tenantA", "attempts": 1,
+	})
+
+	// Same scrub and cap as the DLQ header the record carries.
+	got, _ := spy.fieldValues(handlerErrorLine, "error")[0].(string)
+	if want := dlqheader.TruncateErrorMessage(contract.SanitizeBrokerURL(cause)); got != want || strings.Contains(got, "s3cret") {
+		t.Errorf("error = %.80q... (%d bytes); want the scrubbed, capped cause (%d bytes)", got, len(got), len(want))
 	}
 }

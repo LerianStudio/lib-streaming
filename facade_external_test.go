@@ -40,6 +40,7 @@ func TestFacade_NewEmitRequestDeepCopiesMutableFields(t *testing.T) {
 	if string(request.Payload) != `{"ok":true}` {
 		t.Fatalf("Payload was not defensively copied: %q", string(request.Payload))
 	}
+
 	if request.PolicyOverride.Enabled == nil || !*request.PolicyOverride.Enabled {
 		t.Fatalf("PolicyOverride.Enabled was not defensively copied: %v", request.PolicyOverride.Enabled)
 	}
@@ -56,6 +57,7 @@ func TestFacade_NewNoopEmitter(t *testing.T) {
 	if err := emitter.Emit(context.Background(), streaming.EmitRequest{}); err != nil {
 		t.Fatalf("noop Emit() error = %v", err)
 	}
+
 	if err := emitter.Close(); err != nil {
 		t.Fatalf("noop Close() error = %v", err)
 	}
@@ -94,6 +96,7 @@ func TestFacade_BuilderDescriptorAndClose(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
+
 	t.Cleanup(func() { _ = emitter.Close() })
 
 	producer, ok := emitter.(*streaming.Producer)
@@ -112,9 +115,11 @@ func TestFacade_BuilderDescriptorAndClose(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Descriptor() error = %v", err)
 	}
+
 	if descriptor.ProducerID == "" {
 		t.Fatal("Descriptor() did not populate ProducerID")
 	}
+
 	if err := producer.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
@@ -128,12 +133,15 @@ func TestFacade_NilProducerMethodsAreSafe(t *testing.T) {
 	if err := producer.Emit(context.Background(), streaming.EmitRequest{}); !errors.Is(err, streaming.ErrNilProducer) {
 		t.Fatalf("nil Emit() error = %v; want ErrNilProducer", err)
 	}
+
 	if err := producer.EmitBatch(context.Background(), nil); !errors.Is(err, streaming.ErrNilProducer) {
 		t.Fatalf("nil EmitBatch() error = %v; want ErrNilProducer", err)
 	}
+
 	if err := producer.Close(); err != nil {
 		t.Fatalf("nil Close() error = %v; want nil", err)
 	}
+
 	if _, err := producer.Descriptor(streaming.PublisherDescriptor{}); !errors.Is(err, streaming.ErrNilProducer) {
 		t.Fatalf("nil Descriptor() error = %v; want ErrNilProducer", err)
 	}
@@ -158,6 +166,7 @@ func TestFacade_ManifestAndCloudEventsWrappers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildManifest() error = %v", err)
 	}
+
 	if len(manifest.Events) != 1 || manifest.Events[0].Key != "transaction.created" {
 		t.Fatalf("manifest events = %+v; want transaction.created", manifest.Events)
 	}
@@ -184,6 +193,7 @@ func TestFacade_ManifestAndCloudEventsWrappers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseCloudEventsHeaders() error = %v", err)
 	}
+
 	if parsed.EventID != "event-1" || parsed.Source != "svc" {
 		t.Fatalf("parsed event = %+v", parsed)
 	}
@@ -217,7 +227,7 @@ func serveManifestBody(t *testing.T, handler http.Handler) []byte {
 	t.Helper()
 
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/streaming", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/streaming", nil)
 	handler.ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusOK {
@@ -242,6 +252,7 @@ func TestFacade_NewStreamingHandler_NoOptsByteIdenticalToZeroRouteTable(t *testi
 	if err != nil {
 		t.Fatalf("NewStreamingHandler(d, c) error = %v", err)
 	}
+
 	withZero, err := streaming.NewStreamingHandler(descriptor, catalog, streaming.WithManifestRoutes(streaming.RouteTable{}))
 	if err != nil {
 		t.Fatalf("NewStreamingHandler(d, c, WithManifestRoutes(zero)) error = %v", err)
@@ -295,18 +306,23 @@ func TestFacade_NewStreamingHandler_WithRoutesRoundTrip(t *testing.T) {
 	if r.Key != "transaction.created.kafka.primary" {
 		t.Errorf("Key = %q; want transaction.created.kafka.primary", r.Key)
 	}
+
 	if r.DefinitionKey != "transaction.created" {
 		t.Errorf("DefinitionKey = %q; want transaction.created", r.DefinitionKey)
 	}
+
 	if r.Target != "primary" {
 		t.Errorf("Target = %q; want primary", r.Target)
 	}
+
 	if r.Transport != streaming.TransportKafkaLike {
 		t.Errorf("Transport = %q; want kafka", r.Transport)
 	}
+
 	if r.Destination != "lerian.streaming.transaction.created" {
 		t.Errorf("Destination = %q; want lerian.streaming.transaction.created", r.Destination)
 	}
+
 	if !r.Required {
 		t.Errorf("Required = false; want true")
 	}
@@ -362,9 +378,11 @@ func TestFacade_NewStreamingHandler_LastWithManifestRoutesWins(t *testing.T) {
 	if got := len(doc.Routes); got != 1 {
 		t.Fatalf("len(Routes) = %d; want 1 (last call wins, no merge)", got)
 	}
+
 	if doc.Routes[0].Target != "last" {
 		t.Errorf("Routes[0].Target = %q; want \"last\" (last call wins)", doc.Routes[0].Target)
 	}
+
 	if doc.Routes[0].Key != "transaction.created.kafka.last" {
 		t.Errorf("Routes[0].Key = %q; want \"transaction.created.kafka.last\"", doc.Routes[0].Key)
 	}
@@ -405,6 +423,7 @@ func TestFacade_NewStreamingHandler_ConstructionTimeErrorPropagation(t *testing.
 	if !errors.Is(err, streaming.ErrInvalidPublisherDescriptor) {
 		t.Fatalf("NewStreamingHandler() error = %v; want errors.Is(err, ErrInvalidPublisherDescriptor)", err)
 	}
+
 	if handler != nil {
 		t.Fatalf("NewStreamingHandler() handler = %v; want nil on construction failure", handler)
 	}
@@ -435,21 +454,25 @@ func TestFacade_NewStreamingHandler_NilOptionSafety(t *testing.T) {
 	if err != nil {
 		t.Fatalf("baseline NewStreamingHandler(d, c) error = %v", err)
 	}
+
 	referenceNoOptsBody := serveManifestBody(t, referenceNoOpts)
 
 	referenceWithRoutes, err := streaming.NewStreamingHandler(descriptor, catalog, streaming.WithManifestRoutes(routes))
 	if err != nil {
 		t.Fatalf("baseline NewStreamingHandler(d, c, WithManifestRoutes) error = %v", err)
 	}
+
 	referenceWithRoutesBody := serveManifestBody(t, referenceWithRoutes)
 
 	nilOnly, err := streaming.NewStreamingHandler(descriptor, catalog, nil)
 	if err != nil {
 		t.Fatalf("NewStreamingHandler(d, c, nil) error = %v; want nil", err)
 	}
+
 	if nilOnly == nil {
 		t.Fatal("NewStreamingHandler(d, c, nil) handler = nil; want non-nil")
 	}
+
 	if got := serveManifestBody(t, nilOnly); !bytes.Equal(got, referenceNoOptsBody) {
 		t.Fatalf("nil-only manifest body diverges from no-opts:\nnil-only: %s\nno-opts:  %s", got, referenceNoOptsBody)
 	}
@@ -458,9 +481,11 @@ func TestFacade_NewStreamingHandler_NilOptionSafety(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStreamingHandler(d, c, nil, WithManifestRoutes(routes)) error = %v; want nil", err)
 	}
+
 	if interleaved == nil {
 		t.Fatal("NewStreamingHandler(d, c, nil, WithManifestRoutes(routes)) handler = nil; want non-nil")
 	}
+
 	if got := serveManifestBody(t, interleaved); !bytes.Equal(got, referenceWithRoutesBody) {
 		t.Fatalf("interleaved (nil + WithManifestRoutes) manifest body diverges from WithManifestRoutes-only")
 	}

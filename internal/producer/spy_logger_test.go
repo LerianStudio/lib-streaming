@@ -4,7 +4,6 @@ package producer
 
 import (
 	"context"
-	"strings"
 	"sync"
 
 	"github.com/LerianStudio/lib-observability/v4/log"
@@ -42,35 +41,3 @@ func (s *spyLogger) Log(_ context.Context, level int, msg string, fields ...any)
 
 func (s *spyLogger) Enabled(_ int) bool           { return true }
 func (s *spyLogger) Sync(_ context.Context) error { return nil }
-
-// firstErrorEntry returns the first ERROR-level entry whose message
-// contains the given substring. Returns nil when no such entry exists.
-func (s *spyLogger) firstErrorEntry(contains string) *spyEntry {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	for i := range s.entries {
-		entry := s.entries[i]
-		if entry.level == log.LevelError && strings.Contains(entry.msg, contains) {
-			return &entry
-		}
-	}
-
-	return nil
-}
-
-// firstEntry returns the first entry at the given level whose message
-// contains the given substring. Returns nil when no such entry exists.
-func (s *spyLogger) firstEntry(level int, contains string) *spyEntry {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	for i := range s.entries {
-		entry := s.entries[i]
-		if entry.level == level && strings.Contains(entry.msg, contains) {
-			return &entry
-		}
-	}
-
-	return nil
-}

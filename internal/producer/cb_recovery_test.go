@@ -130,15 +130,19 @@ func TestCBRecoveryLivenessRegistryAggregatesMultipleProducers(t *testing.T) {
 	if alive := registry.update("producer-a", true, false); !alive {
 		t.Fatal("first healthy producer aggregate = false; want true")
 	}
+
 	if alive := registry.update("producer-b", true, false); !alive {
 		t.Fatal("two healthy producers aggregate = false; want true")
 	}
+
 	if alive := registry.update("producer-b", false, false); alive {
 		t.Fatal("one dead producer aggregate = true; want false")
 	}
+
 	if alive := registry.update("producer-a", true, false); alive {
 		t.Fatal("healthy producer update overwrote dead sibling; want aggregate false")
 	}
+
 	if alive := registry.update("producer-b", false, true); !alive {
 		t.Fatal("closed producer should be removed from aggregate; want true")
 	}
@@ -163,6 +167,7 @@ func newProducerForRecoveryTest(t *testing.T, fakeMgr *fakeCBManager, targetName
 
 	for _, name := range targetNames {
 		serviceName := targetCBServiceName(p.producerID, name)
+
 		cb, err := fakeMgr.GetOrCreate(serviceName, circuitbreaker.Config{})
 		if err != nil {
 			t.Fatalf("GetOrCreate %s: %v", name, err)
@@ -301,6 +306,7 @@ func TestPokeAllTargetCBs_TypedNilManagerSafe(t *testing.T) {
 	}()
 
 	var fakeMgr *fakeCBManager
+
 	p := &Producer{
 		cbManager: fakeMgr,
 		logger:    log.NewNop(),
@@ -340,7 +346,9 @@ func TestStartCBRecoveryLoop_PokesPeriodically(t *testing.T) {
 	// goroutine's select rebinding to <-p.stop, one tick may fire because
 	// Go's select picks randomly when multiple channels are ready.
 	beforeStop := pokes
+
 	time.Sleep(150 * time.Millisecond)
+
 	afterStop := fakeMgr.getStateCallsFor(p.targets["primary"].cbServiceName)
 
 	if afterStop-beforeStop > 1 {
@@ -397,8 +405,9 @@ func TestStartCBRecoveryLoop_NoOpWhenNoTargets(t *testing.T) {
 
 	// fakeMgr's getStateCallsByService is sync.Map; range over it.
 	calls := int64(0)
+
 	fakeMgr.getStateCallsByService.Range(func(_, v any) bool {
-		calls += v.(*atomic.Int64).Load()
+		calls += v.(*atomic.Int64).Load() //nolint:forcetypeassert // the fake stores only *atomic.Int64 in this map
 		return true
 	})
 
@@ -534,6 +543,7 @@ func TestStartCBRecoveryLoop_StopsOnSignalStop(t *testing.T) {
 	// signalStop call and the goroutine's select rebinding to the stop
 	// channel.
 	time.Sleep(100 * time.Millisecond)
+
 	afterStop := fakeMgr.getStateCallsFor(p.targets["primary"].cbServiceName)
 
 	// Allow at most one extra poke for the in-flight tick window.
@@ -570,6 +580,7 @@ func TestStartCBRecoveryLoop_StopsAfterCloseContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewProducerMulti() error = %v", err)
 	}
+
 	t.Cleanup(func() { _ = p.Close() })
 
 	serviceName := p.targets["primary"].cbServiceName
@@ -578,15 +589,18 @@ func TestStartCBRecoveryLoop_StopsAfterCloseContext(t *testing.T) {
 	}
 
 	beforeClose := fakeMgr.getStateCallsFor(serviceName)
+
 	if err := p.CloseContext(context.Background()); err != nil {
 		t.Fatalf("CloseContext() error = %v", err)
 	}
+
 	afterClose := fakeMgr.getStateCallsFor(serviceName)
 
 	// Wait longer than two production-floor ticks. Once CloseContext closes
 	// p.stop, the loop should exit; at most one in-flight tick may land after
 	// the close call races with the goroutine's select.
 	time.Sleep((2 * cbRecoveryFloor) + 100*time.Millisecond)
+
 	final := fakeMgr.getStateCallsFor(serviceName)
 
 	if final-afterClose > 1 {
@@ -750,7 +764,7 @@ func (m *panickingCBManager) GetOrCreate(_ string, _ circuitbreaker.Config) (cir
 }
 
 func (*panickingCBManager) Execute(_ string, _ func() (any, error)) (any, error) {
-	return nil, nil
+	return nil, nil //nolint:nilnil // no-op stub: the panic test drives only GetState
 }
 
 func (m *panickingCBManager) GetState(_ string) circuitbreaker.State {

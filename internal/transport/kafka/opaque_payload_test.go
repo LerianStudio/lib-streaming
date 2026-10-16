@@ -30,12 +30,14 @@ func TestAdapter_Publish_NonUTF8Payload_ByteEqual(t *testing.T) {
 	if err != nil {
 		t.Fatalf("kfake.NewCluster() error = %v", err)
 	}
+
 	t.Cleanup(cluster.Close)
 
 	client, err := kgo.NewClient(kgo.SeedBrokers(cluster.ListenAddrs()...))
 	if err != nil {
 		t.Fatalf("kgo.NewClient() error = %v", err)
 	}
+
 	t.Cleanup(client.Close)
 
 	adapter, err := NewAdapterFromClient(client)
@@ -54,6 +56,7 @@ func TestAdapter_Publish_NonUTF8Payload_ByteEqual(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+
 	if err := adapter.Publish(ctx, message); err != nil {
 		t.Fatalf("Publish() error = %v", err)
 	}
@@ -68,24 +71,29 @@ func TestAdapter_Publish_NonUTF8Payload_ByteEqual(t *testing.T) {
 	if err != nil {
 		t.Fatalf("consumer init error = %v", err)
 	}
+
 	t.Cleanup(consumer.Close)
 
 	fetchCtx, fetchCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer fetchCancel()
+
 	fetches := consumer.PollFetches(fetchCtx)
 	if err := fetches.Err(); err != nil {
 		t.Fatalf("PollFetches() error = %v", err)
 	}
 
 	var got *kgo.Record
+
 	fetches.EachRecord(func(record *kgo.Record) {
 		if got == nil {
 			got = record
 		}
 	})
+
 	if got == nil {
 		t.Fatal("no record fetched")
 	}
+
 	if !bytes.Equal(got.Value, payload) {
 		t.Fatalf("record value = %v; want byte-equal to %v", got.Value, payload)
 	}
