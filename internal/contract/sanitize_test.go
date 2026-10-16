@@ -201,7 +201,7 @@ func TestSanitizeBrokerURL(t *testing.T) {
 			mustNotContain: []string{"AKIAIOSFODNN7EXAMPLE"},
 			mustContainAny: []string{constants.ObfuscatedValue},
 		},
-		{
+		{ //nolint:gosec // fake credential fixture: the test asserts it is redacted
 			name:           "bare AWS session access key ID",
 			in:             "auth failed for access key ASIAIOSFODNN7EXAMPLE",
 			mustNotContain: []string{"ASIAIOSFODNN7EXAMPLE"},

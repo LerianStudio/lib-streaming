@@ -146,8 +146,7 @@ func TestBuilder_MultiTargetSurfacesRequiredFailure(t *testing.T) {
 		t.Fatal("Emit() error = nil; want MultiEmitError")
 	}
 
-	var multi *streaming.MultiEmitError
-	if !errors.As(emitErr, &multi) {
+	if _, ok := errors.AsType[*streaming.MultiEmitError](emitErr); !ok {
 		t.Fatalf("Emit() error = %T; want *MultiEmitError (%v)", emitErr, emitErr)
 	}
 

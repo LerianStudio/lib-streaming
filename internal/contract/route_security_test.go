@@ -23,7 +23,7 @@ func TestDestinationValidate_RejectsSecuritySensitiveTopology(t *testing.T) {
 		{name: "snake AWS secret access key attribute key", destination: Destination{Kind: TransportCustom, Name: "custom", Attributes: map[string]string{"aws_secret_access_key": "redacted"}}},
 		{name: "snake AWS access key ID attribute key", destination: Destination{Kind: TransportCustom, Name: "custom", Attributes: map[string]string{"aws_access_key_id": "redacted"}}},
 		{name: "bare AWS AKIA value", destination: Destination{Kind: TransportCustom, Name: "custom", Attributes: map[string]string{"external_id": "AKIAIOSFODNN7EXAMPLE"}}}, //nolint:gosec // fake credential fixture: the test asserts it is redacted
-		{name: "bare AWS ASIA value", destination: Destination{Kind: TransportCustom, Name: "custom", Attributes: map[string]string{"external_id": "ASIAIOSFODNN7EXAMPLE"}}},
+		{name: "bare AWS ASIA value", destination: Destination{Kind: TransportCustom, Name: "custom", Attributes: map[string]string{"external_id": "ASIAIOSFODNN7EXAMPLE"}}}, //nolint:gosec // fake credential fixture: the test asserts it is redacted
 		{name: "bearer authorization header value", destination: Destination{Kind: TransportCustom, Name: "custom", Attributes: map[string]string{"header": "Authorization: Bearer secret-token"}}},
 		{name: "standalone basic authorization value", destination: Destination{Kind: TransportCustom, Name: "custom", Attributes: map[string]string{"header": "Basic dXNlcjpwYXNz"}}},
 		{name: "standalone token authorization value", destination: Destination{Kind: TransportCustom, Name: "custom", Attributes: map[string]string{"header": "Token abc"}}},
