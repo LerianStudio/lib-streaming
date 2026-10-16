@@ -697,8 +697,7 @@ func TestNewProducerMulti_AllOptionalFail_ReturnsNilButRecordsOptional(t *testin
 
 	// MultiEmitError must NOT have surfaced. We already asserted nil
 	// above, but defensively walk the chain to catch a weird wrap path.
-	var multi *contract.MultiEmitError
-	if errors.As(emitErr, &multi) {
+	if multi, ok := errors.AsType[*contract.MultiEmitError](emitErr); ok {
 		t.Fatalf("Emit() leaked *MultiEmitError despite all-Optional fan-out (%v)", multi)
 	}
 

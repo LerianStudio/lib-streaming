@@ -82,6 +82,10 @@ linters:
               desc: The io/ioutil package has been deprecated, see https://go.dev/doc/go1.16#ioutil
     gocyclo:
       min-complexity: 16
+    recvcheck:
+      # A value-receiver MarshalJSON marshals values and pointers alike; recvcheck v0.3 stopped exempting it.
+      exclusions:
+        - "*.MarshalJSON"
     govet:
       enable:
         - shadow

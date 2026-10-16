@@ -1094,8 +1094,7 @@ func (c *consumerRuntime) drainFetchErrors(ctx context.Context, fetches kgo.Fetc
 		default:
 			fetchErr = true
 
-			var dl *kgo.ErrDataLoss
-			if errors.As(err, &dl) {
+			if _, ok := errors.AsType[*kgo.ErrDataLoss](err); ok {
 				// Unrecoverable but MUST be observable: franz-go detected the
 				// offset out of range and auto-reset the cursor past lost data.
 				c.recordMetric(ctx, metricFetchErrorDataLoss)

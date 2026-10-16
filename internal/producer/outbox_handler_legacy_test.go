@@ -663,8 +663,7 @@ func TestOutboxRelay_UndecodableEnvelopeIsCallerError(t *testing.T) {
 				t.Errorf("IsCallerError(%v) = false; the row would retry instead of landing in INVALID", err)
 			}
 
-			var typeErr *json.UnmarshalTypeError
-			if !errors.As(err, &typeErr) {
+			if _, ok := errors.AsType[*json.UnmarshalTypeError](err); !ok {
 				t.Errorf("err = %v, want the decode error kept in the chain", err)
 			}
 		})

@@ -111,8 +111,7 @@ func TestProducerMulti_ConcurrentEmitDuringClose(t *testing.T) {
 
 				// Aggregated multi-route error is also acceptable
 				// when one or more targets transitioned mid-flight.
-				var multi *contract.MultiEmitError
-				if errors.As(emitErr, &multi) {
+				if _, ok := errors.AsType[*contract.MultiEmitError](emitErr); ok {
 					continue
 				}
 
